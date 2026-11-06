@@ -45,8 +45,10 @@ class AuthRefreshCoordinator {
   private async executeRefresh(): Promise<string> {
     const refreshUrl = `${env.NEXT_PUBLIC_API_URL}/auth/refresh`;
 
+    let response: Response;
+
     try {
-      const response = await fetch(refreshUrl, {
+      response = await fetch(refreshUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -55,42 +57,40 @@ class AuthRefreshCoordinator {
         // Transmit the HTTP-only refresh cookie
         credentials: 'include',
       });
-
-      if (!response.ok) {
-        let errorData: unknown;
-        try {
-          errorData = await response.json();
-        } catch {
-          errorData = await response.text();
-        }
-
-        const apiError = ApiError.fromResponse(response.status, errorData);
-        this.notifySessionExpired();
-        throw apiError;
-      }
-
-      const payload = (await response.json()) as ApiResponse<{
-        accessToken: string;
-        expiresIn: string;
-      }>;
-
-      if (!payload.data?.accessToken) {
-        this.notifySessionExpired();
-        throw new ApiError({
-          status: 500,
-          message: 'Server returned refresh success without access token',
-        });
-      }
-
-      const newAccessToken = payload.data.accessToken;
-      tokenStore.setAccessToken(newAccessToken);
-      return newAccessToken;
-    } catch (err) {
-      if (!(err instanceof ApiError)) {
-        this.notifySessionExpired();
-      }
-      throw err;
+    } catch (networkErr: unknown) {
+      // Do not notifySessionExpired on network dropouts
+      throw ApiError.fromNetworkError(networkErr);
     }
+
+    if (!response.ok) {
+      let errorData: unknown;
+      try {
+        errorData = await response.json();
+      } catch {
+        errorData = await response.text();
+      }
+
+      const apiError = ApiError.fromResponse(response.status, errorData);
+      this.notifySessionExpired();
+      throw apiError;
+    }
+
+    const payload = (await response.json()) as ApiResponse<{
+      accessToken: string;
+      expiresIn: string;
+    }>;
+
+    if (!payload.data?.accessToken) {
+      this.notifySessionExpired();
+      throw new ApiError({
+        status: 500,
+        message: 'Server returned refresh success without access token',
+      });
+    }
+
+    const newAccessToken = payload.data.accessToken;
+    tokenStore.setAccessToken(newAccessToken);
+    return newAccessToken;
   }
 
   isRefreshing(): boolean {

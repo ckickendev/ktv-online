@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Mic2, Radio, Compass, User, Menu, X, PlusCircle } from 'lucide-react';
+import { Mic2, Radio, Compass, User, Menu, X, PlusCircle, LogOut, LogIn, UserPlus } from 'lucide-react';
 import { UserAvatar } from '../shared/user-avatar';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -11,13 +11,12 @@ import { useAuth } from '@/hooks/use-auth';
 export function AppHeader() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { user } = useAuth();
-  const displayName = user?.username || 'Alex Singer';
+  const { user, isAuthenticated, isInitializing, logout } = useAuth();
 
   const navLinks = [
     { href: '/', label: 'Home' },
     { href: '/rooms', label: 'Explore Lounges', icon: Compass },
-    { href: '/profile', label: 'My Studio', icon: User },
+    ...(isAuthenticated ? [{ href: '/profile', label: 'My Studio', icon: User }] : []),
   ];
 
   return (
@@ -79,17 +78,56 @@ export function AppHeader() {
             <span>Host Lounge</span>
           </Link>
 
-          {/* User Profile Avatar Link */}
-          <Link href="/profile" className="flex items-center gap-2 pl-2 group">
-            <UserAvatar name={displayName} status="online" size="sm" />
-          </Link>
+          {/* Auth State Controls */}
+          {isInitializing ? (
+            <div className="w-24 h-8 rounded-xl bg-white/5 animate-pulse" />
+          ) : isAuthenticated ? (
+            <div className="flex items-center gap-2 pl-2">
+              <Link
+                href="/profile"
+                className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/5 transition-colors group"
+                title="View Profile"
+              >
+                <UserAvatar name={user?.username || 'Singer'} status="online" size="sm" />
+                <span className="text-xs font-semibold text-slate-300 group-hover:text-white hidden xl:inline">
+                  {user?.username}
+                </span>
+              </Link>
+
+              <button
+                onClick={() => logout()}
+                className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                title="Sign Out"
+                aria-label="Sign Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 pl-2">
+              <Link
+                href="/login"
+                className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/register"
+                className="px-3.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-md shadow-violet-600/25 transition-all"
+              >
+                Get Started
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Mobile menu button */}
         <div className="md:hidden flex items-center gap-2">
-          <Link href="/profile">
-            <UserAvatar name={displayName} status="online" size="sm" />
-          </Link>
+          {isAuthenticated && (
+            <Link href="/profile">
+              <UserAvatar name={user?.username || 'Singer'} status="online" size="sm" />
+            </Link>
+          )}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"
@@ -122,7 +160,8 @@ export function AppHeader() {
               </Link>
             );
           })}
-          <div className="pt-2">
+
+          <div className="pt-2 space-y-2 border-t border-white/5">
             <Link
               href="/rooms"
               onClick={() => setMobileMenuOpen(false)}
@@ -131,6 +170,38 @@ export function AppHeader() {
               <PlusCircle className="w-4 h-4" />
               <span>Host Lounge</span>
             </Link>
+
+            {isAuthenticated ? (
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  logout();
+                }}
+                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-sm font-semibold transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out</span>
+              </button>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <Link
+                  href="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-white/5 text-slate-300 text-xs font-semibold"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Sign In</span>
+                </Link>
+                <Link
+                  href="/register"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-violet-600 text-white text-xs font-semibold"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Register</span>
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       )}

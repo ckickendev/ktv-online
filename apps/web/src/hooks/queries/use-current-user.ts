@@ -7,7 +7,6 @@ import { useEffect } from 'react';
 
 export function useCurrentUser() {
   const setUser = useAuthStore((s) => s.setUser);
-  const setInitialized = useAuthStore((s) => s.setInitialized);
 
   const query = useQuery<CurrentUserDto>({
     queryKey: queryKeys.auth.currentUser(),
@@ -24,10 +23,7 @@ export function useCurrentUser() {
     } else if (query.isError) {
       setUser(null);
     }
-    if (!query.isLoading) {
-      setInitialized(true);
-    }
-  }, [query.data, query.isError, query.isLoading, setUser, setInitialized]);
+  }, [query.data, query.isError, setUser]);
 
   return query;
 }

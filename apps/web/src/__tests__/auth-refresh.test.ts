@@ -56,7 +56,7 @@ describe('Authentication & Refresh Lifecycle (Phase 2)', () => {
     await client.get('/public-info', { skipAuth: true });
 
     const mockFetch = vi.mocked(global.fetch);
-    const callHeaders = (mockFetch.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    const callHeaders = (mockFetch.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
     expect(callHeaders.Authorization).toBeUndefined();
   });
 
@@ -129,7 +129,7 @@ describe('Authentication & Refresh Lifecycle (Phase 2)', () => {
     expect((refreshCall?.[1] as RequestInit).credentials).toBe('include');
 
     // Verify retried request used new access token
-    const retriedCall = mockFetch.mock.calls[2];
+    const retriedCall = mockFetch.mock.calls[2]!;
     expect(retriedCall[0]).toBe('http://api.ktv.test/api/v1/rooms');
     const retriedHeaders = (retriedCall[1] as RequestInit).headers as Record<string, string>;
     expect(retriedHeaders.Authorization).toBe(`Bearer ${newAccessToken}`);

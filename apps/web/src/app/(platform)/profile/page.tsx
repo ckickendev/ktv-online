@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { UserAvatar } from '@/components/shared/user-avatar';
+import { ProtectedRoute } from '@/components/auth/protected-route';
 import { useAuth } from '@/hooks/use-auth';
 
 export default function ProfilePage() {
@@ -28,8 +29,9 @@ export default function ProfilePage() {
   ];
 
   return (
-    <div className="flex-1 py-10">
-      <PageContainer size="md">
+    <ProtectedRoute>
+      <div className="flex-1 py-10">
+        <PageContainer size="md">
         {/* Profile Card Header */}
         <div className="glass-panel rounded-3xl p-6 sm:p-8 border border-white/10 relative overflow-hidden mb-8">
           {/* Decorative ambient gradient */}
@@ -195,5 +197,6 @@ export default function ProfilePage() {
         </div>
       </PageContainer>
     </div>
+    </ProtectedRoute>
   );
 }

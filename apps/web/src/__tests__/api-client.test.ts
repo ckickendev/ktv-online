@@ -98,7 +98,7 @@ describe('ApiClient (Phase 1 & Phase 3)', () => {
     });
 
     const mockFetch = vi.mocked(global.fetch);
-    const calledUrl = mockFetch.mock.calls[0][0] as string;
+    const calledUrl = mockFetch.mock.calls[0]![0] as string;
     const url = new URL(calledUrl);
 
     expect(url.searchParams.get('page')).toBe('2');
