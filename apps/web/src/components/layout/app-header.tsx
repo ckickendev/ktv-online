@@ -6,10 +6,13 @@ import { usePathname } from 'next/navigation';
 import { Mic2, Radio, Compass, User, Menu, X, PlusCircle } from 'lucide-react';
 import { UserAvatar } from '../shared/user-avatar';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/use-auth';
 
 export function AppHeader() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user } = useAuth();
+  const displayName = user?.username || 'Alex Singer';
 
   const navLinks = [
     { href: '/', label: 'Home' },
@@ -78,14 +81,14 @@ export function AppHeader() {
 
           {/* User Profile Avatar Link */}
           <Link href="/profile" className="flex items-center gap-2 pl-2 group">
-            <UserAvatar name="Alex Singer" status="online" size="sm" />
+            <UserAvatar name={displayName} status="online" size="sm" />
           </Link>
         </div>
 
         {/* Mobile menu button */}
         <div className="md:hidden flex items-center gap-2">
           <Link href="/profile">
-            <UserAvatar name="Alex Singer" status="online" size="sm" />
+            <UserAvatar name={displayName} status="online" size="sm" />
           </Link>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}

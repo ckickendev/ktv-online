@@ -24,29 +24,18 @@ import {
 } from 'lucide-react';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { RoomStatusBadge } from '@/components/shared/room-status-badge';
-import { MOCK_ROOMS } from '@/features/rooms/mock-rooms';
+import { EmptyState } from '@/components/shared/empty-state';
+import { LoadingState } from '@/components/shared/loading-state';
+import { useRoom, useRoomMembers } from '@/hooks/queries/use-room';
 import { useAppStore } from '@/stores/use-app-store';
+import { AlertCircle } from 'lucide-react';
 
 export default function RoomDetailPage() {
   const params = useParams();
   const roomId = params?.roomId as string;
 
-  const room = MOCK_ROOMS.find((r) => r.id === roomId) || {
-    id: roomId || 'custom-room',
-    name: 'Virtual VIP Lounge',
-    description: 'Exclusive session with synchronized karaoke & live audience reactions.',
-    ownerId: 'user-001',
-    roomType: 'vip' as const,
-    visibility: 'public' as const,
-    capacity: 12,
-    status: 'singing' as const,
-    currentParticipantsCount: 5,
-    category: 'pop' as const,
-    currentSongTitle: 'Blinding Lights',
-    currentSingerName: 'MiaSingz',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+  const { data: room, isLoading, isError, error } = useRoom(roomId);
+  const { data: activeMembers } = useRoomMembers(roomId);
 
   const { isMuted, toggleMute, volume, setVolume } = useAppStore();
   const [isPlaying, setIsPlaying] = useState(true);
@@ -87,6 +76,36 @@ export default function RoomDetailPage() {
     setChatMessage('');
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center py-20 bg-[#07090f]">
+        <LoadingState message="Connecting to karaoke lounge & audio channels..." />
+      </div>
+    );
+  }
+
+  if (isError || !room) {
+    return (
+      <div className="flex-1 flex items-center justify-center py-20 bg-[#07090f]">
+        <EmptyState
+          icon={AlertCircle}
+          title="Lounge Not Found"
+          description={
+            error instanceof Error
+              ? error.message
+              : 'The requested karaoke lounge could not be loaded or has been closed.'
+          }
+          action={{
+            label: 'Back to Lounges',
+            onClick: () => {
+              window.location.href = '/rooms';
+            },
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col bg-[#07090f] overflow-hidden">
       {/* Room Header */}
@@ -116,7 +135,7 @@ export default function RoomDetailPage() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 text-xs text-slate-400 px-2.5 py-1 rounded-lg bg-white/5 border border-white/5">
               <Users className="w-3.5 h-3.5 text-violet-400" />
-              <span>{participants.length}</span>
+              <span>{activeMembers ? activeMembers.length : (room.currentParticipantsCount ?? participants.length)}</span>
               <span>/</span>
               <span>{room.capacity}</span>
             </div>

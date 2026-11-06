@@ -14,8 +14,13 @@ import {
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { UserAvatar } from '@/components/shared/user-avatar';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function ProfilePage() {
+  const { user, isAuthenticated, logout } = useAuth();
+  const displayName = user?.username || 'Alex Singer';
+  const roleLabel = user?.role ? `${user.role.toUpperCase()} Member` : 'Karaoke Legend • Lvl 14';
+
   const recentPerformances = [
     { title: 'Blinding Lights', artist: 'The Weeknd', room: 'Billboard 100 Golden Hits', date: '2 hours ago', score: '96%' },
     { title: 'Gurenge', artist: 'LiSA', room: 'Neo Tokyo Cyber Lounge', date: 'Yesterday', score: '98%' },
@@ -31,18 +36,29 @@ export default function ProfilePage() {
           <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-bl from-violet-600/20 via-cyan-500/10 to-transparent blur-3xl pointer-events-none" />
 
           <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 relative z-10">
-            <UserAvatar name="Alex Singer" size="xl" status="online" className="shadow-2xl" />
+            <UserAvatar name={displayName} size="xl" status="online" className="shadow-2xl" />
 
             <div className="flex-1 text-center sm:text-left">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h1 className="text-2xl sm:text-3xl font-extrabold text-white">Alex Singer</h1>
-                  <p className="text-xs text-violet-400 font-medium">@alex_vocals &bull; Member since Oct 2026</p>
+                  <h1 className="text-2xl sm:text-3xl font-extrabold text-white">{displayName}</h1>
+                  <p className="text-xs text-violet-400 font-medium">@{displayName.toLowerCase().replace(/\s+/g, '_')} &bull; Member since Oct 2026</p>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300 text-xs font-semibold">
-                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Karaoke Legend &bull; Lvl 14</span>
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300 text-xs font-semibold">
+                    <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{roleLabel}</span>
+                  </div>
+
+                  {isAuthenticated && (
+                    <button
+                      onClick={() => logout()}
+                      className="px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-xs font-semibold transition-colors"
+                    >
+                      Sign Out
+                    </button>
+                  )}
                 </div>
               </div>
 

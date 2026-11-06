@@ -1,0 +1,41 @@
+import { apiClient } from '../client';
+import {
+  CreateRoomDto,
+  PaginationMeta,
+  RoomDto,
+  RoomMembershipDto,
+  RoomQueryDto,
+} from '@ktv/contracts';
+
+export interface PaginatedRoomsResult {
+  items: RoomDto[];
+  pagination: PaginationMeta;
+}
+
+export const roomApi = {
+  async getRooms(params?: Partial<RoomQueryDto>): Promise<PaginatedRoomsResult> {
+    return apiClient.get<PaginatedRoomsResult>('/rooms', {
+      params: params as Record<string, string | number | boolean | undefined>,
+    });
+  },
+
+  async getRoomById(roomId: string): Promise<RoomDto> {
+    return apiClient.get<RoomDto>(`/rooms/${roomId}`);
+  },
+
+  async createRoom(payload: CreateRoomDto): Promise<RoomDto> {
+    return apiClient.post<RoomDto>('/rooms', payload);
+  },
+
+  async joinRoom(roomId: string): Promise<RoomMembershipDto> {
+    return apiClient.post<RoomMembershipDto>(`/rooms/${roomId}/join`, {});
+  },
+
+  async leaveRoom(roomId: string): Promise<null> {
+    return apiClient.post<null>(`/rooms/${roomId}/leave`, {});
+  },
+
+  async getMembers(roomId: string): Promise<RoomMembershipDto[]> {
+    return apiClient.get<RoomMembershipDto[]>(`/rooms/${roomId}/members`);
+  },
+};

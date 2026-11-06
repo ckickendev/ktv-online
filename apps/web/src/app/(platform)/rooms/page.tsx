@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Search, SlidersHorizontal, Info, Plus, Music2 } from 'lucide-react';
+import { Search, SlidersHorizontal, Info, Plus, Music2, AlertCircle } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { RoomCard } from '@/components/shared/room-card';
 import { EmptyState } from '@/components/shared/empty-state';
-import { MOCK_ROOMS } from '@/features/rooms/mock-rooms';
-import { RoomCategory } from '@ktv/contracts';
+import { LoadingState } from '@/components/shared/loading-state';
+import { useRooms } from '@/hooks/queries/use-rooms';
+import { RoomCategory, RoomStatus } from '@ktv/contracts';
 
 const CATEGORIES: { id: RoomCategory; label: string }[] = [
   { id: 'all', label: 'All Lounges' },
@@ -22,43 +23,32 @@ export default function RoomDiscoveryPage() {
   const [selectedCategory, setSelectedCategory] = useState<RoomCategory>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
 
-  const filteredRooms = useMemo(() => {
-    return MOCK_ROOMS.filter((room) => {
-      const matchesSearch =
-        searchQuery.trim() === '' ||
-        room.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (room.description && room.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (room.currentSongTitle && room.currentSongTitle.toLowerCase().includes(searchQuery.toLowerCase()));
+  const { data, isLoading, isError, error, refetch } = useRooms({
+    category: selectedCategory === 'all' ? undefined : selectedCategory,
+    status: selectedStatus === 'all' ? undefined : (selectedStatus as RoomStatus),
+    search: searchQuery.trim() || undefined,
+  });
 
-      const matchesCategory =
-        selectedCategory === 'all' || room.category === selectedCategory;
-
-      const matchesStatus =
-        selectedStatus === 'all' || room.status === selectedStatus;
-
-      return matchesSearch && matchesCategory && matchesStatus;
-    });
-  }, [searchQuery, selectedCategory, selectedStatus]);
+  const rooms = useMemo(() => data?.items ?? [], [data?.items]);
 
   const totalSingers = useMemo(() => {
-    return MOCK_ROOMS.reduce((acc, r) => acc + r.currentParticipantsCount, 0);
-  }, []);
+    return rooms.reduce((acc, r) => acc + (r.currentParticipantsCount || 0), 0);
+  }, [rooms]);
 
   return (
     <div className="flex-1 py-8">
       <PageContainer>
-        {/* Sprint 0 Notice Banner */}
+        {/* API Status Notice Banner */}
         <div className="mb-8 p-4 rounded-2xl bg-violet-950/30 border border-violet-500/20 backdrop-blur-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2.5 text-violet-300">
             <Info className="w-4 h-4 text-cyan-400 shrink-0" />
             <span>
-              <strong>Sprint 0 Demo Notice:</strong> The lounges shown below are simulated mock
-              datasets for UI/UX validation. Real-time MongoDB synchronization will arrive in
-              Sprint 1.
+              <strong>Realtime API Connected:</strong> Lounges are synchronized with the Express backend
+              and MongoDB via TanStack Query.
             </span>
           </div>
           <span className="shrink-0 px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 font-semibold border border-cyan-500/20">
-            {totalSingers} Live Singers Mocked
+            {totalSingers} Live Singers
           </span>
         </div>
 
@@ -68,7 +58,7 @@ export default function RoomDiscoveryPage() {
             <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
               <span>Karaoke Lounges</span>
               <span className="text-xs px-2.5 py-1 rounded-full bg-white/10 text-slate-300 font-medium">
-                {filteredRooms.length} {filteredRooms.length === 1 ? 'room' : 'rooms'}
+                {rooms.length} {rooms.length === 1 ? 'room' : 'rooms'}
               </span>
             </h1>
             <p className="text-sm text-slate-400 mt-1">
@@ -77,7 +67,7 @@ export default function RoomDiscoveryPage() {
           </div>
 
           <button
-            onClick={() => alert('Host Room creation modal will be connected in Sprint 1.')}
+            onClick={() => alert('Host Room creation modal will be connected in Sprint 1.2.')}
             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs transition-all shadow-lg shadow-violet-600/20"
           >
             <Plus className="w-4 h-4" />
@@ -143,10 +133,26 @@ export default function RoomDiscoveryPage() {
           })}
         </div>
 
-        {/* Rooms Grid */}
-        {filteredRooms.length > 0 ? (
+        {/* Rooms Grid / States */}
+        {isLoading ? (
+          <LoadingState message="Connecting to API and loading lounges..." />
+        ) : isError ? (
+          <EmptyState
+            icon={AlertCircle}
+            title="Failed to Load Lounges"
+            description={
+              error instanceof Error
+                ? error.message
+                : 'Could not connect to the backend API server. Please check your network connection.'
+            }
+            action={{
+              label: 'Retry Connection',
+              onClick: () => refetch(),
+            }}
+          />
+        ) : rooms.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredRooms.map((room) => (
+            {rooms.map((room) => (
               <RoomCard key={room.id} room={room} />
             ))}
           </div>
@@ -154,7 +160,7 @@ export default function RoomDiscoveryPage() {
           <EmptyState
             icon={Music2}
             title="No Lounges Found"
-            description="We couldn't find any rooms matching your search query and filters. Try adjusting your search term."
+            description="We couldn't find any rooms matching your search query and filters. Try adjusting your filters or hosting a new lounge."
             action={{
               label: 'Reset Filters',
               onClick: () => {

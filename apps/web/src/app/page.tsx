@@ -11,11 +11,9 @@ import {
   Sliders,
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
-import { RoomCard } from '@/components/shared/room-card';
-import { MOCK_ROOMS } from '@/features/rooms/mock-rooms';
+import { FeaturedRooms } from '@/features/rooms/featured-rooms';
 
 export default function LandingPage() {
-  const featuredRooms = MOCK_ROOMS.slice(0, 3);
 
   return (
     <div className="relative overflow-hidden flex flex-col">
@@ -127,11 +125,7 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {featuredRooms.map((room) => (
-              <RoomCard key={room.id} room={room} />
-            ))}
-          </div>
+          <FeaturedRooms />
         </PageContainer>
       </section>
 
