@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: #090b12;
+    --foreground: #f8fafc;
+    --surface: #101422;
+    --surface-hover: #171d31;
+    --surface-muted: #131728;
+    --primary: #8b5cf6;
+    --primary-foreground: #ffffff;
+    --secondary: #06b6d4;
+    --secondary-foreground: #ffffff;
+    --accent: #a855f7;
+    --accent-foreground: #ffffff;
+    --muted: #1c2237;
+    --muted-foreground: #94a3b8;
+    --border: #232b43;
+    --border-hover: #364264;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --destructive: #f43f5e;
+    --radius: 0.75rem;
+  }
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-muted: var(--surface-muted);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-hover: var(--border-hover);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-destructive: var(--destructive);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tasteful subtle backdrop & cards */
+.glass-panel {
+  background: rgba(16, 20, 34, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: rgba(22, 28, 46, 0.65);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  background: rgba(27, 34, 56, 0.85);
+  border-color: rgba(139, 92, 246, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.5), 0 0 20px -5px rgba(139, 92, 246, 0.15);
+}
+
+/* Subtle neon glows */
+.glow-primary {
+  box-shadow: 0 0 25px -5px rgba(139, 92, 246, 0.35);
+}
+
+.glow-secondary {
+  box-shadow: 0 0 25px -5px rgba(6, 182, 212, 0.35);
+}
+
+/* Equalizer sound wave animation */
+@keyframes soundwave {
+  0%, 100% { height: 6px; }
+  50% { height: 26px; }
+}
+
+.wave-bar-1 { animation: soundwave 1.1s ease-in-out infinite; }
+.wave-bar-2 { animation: soundwave 0.8s ease-in-out infinite 0.2s; }
+.wave-bar-3 { animation: soundwave 1.3s ease-in-out infinite 0.4s; }
+.wave-bar-4 { animation: soundwave 0.9s ease-in-out infinite 0.1s; }
+.wave-bar-5 { animation: soundwave 1.2s ease-in-out infinite 0.3s; }

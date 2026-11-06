@@ -1,0 +1,68 @@
+import { z } from 'zod';
+import { PaginationQuerySchema } from './common.js';
+
+export const RoomTypeSchema = z.enum(['standard', 'vip', 'party']);
+export type RoomType = z.infer<typeof RoomTypeSchema>;
+
+export const RoomVisibilitySchema = z.enum(['public', 'private']);
+export type RoomVisibility = z.infer<typeof RoomVisibilitySchema>;
+
+export const RoomStatusSchema = z.enum(['idle', 'singing', 'paused', 'closed']);
+export type RoomStatus = z.infer<typeof RoomStatusSchema>;
+
+export const RoomCategorySchema = z.enum(['all', 'pop', 'anime', 'rock', 'ballad', 'hiphop', 'rnb']);
+export type RoomCategory = z.infer<typeof RoomCategorySchema>;
+
+export const RoomDtoSchema = z.object({
+  id: z.string(),
+  name: z.string().min(2).max(60),
+  description: z.string().max(250).optional().nullable(),
+  ownerId: z.string(),
+  roomType: RoomTypeSchema,
+  visibility: RoomVisibilitySchema,
+  capacity: z.number().int().min(2).max(50),
+  status: RoomStatusSchema,
+  currentParticipantsCount: z.number().int().nonnegative().default(0),
+  category: RoomCategorySchema.default('all'),
+  currentSongTitle: z.string().optional().nullable(),
+  currentSingerName: z.string().optional().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export type RoomDto = z.infer<typeof RoomDtoSchema>;
+
+export const CreateRoomSchema = z.object({
+  name: z
+    .string()
+    .min(2, 'Room name must be at least 2 characters')
+    .max(60, 'Room name cannot exceed 60 characters'),
+  description: z.string().max(250, 'Description cannot exceed 250 characters').optional(),
+  roomType: RoomTypeSchema.default('standard'),
+  visibility: RoomVisibilitySchema.default('public'),
+  capacity: z.coerce.number().int().min(2).max(50).default(10),
+  category: RoomCategorySchema.default('all'),
+});
+
+export type CreateRoomDto = z.infer<typeof CreateRoomSchema>;
+
+export const UpdateRoomSchema = z.object({
+  name: z.string().min(2).max(60).optional(),
+  description: z.string().max(250).optional().nullable(),
+  visibility: RoomVisibilitySchema.optional(),
+  capacity: z.coerce.number().int().min(2).max(50).optional(),
+  status: RoomStatusSchema.optional(),
+  category: RoomCategorySchema.optional(),
+});
+
+export type UpdateRoomDto = z.infer<typeof UpdateRoomSchema>;
+
+export const RoomQuerySchema = PaginationQuerySchema.extend({
+  search: z.string().optional(),
+  category: RoomCategorySchema.optional(),
+  status: RoomStatusSchema.optional(),
+  roomType: RoomTypeSchema.optional(),
+  visibility: RoomVisibilitySchema.optional(),
+});
+
+export type RoomQueryDto = z.infer<typeof RoomQuerySchema>;

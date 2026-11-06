@@ -1,0 +1,31 @@
+{
+  "name": "ktv-online-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KTV Online - Your Virtual Hangout. Your Karaoke Night.",
+  "scripts": {
+    "dev": "concurrently -k -p \"[{name}]\" -n \"CONTRACTS,API,WEB\" -c \"magenta,blue,green\" \"pnpm --filter @ktv/contracts dev\" \"pnpm --filter @ktv/api dev\" \"pnpm --filter @ktv/web dev\"",
+    "dev:web": "pnpm --filter @ktv/web dev",
+    "dev:api": "pnpm --filter @ktv/api dev",
+    "dev:contracts": "pnpm --filter @ktv/contracts dev",
+    "build": "pnpm --filter @ktv/contracts build && pnpm --filter @ktv/api build && pnpm --filter @ktv/web build",
+    "build:web": "pnpm --filter @ktv/web build",
+    "build:api": "pnpm --filter @ktv/api build",
+    "build:contracts": "pnpm --filter @ktv/contracts build",
+    "lint": "pnpm --recursive run lint",
+    "typecheck": "pnpm --recursive run typecheck",
+    "test": "pnpm --recursive run test",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.5.2",
+    "typescript": "^5.8.2"
+  },
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
