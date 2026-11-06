@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { Search, SlidersHorizontal, Info, Plus, Music2, AlertCircle } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { RoomCard } from '@/components/shared/room-card';
@@ -66,13 +67,13 @@ export default function RoomDiscoveryPage() {
             </p>
           </div>
 
-          <button
-            onClick={() => alert('Host Room creation modal will be connected in Sprint 1.2.')}
+          <Link
+            href="/rooms/create"
             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs transition-all shadow-lg shadow-violet-600/20"
           >
             <Plus className="w-4 h-4" />
             <span>Host New Lounge</span>
-          </button>
+          </Link>
         </div>
 
         {/* Search & Filter Toolbar */}

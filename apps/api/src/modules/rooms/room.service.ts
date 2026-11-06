@@ -85,6 +85,30 @@ export class RoomService {
     return savedRoom;
   }
 
+  async findRoomsByOwner(
+    ownerId: string,
+    page = 1,
+    limit = 20
+  ): Promise<{ items: IRoomDocument[]; total: number }> {
+    if (!Types.ObjectId.isValid(ownerId)) {
+      return { items: [], total: 0 };
+    }
+    const filter: FilterQuery<IRoomDocument> = { ownerId: new Types.ObjectId(ownerId) };
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      RoomModel.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('ownerId', 'username avatar')
+        .exec(),
+      RoomModel.countDocuments(filter).exec(),
+    ]);
+
+    return { items, total };
+  }
+
   async update(id: string, data: UpdateRoomDto): Promise<IRoomDocument | null> {
     if (!Types.ObjectId.isValid(id)) {
       return null;
@@ -93,7 +117,22 @@ export class RoomService {
       id,
       { $set: data },
       { new: true, runValidators: true }
-    ).exec();
+    )
+      .populate('ownerId', 'username avatar')
+      .exec();
+  }
+
+  async closeRoom(id: string): Promise<IRoomDocument | null> {
+    if (!Types.ObjectId.isValid(id)) {
+      return null;
+    }
+    return RoomModel.findByIdAndUpdate(
+      id,
+      { $set: { status: 'closed' } },
+      { new: true, runValidators: true }
+    )
+      .populate('ownerId', 'username avatar')
+      .exec();
   }
 
   async joinRoom(roomId: string, userId: string): Promise<JoinRoomResult> {

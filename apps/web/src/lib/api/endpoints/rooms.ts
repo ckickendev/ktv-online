@@ -5,6 +5,7 @@ import {
   RoomDto,
   RoomMembershipDto,
   RoomQueryDto,
+  UpdateRoomDto,
 } from '@ktv/contracts';
 
 export interface PaginatedRoomsResult {
@@ -19,12 +20,26 @@ export const roomApi = {
     });
   },
 
+  async getMyRooms(params?: { page?: number; limit?: number }): Promise<PaginatedRoomsResult> {
+    return apiClient.get<PaginatedRoomsResult>('/rooms/my-rooms', {
+      params: params as Record<string, string | number | boolean | undefined>,
+    });
+  },
+
   async getRoomById(roomId: string): Promise<RoomDto> {
     return apiClient.get<RoomDto>(`/rooms/${roomId}`);
   },
 
   async createRoom(payload: CreateRoomDto): Promise<RoomDto> {
     return apiClient.post<RoomDto>('/rooms', payload);
+  },
+
+  async updateRoom(roomId: string, payload: UpdateRoomDto): Promise<RoomDto> {
+    return apiClient.patch<RoomDto>(`/rooms/${roomId}`, payload);
+  },
+
+  async closeRoom(roomId: string): Promise<RoomDto> {
+    return apiClient.post<RoomDto>(`/rooms/${roomId}/close`, {});
   },
 
   async joinRoom(roomId: string): Promise<RoomMembershipDto> {

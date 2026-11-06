@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import {
   Mic,
   Trophy,
@@ -48,6 +49,14 @@ export default function ProfilePage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <Link
+                    href="/my-rooms"
+                    className="px-3 py-1 rounded-full bg-violet-600/30 border border-violet-500/40 text-violet-300 hover:bg-violet-600/50 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    <span>My Lounges</span>
+                  </Link>
+
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300 text-xs font-semibold">
                     <Trophy className="w-3.5 h-3.5 text-amber-400" />
                     <span>{roleLabel}</span>

@@ -12,6 +12,8 @@ export const queryKeys = {
     details: () => [...queryKeys.rooms.all, 'detail'] as const,
     detail: (id: string) => [...queryKeys.rooms.details(), id] as const,
     members: (id: string) => [...queryKeys.rooms.detail(id), 'members'] as const,
+    mine: (params?: { page?: number; limit?: number }) =>
+      [...queryKeys.rooms.all, 'mine', params ?? {}] as const,
   },
   users: {
     all: ['users'] as const,

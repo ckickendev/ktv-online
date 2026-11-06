@@ -16,7 +16,12 @@ export function AppHeader() {
   const navLinks = [
     { href: '/', label: 'Home' },
     { href: '/rooms', label: 'Explore Lounges', icon: Compass },
-    ...(isAuthenticated ? [{ href: '/profile', label: 'My Studio', icon: User }] : []),
+    ...(isAuthenticated
+      ? [
+          { href: '/my-rooms', label: 'My Lounges', icon: Mic2 },
+          { href: '/profile', label: 'My Studio', icon: User },
+        ]
+      : []),
   ];
 
   return (
@@ -71,7 +76,7 @@ export function AppHeader() {
 
           {/* Quick Create Room CTA */}
           <Link
-            href="/rooms"
+            href="/rooms/create"
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-md shadow-violet-600/25 transition-all"
           >
             <PlusCircle className="w-4 h-4" />
@@ -163,7 +168,7 @@ export function AppHeader() {
 
           <div className="pt-2 space-y-2 border-t border-white/5">
             <Link
-              href="/rooms"
+              href="/rooms/create"
               onClick={() => setMobileMenuOpen(false)}
               className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold"
             >

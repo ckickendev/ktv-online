@@ -71,7 +71,17 @@ const RoomSchema = new Schema<IRoomDocument>(
       virtuals: true,
       transform: (_doc, ret: Record<string, unknown>) => {
         ret.id = ret._id ? (ret._id as { toString(): string }).toString() : undefined;
-        ret.ownerId = ret.ownerId ? (ret.ownerId as { toString(): string }).toString() : undefined;
+        if (ret.ownerId && typeof ret.ownerId === 'object') {
+          if ('id' in ret.ownerId && typeof (ret.ownerId as { id: unknown }).id === 'string') {
+            ret.ownerId = (ret.ownerId as { id: string }).id;
+          } else if ('_id' in ret.ownerId && (ret.ownerId as { _id: unknown })._id) {
+            ret.ownerId = (ret.ownerId as { _id: { toString(): string } })._id.toString();
+          } else {
+            ret.ownerId = (ret.ownerId as { toString(): string }).toString();
+          }
+        } else if (ret.ownerId) {
+          ret.ownerId = String(ret.ownerId);
+        }
         delete ret._id;
         delete ret.__v;
         return ret;
