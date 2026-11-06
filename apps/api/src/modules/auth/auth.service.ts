@@ -1,67 +1,165 @@
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { UserModel } from '../users/user.model.js';
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt.js';
+import { SessionModel } from './session.model.js';
+import { signAccessToken, signRefreshToken, verifyRefreshToken, hashToken } from '../../utils/jwt.js';
 import { env } from '../../config/env.js';
-import { AuthSessionResponse, AuthTokens } from './auth.types.js';
+import { logger } from '../../utils/logger.js';
+import { AuthResult, RefreshResult } from './auth.types.js';
 import { LoginDto } from './auth.validation.js';
 
 export class AuthService {
-  async authenticate(dto: LoginDto): Promise<AuthSessionResponse | null> {
+  async authenticate(dto: LoginDto): Promise<AuthResult> {
     const user = await UserModel.findOne({ email: dto.email.toLowerCase() }).select('+passwordHash').exec();
     if (!user) {
-      return null;
+      return { success: false, error: 'INVALID_CREDENTIALS' };
     }
 
     const isValid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!isValid) {
-      return null;
+      return { success: false, error: 'INVALID_CREDENTIALS' };
     }
+
+    if (user.status !== 'active') {
+      return { success: false, error: 'ACCOUNT_INACTIVE' };
+    }
+
+    const familyId = crypto.randomUUID();
+    const jti = crypto.randomUUID();
 
     const payload = {
       sub: user._id.toString(),
       username: user.username,
       role: user.role,
+      familyId,
+      jti,
     };
 
-    const tokens: AuthTokens = {
-      accessToken: signAccessToken(payload),
-      refreshToken: signRefreshToken(payload),
-      expiresIn: env.JWT_ACCESS_EXPIRES_IN,
-    };
+    const accessToken = signAccessToken({
+      sub: payload.sub,
+      username: payload.username,
+      role: payload.role,
+    });
+
+    const refreshToken = signRefreshToken(payload);
+
+    // Persist refresh session with 7 day expiry
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await SessionModel.create({
+      userId: user._id,
+      tokenHash: hashToken(refreshToken),
+      familyId,
+      expiresAt,
+      isRevoked: false,
+    });
 
     return {
-      user: {
-        id: user._id.toString(),
-        username: user.username,
-        email: user.email,
-        avatar: user.avatar,
-        role: user.role,
+      success: true,
+      data: {
+        user: {
+          id: user._id.toString(),
+          username: user.username,
+          email: user.email,
+          avatar: user.avatar,
+          role: user.role,
+        },
+        tokens: {
+          accessToken,
+          refreshToken,
+          expiresIn: env.JWT_ACCESS_EXPIRES_IN,
+        },
       },
-      tokens,
     };
   }
 
-  async refreshToken(token: string): Promise<AuthTokens | null> {
+  async refreshToken(token: string): Promise<RefreshResult> {
     try {
       const decoded = verifyRefreshToken(token);
-      const user = await UserModel.findById(decoded.sub).exec();
-      if (!user || user.status !== 'active') {
-        return null;
+      const tokenHash = hashToken(token);
+
+      const session = await SessionModel.findOne({ tokenHash }).exec();
+      if (!session || session.userId.toString() !== decoded.sub) {
+        return { success: false, error: 'INVALID_TOKEN' };
       }
 
-      const payload = {
+      // Refresh Token Replay Detection
+      if (session.isRevoked) {
+        logger.warn(
+          { userId: session.userId, familyId: session.familyId },
+          '🚨 Security alert: Refresh token replay detected! Revoking token family.'
+        );
+        // Revoke all sessions sharing this familyId
+        await SessionModel.updateMany({ familyId: session.familyId }, { $set: { isRevoked: true } }).exec();
+        return { success: false, error: 'REPLAY_DETECTED' };
+      }
+
+      const user = await UserModel.findById(session.userId).exec();
+      if (!user || user.status !== 'active') {
+        // Invalidate session if user is deleted or suspended
+        session.isRevoked = true;
+        await session.save();
+        return { success: false, error: 'ACCOUNT_INACTIVE' };
+      }
+
+      // Rotate session: revoke old session
+      session.isRevoked = true;
+      await session.save();
+
+      // Issue new token pair preserving the familyId
+      const newJti = crypto.randomUUID();
+      const newPayload = {
         sub: user._id.toString(),
         username: user.username,
         role: user.role,
+        familyId: session.familyId,
+        jti: newJti,
       };
 
+      const newAccessToken = signAccessToken({
+        sub: newPayload.sub,
+        username: newPayload.username,
+        role: newPayload.role,
+      });
+
+      const newRefreshToken = signRefreshToken(newPayload);
+
+      // Create new active session record
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await SessionModel.create({
+        userId: user._id,
+        tokenHash: hashToken(newRefreshToken),
+        familyId: session.familyId,
+        expiresAt,
+        isRevoked: false,
+      });
+
       return {
-        accessToken: signAccessToken(payload),
-        refreshToken: signRefreshToken(payload),
-        expiresIn: env.JWT_ACCESS_EXPIRES_IN,
+        success: true,
+        tokens: {
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          expiresIn: env.JWT_ACCESS_EXPIRES_IN,
+        },
       };
     } catch {
-      return null;
+      return { success: false, error: 'INVALID_TOKEN' };
+    }
+  }
+
+  async logout(token: string): Promise<boolean> {
+    try {
+      const tokenHash = hashToken(token);
+      const session = await SessionModel.findOne({ tokenHash }).exec();
+      if (!session) {
+        return false;
+      }
+
+      // Revoke this session and its family
+      session.isRevoked = true;
+      await session.save();
+      return true;
+    } catch {
+      return false;
     }
   }
 }

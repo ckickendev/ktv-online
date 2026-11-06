@@ -66,3 +66,22 @@ export const RoomQuerySchema = PaginationQuerySchema.extend({
 });
 
 export type RoomQueryDto = z.infer<typeof RoomQuerySchema>;
+
+export const RoomMembershipRoleSchema = z.enum(['host', 'member']);
+export type RoomMembershipRole = z.infer<typeof RoomMembershipRoleSchema>;
+
+export const RoomMembershipStatusSchema = z.enum(['active', 'left']);
+export type RoomMembershipStatus = z.infer<typeof RoomMembershipStatusSchema>;
+
+export const RoomMembershipDtoSchema = z.object({
+  id: z.string(),
+  roomId: z.string(),
+  userId: z.string(),
+  role: RoomMembershipRoleSchema,
+  status: RoomMembershipStatusSchema,
+  joinedAt: z.string().datetime(),
+  leftAt: z.string().datetime().nullable().optional(),
+});
+
+export type RoomMembershipDto = z.infer<typeof RoomMembershipDtoSchema>;
+

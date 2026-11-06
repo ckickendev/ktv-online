@@ -11,7 +11,6 @@ const UserSchema = new Schema<IUserDocument>(
       lowercase: true,
       minlength: 3,
       maxlength: 30,
-      index: true,
     },
     email: {
       type: String,
@@ -19,7 +18,6 @@ const UserSchema = new Schema<IUserDocument>(
       unique: true,
       trim: true,
       lowercase: true,
-      index: true,
     },
     passwordHash: {
       type: String,
@@ -56,10 +54,6 @@ const UserSchema = new Schema<IUserDocument>(
     },
   }
 );
-
-// Compound indexes for user lookups
-UserSchema.index({ email: 1, status: 1 });
-UserSchema.index({ username: 1, status: 1 });
 
 export const UserModel: Model<IUserDocument> =
   (mongoose.models.User as Model<IUserDocument>) || model<IUserDocument>('User', UserSchema);

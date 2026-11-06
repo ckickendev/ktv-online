@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { roomController } from './room.controller.js';
 import { validateBody, validateQuery } from '../../middlewares/validate.middleware.js';
+import { requireAuth } from '../../middlewares/auth.middleware.js';
 import { CreateRoomSchema, RoomQuerySchema } from './room.validation.js';
 
 export const roomRoutes = Router();
@@ -13,6 +14,19 @@ roomRoutes.get('/:id', (req, res, next) => {
   roomController.getRoomById(req, res, next);
 });
 
-roomRoutes.post('/', validateBody(CreateRoomSchema), (req, res, next) => {
+roomRoutes.get('/:id/members', (req, res, next) => {
+  roomController.getMembers(req, res, next);
+});
+
+// Protected room management endpoints
+roomRoutes.post('/', requireAuth, validateBody(CreateRoomSchema), (req, res, next) => {
   roomController.createRoom(req, res, next);
+});
+
+roomRoutes.post('/:id/join', requireAuth, (req, res, next) => {
+  roomController.joinRoom(req, res, next);
+});
+
+roomRoutes.post('/:id/leave', requireAuth, (req, res, next) => {
+  roomController.leaveRoom(req, res, next);
 });

@@ -8,7 +8,7 @@ export const LoginSchema = z.object({
 export type LoginDto = z.infer<typeof LoginSchema>;
 
 export const RefreshTokenSchema = z.object({
-  refreshToken: z.string().min(1, 'Refresh token is required'),
+  refreshToken: z.string().optional(),
 });
 
 export type RefreshTokenDto = z.infer<typeof RefreshTokenSchema>;

@@ -47,3 +47,25 @@ export const UpdateUserSchema = z.object({
 });
 
 export type UpdateUserDto = z.infer<typeof UpdateUserSchema>;
+
+export const AuthTokensSchema = z.object({
+  accessToken: z.string(),
+  expiresIn: z.string(),
+  refreshToken: z.string().optional(),
+});
+
+export type AuthTokensDto = z.infer<typeof AuthTokensSchema>;
+
+export const AuthSessionResponseSchema = z.object({
+  user: z.object({
+    id: z.string(),
+    username: z.string(),
+    email: z.string(),
+    avatar: z.string().nullable().optional(),
+    role: z.string(),
+  }),
+  tokens: AuthTokensSchema,
+});
+
+export type AuthSessionResponseDto = z.infer<typeof AuthSessionResponseSchema>;
+

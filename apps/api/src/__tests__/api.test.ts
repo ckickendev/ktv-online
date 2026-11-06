@@ -5,18 +5,37 @@ import { createApp } from '../app.js';
 describe('API Foundation Endpoints', () => {
   const app = createApp();
 
-  describe('GET /api/v1/health', () => {
-    it('should return health status payload with expected structure', async () => {
-      const res = await request(app).get('/api/v1/health');
+  describe('Health Probes (OPS-01)', () => {
+    it('GET /api/v1/health/live should return 200 with process liveness status', async () => {
+      const res = await request(app).get('/api/v1/health/live');
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('success', true);
       expect(res.body).toHaveProperty('data');
-      expect(res.body.data).toHaveProperty('status');
-      expect(res.body.data).toHaveProperty('environment');
+      expect(res.body.data.status).toBe('ok');
+      expect(res.body.data).toHaveProperty('uptime');
       expect(res.body.data).toHaveProperty('timestamp');
-      expect(res.body.data).toHaveProperty('database');
-      expect(res.body.data.database).toHaveProperty('status');
+    });
+
+    it('GET /api/v1/health/ready should return 503 when database is disconnected', async () => {
+      const res = await request(app).get('/api/v1/health/ready');
+
+      // Database is disconnected in this unit suite
+      expect(res.status).toBe(503);
+      expect(res.body).toHaveProperty('success', false);
+      expect(res.body.data.status).toBe('not_ready');
+      expect(res.body.data.database.status).toBe('disconnected');
+    });
+
+    it('GET /api/v1/health should return 503 degraded status when database is disconnected', async () => {
+      const res = await request(app).get('/api/v1/health');
+
+      expect(res.status).toBe(503);
+      expect(res.body).toHaveProperty('success', false);
+      expect(res.body).toHaveProperty('data');
+      expect(res.body.data.status).toBe('degraded');
+      expect(res.body.data).toHaveProperty('environment');
+      expect(res.body.data.database.status).toBe('disconnected');
     });
   });
 
@@ -32,7 +51,7 @@ describe('API Foundation Endpoints', () => {
     });
   });
 
-  describe('Validation Error Handling', () => {
+  describe('Validation & Authorization Handling', () => {
     it('should return 400 with validation details when registering invalid user payload', async () => {
       const res = await request(app).post('/api/v1/users/register').send({
         username: 'a', // Too short
@@ -47,15 +66,15 @@ describe('API Foundation Endpoints', () => {
       expect(res.body.errors.length).toBeGreaterThan(0);
     });
 
-    it('should return 400 when creating room with invalid capacity', async () => {
+    it('should return 401 when creating room without authentication token', async () => {
       const res = await request(app).post('/api/v1/rooms').send({
         name: 'Cool Room',
-        capacity: 999, // Exceeds max 50
+        capacity: 999,
       });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Validation failed');
+      expect(res.body.message).toBe('Authentication token is required');
     });
   });
 });

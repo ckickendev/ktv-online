@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { Types } from 'mongoose';
 import { userService } from './user.service.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { CreateUserDto } from '@ktv/contracts';
@@ -7,8 +8,8 @@ export class UserController {
   async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.params.id;
-      if (!userId) {
-        sendError(res, 'User ID is required', 400);
+      if (!userId || !Types.ObjectId.isValid(userId)) {
+        sendError(res, 'User not found', 404);
         return;
       }
 

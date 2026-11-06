@@ -1,7 +1,17 @@
 import { FilterQuery, Types } from 'mongoose';
 import { RoomModel } from './room.model.js';
+import { RoomMembershipModel } from './membership.model.js';
 import { IRoomDocument } from './room.types.js';
+import { IRoomMembershipDocument } from './membership.types.js';
 import { CreateRoomDto, RoomQueryDto, UpdateRoomDto } from '@ktv/contracts';
+
+export type JoinRoomResult =
+  | { success: true; membership: IRoomMembershipDocument; alreadyJoined: boolean }
+  | { success: false; error: 'ROOM_NOT_FOUND' | 'ROOM_CLOSED' | 'ROOM_FULL' | 'JOIN_FAILED' };
+
+export type LeaveRoomResult =
+  | { success: true }
+  | { success: false; error: 'NOT_A_MEMBER' | 'ROOM_NOT_FOUND' };
 
 export class RoomService {
   async findById(id: string): Promise<IRoomDocument | null> {
@@ -61,7 +71,18 @@ export class RoomService {
       currentParticipantsCount: 1,
     });
 
-    return room.save();
+    const savedRoom = await room.save();
+
+    // Automatically create host membership for room owner
+    await RoomMembershipModel.create({
+      roomId: savedRoom._id,
+      userId: new Types.ObjectId(ownerId),
+      role: 'host',
+      status: 'active',
+      joinedAt: new Date(),
+    });
+
+    return savedRoom;
   }
 
   async update(id: string, data: UpdateRoomDto): Promise<IRoomDocument | null> {
@@ -73,6 +94,120 @@ export class RoomService {
       { $set: data },
       { new: true, runValidators: true }
     ).exec();
+  }
+
+  async joinRoom(roomId: string, userId: string): Promise<JoinRoomResult> {
+    if (!Types.ObjectId.isValid(roomId) || !Types.ObjectId.isValid(userId)) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const userObjectId = new Types.ObjectId(userId);
+
+    // 1. Check if user already has an active membership (Idempotent Join)
+    const existingMembership = await RoomMembershipModel.findOne({
+      roomId: roomObjectId,
+      userId: userObjectId,
+      status: 'active',
+    }).exec();
+
+    if (existingMembership) {
+      return { success: true, membership: existingMembership, alreadyJoined: true };
+    }
+
+    // 2. Atomic capacity check and reservation
+    const updatedRoom = await RoomModel.findOneAndUpdate(
+      {
+        _id: roomObjectId,
+        status: { $ne: 'closed' },
+        $expr: { $lt: ['$currentParticipantsCount', '$capacity'] },
+      },
+      { $inc: { currentParticipantsCount: 1 } },
+      { new: true }
+    ).exec();
+
+    if (!updatedRoom) {
+      const roomCheck = await RoomModel.findById(roomObjectId).exec();
+      if (!roomCheck) {
+        return { success: false, error: 'ROOM_NOT_FOUND' };
+      }
+      if (roomCheck.status === 'closed') {
+        return { success: false, error: 'ROOM_CLOSED' };
+      }
+      if (roomCheck.currentParticipantsCount >= roomCheck.capacity) {
+        return { success: false, error: 'ROOM_FULL' };
+      }
+      return { success: false, error: 'JOIN_FAILED' };
+    }
+
+    // 3. Create or reactivate membership record
+    try {
+      const isOwner = updatedRoom.ownerId.toString() === userId;
+      const membership = await RoomMembershipModel.findOneAndUpdate(
+        { roomId: roomObjectId, userId: userObjectId },
+        {
+          $set: {
+            role: isOwner ? 'host' : 'member',
+            status: 'active',
+            joinedAt: new Date(),
+            leftAt: null,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      ).exec();
+
+      return { success: true, membership, alreadyJoined: false };
+    } catch (err) {
+      // Rollback reserved capacity on membership persistence failure
+      await RoomModel.findByIdAndUpdate(roomObjectId, {
+        $inc: { currentParticipantsCount: -1 },
+      }).exec();
+      throw err;
+    }
+  }
+
+  async leaveRoom(roomId: string, userId: string): Promise<LeaveRoomResult> {
+    if (!Types.ObjectId.isValid(roomId) || !Types.ObjectId.isValid(userId)) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const userObjectId = new Types.ObjectId(userId);
+
+    const membership = await RoomMembershipModel.findOne({
+      roomId: roomObjectId,
+      userId: userObjectId,
+      status: 'active',
+    }).exec();
+
+    if (!membership) {
+      return { success: false, error: 'NOT_A_MEMBER' };
+    }
+
+    membership.status = 'left';
+    membership.leftAt = new Date();
+    await membership.save();
+
+    // Safely decrement room participant count
+    await RoomModel.findOneAndUpdate(
+      { _id: roomObjectId, currentParticipantsCount: { $gt: 0 } },
+      { $inc: { currentParticipantsCount: -1 } }
+    ).exec();
+
+    return { success: true };
+  }
+
+  async getActiveMembers(roomId: string): Promise<IRoomMembershipDocument[]> {
+    if (!Types.ObjectId.isValid(roomId)) {
+      return [];
+    }
+    return RoomMembershipModel.find({
+      roomId: new Types.ObjectId(roomId),
+      status: 'active',
+    })
+      .populate('userId', 'username avatar role')
+      .sort({ joinedAt: 1 })
+      .exec();
   }
 }
 

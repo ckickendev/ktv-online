@@ -32,7 +32,6 @@ const RoomSchema = new Schema<IRoomDocument>(
       type: String,
       enum: ['public', 'private'],
       default: 'public',
-      index: true,
     },
     capacity: {
       type: Number,
@@ -51,7 +50,6 @@ const RoomSchema = new Schema<IRoomDocument>(
       type: String,
       enum: ['all', 'pop', 'anime', 'rock', 'ballad', 'hiphop', 'rnb'],
       default: 'all',
-      index: true,
     },
     currentParticipantsCount: {
       type: Number,
@@ -82,9 +80,9 @@ const RoomSchema = new Schema<IRoomDocument>(
   }
 );
 
-// Indexes for fast discovery queries
+// Compound indexes for room discovery queries and sorting
 RoomSchema.index({ visibility: 1, status: 1, createdAt: -1 });
-RoomSchema.index({ category: 1, visibility: 1 });
+RoomSchema.index({ category: 1, visibility: 1, createdAt: -1 });
 RoomSchema.index({ name: 'text', description: 'text' });
 
 export const RoomModel: Model<IRoomDocument> =

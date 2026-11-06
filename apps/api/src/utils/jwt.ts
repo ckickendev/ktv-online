@@ -1,10 +1,17 @@
 import jwt, { SignOptions } from 'jsonwebtoken';
+import crypto from 'crypto';
 import { env } from '../config/env.js';
 
 export interface JwtTokenPayload {
   sub: string;
   username: string;
   role: string;
+  familyId?: string;
+  jti?: string;
+}
+
+export function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 export function signAccessToken(payload: JwtTokenPayload): string {

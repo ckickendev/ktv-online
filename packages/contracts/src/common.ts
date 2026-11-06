@@ -54,3 +54,22 @@ export const HealthStatusSchema = z.object({
 });
 
 export type HealthStatusDto = z.infer<typeof HealthStatusSchema>;
+
+export const LivenessStatusSchema = z.object({
+  status: z.literal('ok'),
+  timestamp: z.string(),
+  uptime: z.number(),
+});
+
+export type LivenessStatusDto = z.infer<typeof LivenessStatusSchema>;
+
+export const ReadinessStatusSchema = z.object({
+  status: z.enum(['ready', 'not_ready']),
+  timestamp: z.string(),
+  database: z.object({
+    status: z.enum(['connected', 'connecting', 'disconnected', 'error']),
+  }),
+});
+
+export type ReadinessStatusDto = z.infer<typeof ReadinessStatusSchema>;
+
