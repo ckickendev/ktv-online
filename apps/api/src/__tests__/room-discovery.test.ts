@@ -16,7 +16,6 @@ describe('Room Discovery & Search API (Sprint 1.4)', () => {
     await connectDatabase();
     await UserModel.deleteMany({ email: { $regex: /@discovery-test\.ktv/ } });
     await RoomModel.deleteMany({ name: { $regex: /Discovery Test/ } });
-    await RoomMembershipModel.deleteMany({});
 
     // Create Host User
     const host = await UserModel.create({
@@ -106,9 +105,11 @@ describe('Room Discovery & Search API (Sprint 1.4)', () => {
   });
 
   afterAll(async () => {
+    if (hostUser?.id) {
+      await RoomMembershipModel.deleteMany({ userId: hostUser.id });
+    }
     await UserModel.deleteMany({ email: { $regex: /@discovery-test\.ktv/ } });
     await RoomModel.deleteMany({ name: { $regex: /Discovery Test/ } });
-    await RoomMembershipModel.deleteMany({});
     await disconnectDatabase();
   });
 

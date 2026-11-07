@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { roomController } from './room.controller.js';
 import { validateBody, validateQuery } from '../../middlewares/validate.middleware.js';
-import { requireAuth } from '../../middlewares/auth.middleware.js';
+import { requireAuth, optionalAuth } from '../../middlewares/auth.middleware.js';
 import { CreateRoomSchema, RoomQuerySchema, UpdateRoomSchema } from './room.validation.js';
 
 export const roomRoutes = Router();
@@ -15,12 +15,21 @@ roomRoutes.get('/my-rooms', requireAuth, (req, res, next) => {
   roomController.getMyRooms(req, res, next);
 });
 
+// Protected: list rooms joined by current user (must be declared before /:id)
+roomRoutes.get('/joined-rooms', requireAuth, (req, res, next) => {
+  roomController.getJoinedRooms(req, res, next);
+});
+
 roomRoutes.get('/:id', (req, res, next) => {
   roomController.getRoomById(req, res, next);
 });
 
-roomRoutes.get('/:id/members', (req, res, next) => {
+roomRoutes.get('/:id/members', optionalAuth, (req, res, next) => {
   roomController.getMembers(req, res, next);
+});
+
+roomRoutes.get('/:id/membership', requireAuth, (req, res, next) => {
+  roomController.getMyMembership(req, res, next);
 });
 
 // Protected room management endpoints

@@ -64,3 +64,31 @@ export function requireRole(...allowedRoles: UserRole[]) {
     next();
   };
 }
+
+export async function optionalAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return next();
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const payload = verifyAccessToken(token);
+    const user = await UserModel.findById(payload.sub).select('status role username').exec();
+    if (user && user.status === 'active') {
+      req.user = {
+        id: user._id.toString(),
+        username: user.username,
+        role: user.role as UserRole,
+      };
+    }
+  } catch {
+    // If token is invalid or expired, continue as unauthenticated guest
+  }
+
+  next();
+}

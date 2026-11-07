@@ -42,7 +42,32 @@ const RoomMembershipSchema = new Schema<IRoomMembershipDocument>(
       transform: (_doc, ret: Record<string, unknown>) => {
         ret.id = ret._id ? (ret._id as { toString(): string }).toString() : undefined;
         ret.roomId = ret.roomId ? (ret.roomId as { toString(): string }).toString() : undefined;
-        ret.userId = ret.userId ? (ret.userId as { toString(): string }).toString() : undefined;
+        if (ret.userId && typeof ret.userId === 'object') {
+          if ('username' in ret.userId) {
+            const userDoc = ret.userId as {
+              _id?: unknown;
+              id?: unknown;
+              username: string;
+              avatar?: string | null;
+            };
+            const userIdStr =
+              (userDoc.id as string) || (userDoc._id ? String(userDoc._id) : '');
+            ret.user = {
+              id: userIdStr,
+              username: userDoc.username,
+              avatar: userDoc.avatar ?? null,
+            };
+            ret.userId = userIdStr;
+          } else if ('id' in ret.userId && typeof (ret.userId as { id: unknown }).id === 'string') {
+            ret.userId = (ret.userId as { id: string }).id;
+          } else if ('_id' in ret.userId && (ret.userId as { _id: unknown })._id) {
+            ret.userId = (ret.userId as { _id: { toString(): string } })._id.toString();
+          } else {
+            ret.userId = (ret.userId as { toString(): string }).toString();
+          }
+        } else if (ret.userId) {
+          ret.userId = String(ret.userId);
+        }
         delete ret._id;
         delete ret.__v;
         return ret;

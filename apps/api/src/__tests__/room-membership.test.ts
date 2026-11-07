@@ -17,9 +17,13 @@ describe('Room Membership Integrity & Concurrency (Phase C)', () => {
 
   beforeAll(async () => {
     await connectDatabase();
+    const existingRooms = await RoomModel.find({ name: { $regex: /Membership Test/ } }).select('_id');
+    const existingRoomIds = existingRooms.map((r) => r._id);
+    if (existingRoomIds.length > 0) {
+      await RoomMembershipModel.deleteMany({ roomId: { $in: existingRoomIds } });
+    }
     await UserModel.deleteMany({ email: { $regex: /@room-test\.ktv/ } });
     await RoomModel.deleteMany({ name: { $regex: /Membership Test/ } });
-    await RoomMembershipModel.deleteMany({});
 
     // Create 1 host user + 6 member users
     for (let i = 1; i <= 7; i++) {
@@ -41,9 +45,12 @@ describe('Room Membership Integrity & Concurrency (Phase C)', () => {
   });
 
   afterAll(async () => {
+    const userIds = users.map((u) => u.id);
+    if (userIds.length > 0) {
+      await RoomMembershipModel.deleteMany({ userId: { $in: userIds } });
+    }
     await UserModel.deleteMany({ email: { $regex: /@room-test\.ktv/ } });
     await RoomModel.deleteMany({ name: { $regex: /Membership Test/ } });
-    await RoomMembershipModel.deleteMany({});
     await disconnectDatabase();
   });
 

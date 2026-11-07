@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from './query-keys';
-import { roomApi } from '@/lib/api/endpoints/rooms';
-import { RoomDto, RoomMembershipDto } from '@ktv/contracts';
+import { roomApi, PaginatedRoomsResult } from '@/lib/api/endpoints/rooms';
+import { RoomDto, RoomMembershipDto, RoomMyMembershipDto } from '@ktv/contracts';
+import { tokenStore } from '@/lib/api/token-store';
 
 export function useRoom(roomId: string, options?: { enabled?: boolean }) {
   return useQuery<RoomDto>({
@@ -25,6 +26,31 @@ export function useRoomMembers(roomId: string, options?: { enabled?: boolean }) 
   });
 }
 
+export function useMyRoomMembership(roomId: string, options?: { enabled?: boolean }) {
+  return useQuery<RoomMyMembershipDto>({
+    queryKey: queryKeys.rooms.membership(roomId),
+    queryFn: async () => {
+      return roomApi.getMyMembership(roomId);
+    },
+    enabled: Boolean(roomId) && tokenStore.hasToken() && options?.enabled !== false,
+    staleTime: 10 * 1000,
+  });
+}
+
+export function useJoinedRooms(
+  params?: { page?: number; limit?: number },
+  options?: { enabled?: boolean }
+) {
+  return useQuery<PaginatedRoomsResult>({
+    queryKey: queryKeys.rooms.joined(params),
+    queryFn: async () => {
+      return roomApi.getJoinedRooms(params);
+    },
+    enabled: tokenStore.hasToken() && options?.enabled !== false,
+    staleTime: 15 * 1000,
+  });
+}
+
 export function useJoinRoom() {
   const queryClient = useQueryClient();
 
@@ -35,7 +61,9 @@ export function useJoinRoom() {
     onSuccess: (_, roomId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.members(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.membership(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.joined() });
     },
   });
 }
@@ -50,7 +78,10 @@ export function useLeaveRoom() {
     onSuccess: (_, roomId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.members(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.membership(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.joined() });
     },
   });
 }
+

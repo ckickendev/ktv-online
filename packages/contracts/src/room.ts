@@ -93,6 +93,7 @@ export const RoomMembershipDtoSchema = z.object({
   id: z.string(),
   roomId: z.string(),
   userId: z.string(),
+  user: HostDtoSchema.optional(),
   role: RoomMembershipRoleSchema,
   status: RoomMembershipStatusSchema,
   joinedAt: z.string().datetime(),
@@ -100,4 +101,12 @@ export const RoomMembershipDtoSchema = z.object({
 });
 
 export type RoomMembershipDto = z.infer<typeof RoomMembershipDtoSchema>;
+
+export const RoomMyMembershipDtoSchema = z.object({
+  isMember: z.boolean(),
+  role: RoomMembershipRoleSchema.optional(),
+  membership: RoomMembershipDtoSchema.nullable().optional(),
+});
+
+export type RoomMyMembershipDto = z.infer<typeof RoomMyMembershipDtoSchema>;
 

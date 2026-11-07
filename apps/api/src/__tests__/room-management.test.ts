@@ -17,7 +17,6 @@ describe('Room Management & Ownership Verification (Sprint 1.3)', () => {
     await connectDatabase();
     await UserModel.deleteMany({ email: { $regex: /@room-manage-test\.ktv/ } });
     await RoomModel.deleteMany({ name: { $regex: /Manage Test/ } });
-    await RoomMembershipModel.deleteMany({});
 
     // User A (Owner)
     const uA = await UserModel.create({
@@ -49,9 +48,13 @@ describe('Room Management & Ownership Verification (Sprint 1.3)', () => {
   });
 
   afterAll(async () => {
+    if (userA?.id || userB?.id) {
+      await RoomMembershipModel.deleteMany({
+        userId: { $in: [userA?.id, userB?.id].filter(Boolean) },
+      });
+    }
     await UserModel.deleteMany({ email: { $regex: /@room-manage-test\.ktv/ } });
     await RoomModel.deleteMany({ name: { $regex: /Manage Test/ } });
-    await RoomMembershipModel.deleteMany({});
     await disconnectDatabase();
   });
 

@@ -4,6 +4,7 @@ import {
   PaginationMeta,
   RoomDto,
   RoomMembershipDto,
+  RoomMyMembershipDto,
   RoomQueryDto,
   UpdateRoomDto,
 } from '@ktv/contracts';
@@ -48,6 +49,16 @@ export const roomApi = {
 
   async leaveRoom(roomId: string): Promise<null> {
     return apiClient.post<null>(`/rooms/${roomId}/leave`, {});
+  },
+
+  async getJoinedRooms(params?: { page?: number; limit?: number }): Promise<PaginatedRoomsResult> {
+    return apiClient.get<PaginatedRoomsResult>('/rooms/joined-rooms', {
+      params: params as Record<string, string | number | boolean | undefined>,
+    });
+  },
+
+  async getMyMembership(roomId: string): Promise<RoomMyMembershipDto> {
+    return apiClient.get<RoomMyMembershipDto>(`/rooms/${roomId}/membership`);
   },
 
   async getMembers(roomId: string): Promise<RoomMembershipDto[]> {

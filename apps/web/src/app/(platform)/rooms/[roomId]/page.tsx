@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import {
   Mic,
   MicOff,
@@ -21,21 +21,44 @@ import {
   MessageSquare,
   ListMusic,
   Share2,
+  AlertCircle,
+  LogIn,
+  CheckCircle2,
+  Settings,
+  Sparkles,
+  Lock,
 } from 'lucide-react';
-import { UserAvatar } from '@/components/shared/user-avatar';
 import { RoomStatusBadge } from '@/components/shared/room-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LoadingState } from '@/components/shared/loading-state';
-import { useRoom, useRoomMembers } from '@/hooks/queries/use-room';
+import { RoomMemberList } from '@/components/shared/room-member-list';
+import { LeaveRoomDialog } from '@/components/rooms/leave-room-dialog';
+import {
+  useRoom,
+  useMyRoomMembership,
+  useJoinRoom,
+  useLeaveRoom,
+} from '@/hooks/queries/use-room';
+import { useAuth } from '@/hooks/use-auth';
 import { useAppStore } from '@/stores/use-app-store';
-import { AlertCircle } from 'lucide-react';
 
 export default function RoomDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const roomId = params?.roomId as string;
 
-  const { data: room, isLoading, isError, error } = useRoom(roomId);
-  const { data: activeMembers } = useRoomMembers(roomId);
+  const { isAuthenticated, user: currentUser } = useAuth();
+  const { data: room, isLoading: isRoomLoading, isError: isRoomError, error: roomError } = useRoom(roomId);
+  const {
+    data: myMembership,
+  } = useMyRoomMembership(roomId, { enabled: isAuthenticated });
+
+  const joinMutation = useJoinRoom();
+  const leaveMutation = useLeaveRoom();
+
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
+  const [joinErrorMessage, setJoinErrorMessage] = useState<string | null>(null);
+  const [leaveErrorMessage, setLeaveErrorMessage] = useState<string | null>(null);
 
   const { isMuted, toggleMute, volume, setVolume } = useAppStore();
   const [isPlaying, setIsPlaying] = useState(true);
@@ -43,26 +66,17 @@ export default function RoomDetailPage() {
   const [chatMessage, setChatMessage] = useState('');
   const [reverbMode, setReverbMode] = useState<'Studio' | 'Hall' | 'Club' | 'Off'>('Studio');
 
-  // Simulated queue data
+  // Simulated queue data for stage experience
   const [queue] = useState([
     { id: '1', title: 'Blinding Lights', artist: 'The Weeknd', requestedBy: 'MiaSingz', duration: '3:20', isCurrent: true },
     { id: '2', title: 'Cruel Summer', artist: 'Taylor Swift', requestedBy: 'Alex Singer', duration: '2:58', isCurrent: false },
     { id: '3', title: 'Bohemian Rhapsody', artist: 'Queen', requestedBy: 'RockLegend99', duration: '5:55', isCurrent: false },
   ]);
 
-  // Simulated live participants
-  const participants = [
-    { id: 'p1', name: 'MiaSingz', role: 'Singer', isHost: true, isSpeaking: true },
-    { id: 'p2', name: 'Alex Singer (You)', role: 'Audience', isHost: false, isSpeaking: false },
-    { id: 'p3', name: 'RockLegend99', role: 'In Queue', isHost: false, isSpeaking: false },
-    { id: 'p4', name: 'Kaito_Vocal', role: 'Audience', isHost: false, isSpeaking: false },
-    { id: 'p5', name: 'Elena_Pop', role: 'Audience', isHost: false, isSpeaking: false },
-  ];
-
   // Simulated chat messages
   const [messages, setMessages] = useState([
     { id: 'm1', sender: 'System', text: 'Welcome to Virtual VIP Lounge! Have fun singing!', isSystem: true },
-    { id: 'm2', sender: 'RockLegend99', text: 'Mia your pitch is incredible on this track! 🔥', isSystem: false },
+    { id: 'm2', sender: 'RockLegend99', text: 'Pitch is incredible on this track! 🔥', isSystem: false },
     { id: 'm3', sender: 'Elena_Pop', text: 'Cheering from the lounge! 👏🎤', isSystem: false },
   ]);
 
@@ -71,12 +85,42 @@ export default function RoomDetailPage() {
     if (!chatMessage.trim()) return;
     setMessages((prev) => [
       ...prev,
-      { id: `m-${Date.now()}`, sender: 'Alex Singer', text: chatMessage.trim(), isSystem: false },
+      {
+        id: `m-${Date.now()}`,
+        sender: currentUser?.username ?? 'Alex Singer',
+        text: chatMessage.trim(),
+        isSystem: false,
+      },
     ]);
     setChatMessage('');
   };
 
-  if (isLoading) {
+  const handleJoin = async () => {
+    setJoinErrorMessage(null);
+    try {
+      await joinMutation.mutateAsync(roomId);
+    } catch (err: unknown) {
+      const errorMsg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to join lounge. Please check availability and try again.';
+      setJoinErrorMessage(errorMsg);
+    }
+  };
+
+  const handleLeaveConfirm = async () => {
+    setLeaveErrorMessage(null);
+    try {
+      await leaveMutation.mutateAsync(roomId);
+      setIsLeaveDialogOpen(false);
+    } catch (err: unknown) {
+      const errorMsg =
+        err instanceof Error ? err.message : 'Unable to leave lounge. Please try again.';
+      setLeaveErrorMessage(errorMsg);
+    }
+  };
+
+  if (isRoomLoading) {
     return (
       <div className="flex-1 flex items-center justify-center py-20 bg-[#07090f]">
         <LoadingState message="Connecting to karaoke lounge & audio channels..." />
@@ -84,27 +128,33 @@ export default function RoomDetailPage() {
     );
   }
 
-  if (isError || !room) {
+  if (isRoomError || !room) {
     return (
       <div className="flex-1 flex items-center justify-center py-20 bg-[#07090f]">
         <EmptyState
           icon={AlertCircle}
           title="Lounge Not Found"
           description={
-            error instanceof Error
-              ? error.message
+            roomError instanceof Error
+              ? roomError.message
               : 'The requested karaoke lounge could not be loaded or has been closed.'
           }
           action={{
             label: 'Back to Lounges',
             onClick: () => {
-              window.location.href = '/rooms';
+              router.push('/rooms');
             },
           }}
         />
       </div>
     );
   }
+
+  const isMember = Boolean(myMembership?.isMember);
+  const isHost = isMember && myMembership?.role === 'host';
+  const isClosed = room.status === 'closed';
+  const isFull = (room.currentParticipantsCount ?? 0) >= room.capacity;
+  const isPrivate = room.visibility === 'private';
 
   return (
     <div className="flex-1 flex flex-col bg-[#07090f] overflow-hidden">
@@ -115,7 +165,7 @@ export default function RoomDetailPage() {
             <Link
               href="/rooms"
               className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
-              title="Leave Room"
+              title="Back to Lounges"
             >
               <LogOut className="w-4 h-4" />
             </Link>
@@ -124,6 +174,12 @@ export default function RoomDetailPage() {
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-white text-base tracking-tight">{room.name}</h1>
                 <RoomStatusBadge status={room.status} />
+                {isPrivate && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
+                    <Lock className="w-3 h-3" />
+                    Private
+                  </span>
+                )}
                 <span className="hidden sm:inline-block text-[11px] font-semibold text-cyan-400 uppercase tracking-wide bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-md">
                   {room.category}
                 </span>
@@ -133,16 +189,67 @@ export default function RoomDetailPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-xs text-slate-400 px-2.5 py-1 rounded-lg bg-white/5 border border-white/5">
+            {/* Participant count */}
+            <div
+              data-testid="room-capacity-counter"
+              className="flex items-center gap-1.5 text-xs text-slate-300 px-3 py-1.5 rounded-lg bg-white/5 border border-white/5"
+            >
               <Users className="w-3.5 h-3.5 text-violet-400" />
-              <span>{activeMembers ? activeMembers.length : (room.currentParticipantsCount ?? participants.length)}</span>
-              <span>/</span>
+              <span className="font-semibold text-white">{room.currentParticipantsCount ?? 0}</span>
+              <span className="text-slate-500">/</span>
               <span>{room.capacity}</span>
+              {isFull && (
+                <span className="ml-1 text-[10px] font-bold uppercase text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                  Full
+                </span>
+              )}
             </div>
 
+            {/* Host Controls or Member Leave Button */}
+            {isMember ? (
+              <div className="flex items-center gap-2">
+                {isHost ? (
+                  <div className="flex items-center gap-2">
+                    <span
+                      data-testid="host-status-indicator"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30"
+                    >
+                      <Crown className="w-3.5 h-3.5 fill-amber-300" />
+                      Host
+                    </span>
+                    <Link
+                      href="/my-rooms"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium border border-white/10 transition-colors"
+                      title="Manage Lounge"
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Settings</span>
+                    </Link>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="leave-room-button"
+                    onClick={() => setIsLeaveDialogOpen(true)}
+                    disabled={leaveMutation.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-medium border border-rose-500/30 transition-colors disabled:opacity-50"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Leave Lounge</span>
+                  </button>
+                )}
+              </div>
+            ) : null}
+
+            {/* Share / Invite */}
             <button
-              onClick={() => navigator.clipboard?.writeText(window.location.href)}
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  navigator.clipboard?.writeText(window.location.href);
+                }
+              }}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium border border-white/10 transition-colors"
+              title="Copy link to invite friends"
             >
               <Share2 className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Invite</span>
@@ -151,69 +258,130 @@ export default function RoomDetailPage() {
         </div>
       </div>
 
-      {/* Main Studio Area */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: Participant Sidebar (Col 3) */}
-        <div className="hidden lg:flex lg:col-span-3 flex-col glass-panel rounded-2xl p-4 border border-white/5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-violet-400" />
-              <span className="text-xs font-semibold text-white uppercase tracking-wider">
-                Stage &amp; Audience
-              </span>
-            </div>
-            <span className="text-[11px] text-slate-400">{participants.length} connected</span>
-          </div>
-
-          <div className="space-y-2 flex-1 overflow-y-auto pr-1">
-            {participants.map((p) => (
-              <div
-                key={p.id}
-                className={`p-2.5 rounded-xl border flex items-center justify-between transition-colors ${
-                  p.isSpeaking
-                    ? 'bg-violet-950/30 border-violet-500/30'
-                    : 'bg-white/5 border-white/5'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <UserAvatar
-                    name={p.name}
-                    size="sm"
-                    status={p.isSpeaking ? 'singing' : 'online'}
-                  />
-                  <div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs font-semibold text-slate-200">{p.name}</span>
-                      {p.isHost && <Crown className="w-3 h-3 text-amber-400 fill-amber-400" />}
-                    </div>
-                    <span className="text-[10px] text-slate-400">{p.role}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center">
-                  {p.isSpeaking ? (
-                    <div className="flex items-center gap-0.5 h-3">
-                      <span className="w-1 bg-emerald-400 rounded-full wave-bar-1" />
-                      <span className="w-1 bg-emerald-400 rounded-full wave-bar-2" />
-                      <span className="w-1 bg-emerald-400 rounded-full wave-bar-3" />
-                    </div>
-                  ) : (
-                    <MicOff className="w-3.5 h-3.5 text-slate-500" />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="pt-3 border-t border-white/5 mt-4 text-[11px] text-slate-500 text-center">
-            Low-Latency Voice Stream (Sprint 2 LiveKit)
-          </div>
+      {/* Main Lounge Viewport */}
+      <div className="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 overflow-y-auto">
+        {/* Left: Real Member Roster (Col 3) */}
+        <div className="lg:col-span-3 flex flex-col">
+          <RoomMemberList
+            roomId={roomId}
+            currentUserId={currentUser?.id}
+            className="h-full"
+          />
         </div>
 
-        {/* Center: Karaoke Screen & Audio Controls (Col 6) */}
+        {/* Center: Stage / Audio & Participation Banner (Col 6) */}
         <div className="lg:col-span-6 flex flex-col gap-4">
-          {/* Virtual Karaoke Screen */}
-          <div className="relative rounded-2xl bg-[#030408] border border-violet-500/20 overflow-hidden shadow-2xl flex-1 min-h-[360px] flex flex-col justify-between p-6">
+          {/* Participation Callout if NOT an active member */}
+          {!isMember && (
+            <div
+              data-testid="join-lounge-banner"
+              className="glass-panel p-5 rounded-2xl border border-violet-500/30 bg-gradient-to-br from-violet-950/40 via-[#0e121e] to-cyan-950/20 space-y-3"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-cyan-400" />
+                    <h2 className="text-sm font-bold text-white tracking-wide">
+                      Welcome to {room.name}
+                    </h2>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Step onto the stage to sing, queue favorite tracks, and join fellow singers in
+                    real time.
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-xs font-semibold text-slate-300 block">
+                    Capacity: {room.currentParticipantsCount ?? 0}/{room.capacity}
+                  </span>
+                  <span className="text-[10px] text-slate-500">
+                    Host: {room.host?.username ?? 'Lounge Host'}
+                  </span>
+                </div>
+              </div>
+
+              {joinErrorMessage && (
+                <div
+                  data-testid="join-error-alert"
+                  className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-300 flex items-center gap-2"
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{joinErrorMessage}</span>
+                </div>
+              )}
+
+              {/* Action based on state */}
+              {isClosed ? (
+                <div
+                  data-testid="room-closed-notice"
+                  className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center justify-between"
+                >
+                  <span>This lounge is closed and is no longer accepting new singers.</span>
+                  <Link
+                    href="/rooms"
+                    className="text-xs font-semibold text-amber-400 hover:underline ml-2 shrink-0"
+                  >
+                    Browse Lounges
+                  </Link>
+                </div>
+              ) : isFull ? (
+                <div
+                  data-testid="room-full-notice"
+                  className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center justify-between"
+                >
+                  <span>This lounge is currently at full capacity ({room.capacity}/{room.capacity}).</span>
+                  <button
+                    disabled
+                    data-testid="join-room-button-disabled"
+                    className="px-4 py-2 rounded-xl bg-white/5 text-slate-500 text-xs font-semibold cursor-not-allowed border border-white/5"
+                  >
+                    Lounge Full
+                  </button>
+                </div>
+              ) : !isAuthenticated ? (
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-xs text-slate-400">
+                    Sign in to participate and step onto the stage.
+                  </span>
+                  <Link
+                    href={`/login?redirect=/rooms/${roomId}`}
+                    data-testid="join-login-button"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 text-white text-xs font-semibold shadow-lg shadow-violet-600/25 transition-all"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>Sign in to Join</span>
+                  </Link>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between pt-1">
+                  <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Slot available for you</span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="join-room-button"
+                    onClick={handleJoin}
+                    disabled={joinMutation.isPending}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 text-white text-xs font-semibold shadow-lg shadow-violet-600/25 transition-all disabled:opacity-50"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{joinMutation.isPending ? 'Joining Stage...' : 'Join Lounge'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {leaveErrorMessage && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-300 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>{leaveErrorMessage}</span>
+            </div>
+          )}
+
+          {/* Virtual Karaoke Stage Screen */}
+          <div className="relative rounded-2xl bg-[#030408] border border-violet-500/20 overflow-hidden shadow-2xl flex-1 min-h-[340px] flex flex-col justify-between p-6">
             {/* Screen Top Status */}
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
@@ -309,7 +477,7 @@ export default function RoomDetailPage() {
                   {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                 </button>
                 <button
-                  onClick={() => alert('Skipping to next song in queue (placeholder)')}
+                  onClick={() => alert('Skipping to next song in queue (Sprint 3)')}
                   className="p-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
                 >
                   <SkipForward className="w-4 h-4" />
@@ -449,6 +617,15 @@ export default function RoomDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Leave Room Confirmation Dialog */}
+      <LeaveRoomDialog
+        isOpen={isLeaveDialogOpen}
+        isPending={leaveMutation.isPending}
+        roomName={room.name}
+        onClose={() => setIsLeaveDialogOpen(false)}
+        onConfirm={handleLeaveConfirm}
+      />
     </div>
   );
 }

@@ -96,6 +96,9 @@ export class RoomController {
           case 'ROOM_FULL':
             sendError(res, 'Room has reached maximum capacity', 409);
             return;
+          case 'PRIVATE_ROOM':
+            sendError(res, 'Cannot join private room without direct invitation', 403);
+            return;
           default:
             sendError(res, 'Failed to join room', 400);
             return;
@@ -127,12 +130,18 @@ export class RoomController {
 
       const result = await roomService.leaveRoom(roomId, req.user.id);
       if (!result.success) {
-        if (result.error === 'NOT_A_MEMBER') {
-          sendError(res, 'You are not an active member of this room', 400);
-          return;
+        switch (result.error) {
+          case 'NOT_A_MEMBER':
+            sendError(res, 'You are not an active member of this room', 400);
+            return;
+          case 'HOST_CANNOT_LEAVE':
+            sendError(res, 'Room host cannot leave their active lounge. Close the lounge instead.', 400);
+            return;
+          case 'ROOM_NOT_FOUND':
+          default:
+            sendError(res, 'Room not found', 404);
+            return;
         }
-        sendError(res, 'Room not found', 404);
-        return;
       }
 
       sendSuccess(res, null, 'Left room successfully');
@@ -149,11 +158,93 @@ export class RoomController {
         return;
       }
 
-      const members = await roomService.getActiveMembers(roomId);
+      const result = await roomService.getActiveMembers(roomId, req.user?.id);
+      if (!result.success) {
+        switch (result.error) {
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'UNAUTHORIZED':
+            sendError(res, 'Authentication required to view members of private room', 401);
+            return;
+          case 'FORBIDDEN_PRIVATE_ROOM':
+            sendError(res, 'You do not have permission to view members of this private room', 403);
+            return;
+          default:
+            sendError(res, 'Failed to retrieve room members', 400);
+            return;
+        }
+      }
+
       sendSuccess(
         res,
-        members.map((m) => m.toJSON()),
+        result.members.map((m) => m.toJSON()),
         'Room active members retrieved successfully'
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getMyMembership(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Authentication required to view membership', 401);
+        return;
+      }
+      const { id: roomId } = req.params;
+      if (!roomId) {
+        sendError(res, 'Room ID is required', 400);
+        return;
+      }
+
+      const membership = await roomService.getMyMembership(roomId, req.user.id);
+      if (!membership) {
+        sendSuccess(res, { isMember: false, membership: null }, 'Not an active member of this room');
+        return;
+      }
+
+      sendSuccess(
+        res,
+        {
+          isMember: true,
+          role: membership.role,
+          membership: membership.toJSON(),
+        },
+        'User membership retrieved successfully'
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getJoinedRooms(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Authentication required to view joined rooms', 401);
+        return;
+      }
+
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+      const { items, total } = await roomService.findJoinedRoomsByUser(req.user.id, page, limit);
+
+      const totalPages = Math.ceil(total / limit) || 1;
+
+      sendSuccess(
+        res,
+        {
+          items: items.map((room) => room.toJSON()),
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1,
+          },
+        },
+        'Joined rooms retrieved successfully'
       );
     } catch (error) {
       next(error);
