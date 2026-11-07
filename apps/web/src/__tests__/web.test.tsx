@@ -40,7 +40,7 @@ describe('Frontend Component Tests', () => {
     expect(screen.getByText('Cyberpunk Karaoke Lounge')).toBeInTheDocument();
     expect(screen.getByText('anime')).toBeInTheDocument();
     expect(screen.getByText('Cruel Angel Thesis')).toBeInTheDocument();
-    expect(screen.getByText('Join Lounge')).toBeInTheDocument();
+    expect(screen.getByText('View Lounge')).toBeInTheDocument();
   });
 
   it('renders EmptyState with title and action button', () => {

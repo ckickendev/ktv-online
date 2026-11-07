@@ -10,5 +10,6 @@ export function useRooms(filters?: Partial<RoomQueryDto>) {
       return roomApi.getRooms(filters);
     },
     staleTime: 30 * 1000, // 30 seconds
+    placeholderData: (previousData) => previousData,
   });
 }

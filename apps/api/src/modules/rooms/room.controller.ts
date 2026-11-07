@@ -9,9 +9,9 @@ export class RoomController {
       const query = req.query as unknown as RoomQueryDto;
       const { items, total } = await roomService.findRooms(query);
 
-      const page = query.page || 1;
-      const limit = query.limit || 20;
-      const totalPages = Math.ceil(total / limit);
+      const page = Math.max(1, Number(query.page) || 1);
+      const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+      const totalPages = Math.ceil(total / limit) || 1;
 
       sendSuccess(
         res,

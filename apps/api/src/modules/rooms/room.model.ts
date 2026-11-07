@@ -72,7 +72,22 @@ const RoomSchema = new Schema<IRoomDocument>(
       transform: (_doc, ret: Record<string, unknown>) => {
         ret.id = ret._id ? (ret._id as { toString(): string }).toString() : undefined;
         if (ret.ownerId && typeof ret.ownerId === 'object') {
-          if ('id' in ret.ownerId && typeof (ret.ownerId as { id: unknown }).id === 'string') {
+          if ('username' in ret.ownerId) {
+            const hostUser = ret.ownerId as {
+              _id?: unknown;
+              id?: unknown;
+              username: string;
+              avatar?: string | null;
+            };
+            const hostId =
+              (hostUser.id as string) || (hostUser._id ? String(hostUser._id) : '');
+            ret.host = {
+              id: hostId,
+              username: hostUser.username,
+              avatar: hostUser.avatar ?? null,
+            };
+            ret.ownerId = hostId;
+          } else if ('id' in ret.ownerId && typeof (ret.ownerId as { id: unknown }).id === 'string') {
             ret.ownerId = (ret.ownerId as { id: string }).id;
           } else if ('_id' in ret.ownerId && (ret.ownerId as { _id: unknown })._id) {
             ret.ownerId = (ret.ownerId as { _id: { toString(): string } })._id.toString();
@@ -93,6 +108,7 @@ const RoomSchema = new Schema<IRoomDocument>(
 // Compound indexes for room discovery queries and sorting
 RoomSchema.index({ visibility: 1, status: 1, createdAt: -1 });
 RoomSchema.index({ category: 1, visibility: 1, createdAt: -1 });
+RoomSchema.index({ visibility: 1, currentParticipantsCount: -1, createdAt: -1 });
 RoomSchema.index({ name: 'text', description: 'text' });
 
 export const RoomModel: Model<IRoomDocument> =

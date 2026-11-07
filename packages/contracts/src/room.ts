@@ -13,11 +13,19 @@ export type RoomStatus = z.infer<typeof RoomStatusSchema>;
 export const RoomCategorySchema = z.enum(['all', 'pop', 'anime', 'rock', 'ballad', 'hiphop', 'rnb']);
 export type RoomCategory = z.infer<typeof RoomCategorySchema>;
 
+export const HostDtoSchema = z.object({
+  id: z.string(),
+  username: z.string(),
+  avatar: z.string().nullable().optional(),
+});
+export type HostDto = z.infer<typeof HostDtoSchema>;
+
 export const RoomDtoSchema = z.object({
   id: z.string(),
   name: z.string().min(2).max(60),
   description: z.string().max(250).optional().nullable(),
   ownerId: z.string(),
+  host: HostDtoSchema.optional(),
   roomType: RoomTypeSchema,
   visibility: RoomVisibilitySchema,
   capacity: z.number().int().min(2).max(50),
@@ -57,12 +65,20 @@ export const UpdateRoomSchema = z.object({
 
 export type UpdateRoomDto = z.infer<typeof UpdateRoomSchema>;
 
+export const RoomSortBySchema = z.enum(['newest', 'oldest', 'popular']);
+export type RoomSortBy = z.infer<typeof RoomSortBySchema>;
+
+export const RoomAvailabilitySchema = z.enum(['all', 'available', 'full']);
+export type RoomAvailability = z.infer<typeof RoomAvailabilitySchema>;
+
 export const RoomQuerySchema = PaginationQuerySchema.extend({
-  search: z.string().optional(),
+  search: z.string().max(100).optional(),
   category: RoomCategorySchema.optional(),
   status: RoomStatusSchema.optional(),
   roomType: RoomTypeSchema.optional(),
   visibility: RoomVisibilitySchema.optional(),
+  availability: RoomAvailabilitySchema.optional(),
+  sortBy: RoomSortBySchema.optional(),
 });
 
 export type RoomQueryDto = z.infer<typeof RoomQuerySchema>;

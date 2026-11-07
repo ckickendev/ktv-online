@@ -13,6 +13,10 @@ export type LeaveRoomResult =
   | { success: true }
   | { success: false; error: 'NOT_A_MEMBER' | 'ROOM_NOT_FOUND' };
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export class RoomService {
   async findById(id: string): Promise<IRoomDocument | null> {
     if (!Types.ObjectId.isValid(id)) {
@@ -22,13 +26,10 @@ export class RoomService {
   }
 
   async findRooms(query: RoomQueryDto): Promise<{ items: IRoomDocument[]; total: number }> {
-    const filter: FilterQuery<IRoomDocument> = {};
-
-    if (query.visibility) {
-      filter.visibility = query.visibility;
-    } else {
-      filter.visibility = 'public';
-    }
+    const filter: FilterQuery<IRoomDocument> = {
+      // Security: Public room discovery strictly enforces public visibility
+      visibility: 'public',
+    };
 
     if (query.category && query.category !== 'all') {
       filter.category = query.category;
@@ -42,17 +43,35 @@ export class RoomService {
       filter.roomType = query.roomType;
     }
 
-    if (query.search) {
-      filter.$text = { $search: query.search };
+    if (query.availability === 'available') {
+      filter.$expr = { $lt: ['$currentParticipantsCount', '$capacity'] };
+      if (!filter.status) {
+        filter.status = { $ne: 'closed' };
+      }
+    } else if (query.availability === 'full') {
+      filter.$expr = { $gte: ['$currentParticipantsCount', '$capacity'] };
     }
 
-    const page = query.page || 1;
-    const limit = query.limit || 20;
+    const trimmedSearch = query.search?.trim();
+    if (trimmedSearch) {
+      const safeRegex = new RegExp(escapeRegex(trimmedSearch), 'i');
+      filter.$or = [{ name: safeRegex }, { description: safeRegex }];
+    }
+
+    let sortQuery: Record<string, 1 | -1> = { createdAt: -1 };
+    if (query.sortBy === 'oldest') {
+      sortQuery = { createdAt: 1 };
+    } else if (query.sortBy === 'popular') {
+      sortQuery = { currentParticipantsCount: -1, createdAt: -1 };
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
 
     const [items, total] = await Promise.all([
       RoomModel.find(filter)
-        .sort({ createdAt: -1 })
+        .sort(sortQuery)
         .skip(skip)
         .limit(limit)
         .populate('ownerId', 'username avatar')
