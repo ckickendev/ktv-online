@@ -12,6 +12,7 @@ export function errorHandler(
 
   logger.error(
     {
+      requestId: req.id,
       err: {
         message: err.message,
         stack: err.stack,

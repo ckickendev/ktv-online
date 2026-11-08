@@ -77,33 +77,38 @@ export class AuthService {
       const decoded = verifyRefreshToken(token);
       const tokenHash = hashToken(token);
 
-      const session = await SessionModel.findOne({ tokenHash }).exec();
-      if (!session || session.userId.toString() !== decoded.sub) {
+      // Atomically mark session as revoked to prevent concurrent double-refresh
+      const session = await SessionModel.findOneAndUpdate(
+        { tokenHash, isRevoked: false },
+        { $set: { isRevoked: true } },
+        { new: false }
+      ).exec();
+
+      if (!session) {
+        // Check if token existed but was already revoked -> Replay detected
+        const revokedSession = await SessionModel.findOne({ tokenHash }).exec();
+        if (revokedSession && revokedSession.isRevoked) {
+          logger.warn(
+            { userId: revokedSession.userId, familyId: revokedSession.familyId },
+            '🚨 Security alert: Refresh token replay detected! Revoking token family.'
+          );
+          await SessionModel.updateMany(
+            { familyId: revokedSession.familyId },
+            { $set: { isRevoked: true } }
+          ).exec();
+          return { success: false, error: 'REPLAY_DETECTED' };
+        }
         return { success: false, error: 'INVALID_TOKEN' };
       }
 
-      // Refresh Token Replay Detection
-      if (session.isRevoked) {
-        logger.warn(
-          { userId: session.userId, familyId: session.familyId },
-          '🚨 Security alert: Refresh token replay detected! Revoking token family.'
-        );
-        // Revoke all sessions sharing this familyId
-        await SessionModel.updateMany({ familyId: session.familyId }, { $set: { isRevoked: true } }).exec();
-        return { success: false, error: 'REPLAY_DETECTED' };
+      if (session.userId.toString() !== decoded.sub) {
+        return { success: false, error: 'INVALID_TOKEN' };
       }
 
       const user = await UserModel.findById(session.userId).exec();
       if (!user || user.status !== 'active') {
-        // Invalidate session if user is deleted or suspended
-        session.isRevoked = true;
-        await session.save();
         return { success: false, error: 'ACCOUNT_INACTIVE' };
       }
-
-      // Rotate session: revoke old session
-      session.isRevoked = true;
-      await session.save();
 
       // Issue new token pair preserving the familyId
       const newJti = crypto.randomUUID();

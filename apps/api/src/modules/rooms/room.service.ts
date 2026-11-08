@@ -139,8 +139,15 @@ export class RoomService {
     if (!Types.ObjectId.isValid(id)) {
       return null;
     }
-    return RoomModel.findByIdAndUpdate(
-      id,
+
+    const filter: FilterQuery<IRoomDocument> = { _id: new Types.ObjectId(id) };
+    // Atomic capacity guard: cannot reduce capacity below current participant count
+    if (data.capacity !== undefined) {
+      filter.currentParticipantsCount = { $lte: data.capacity };
+    }
+
+    return RoomModel.findOneAndUpdate(
+      filter,
       { $set: data },
       { new: true, runValidators: true }
     )
@@ -155,7 +162,7 @@ export class RoomService {
     const roomObjectId = new Types.ObjectId(id);
     const room = await RoomModel.findByIdAndUpdate(
       roomObjectId,
-      { $set: { status: 'closed' } },
+      { $set: { status: 'closed', currentParticipantsCount: 0 } },
       { new: true, runValidators: true }
     )
       .populate('ownerId', 'username avatar')
@@ -233,28 +240,113 @@ export class RoomService {
 
     // 4. Create or reactivate membership record
     try {
+      // Concurrency guard: verify room was not closed concurrently
+      const currentRoomState = await RoomModel.findById(roomObjectId).select('status').exec();
+      if (currentRoomState?.status === 'closed') {
+        await RoomModel.findByIdAndUpdate(roomObjectId, {
+          $inc: { currentParticipantsCount: -1 },
+        }).exec();
+        return { success: false, error: 'ROOM_CLOSED' };
+      }
+
       const isOwner = updatedRoom.ownerId.toString() === userId;
-      const membership = await RoomMembershipModel.findOneAndUpdate(
-        { roomId: roomObjectId, userId: userObjectId },
-        {
-          $set: {
+
+      // Check if membership record exists for this user in this room
+      const existingDoc = await RoomMembershipModel.findOne({
+        roomId: roomObjectId,
+        userId: userObjectId,
+      }).exec();
+
+      let membership: IRoomMembershipDocument | null = null;
+
+      if (!existingDoc) {
+        // Attempt creating a new membership record
+        try {
+          const created = await RoomMembershipModel.create({
+            roomId: roomObjectId,
+            userId: userObjectId,
             role: isOwner ? 'host' : 'member',
             status: 'active',
             joinedAt: new Date(),
             leftAt: null,
+          });
+
+          membership = await RoomMembershipModel.findById(created._id)
+            .populate('userId', 'username avatar role')
+            .exec();
+        } catch (createErr: unknown) {
+          // If concurrent create raced and succeeded, rollback our reserved capacity increment
+          await RoomModel.findByIdAndUpdate(roomObjectId, {
+            $inc: { currentParticipantsCount: -1 },
+          }).exec();
+
+          const activeMem = await RoomMembershipModel.findOne({
+            roomId: roomObjectId,
+            userId: userObjectId,
+            status: 'active',
+          })
+            .populate('userId', 'username avatar role')
+            .exec();
+
+          if (activeMem) {
+            return { success: true, membership: activeMem, alreadyJoined: true };
+          }
+          throw createErr;
+        }
+      } else if (existingDoc.status === 'active') {
+        // User is already active in this room. Roll back the reserved capacity increment!
+        await RoomModel.findByIdAndUpdate(roomObjectId, {
+          $inc: { currentParticipantsCount: -1 },
+        }).exec();
+
+        const activeMem = await RoomMembershipModel.findById(existingDoc._id)
+          .populate('userId', 'username avatar role')
+          .exec();
+
+        return { success: true, membership: activeMem || existingDoc, alreadyJoined: true };
+      } else {
+        // User previously left this room. Atomically transition from non-active to active!
+        const reactivated = await RoomMembershipModel.findOneAndUpdate(
+          {
+            _id: existingDoc._id,
+            status: { $ne: 'active' }, // Atomic condition ensures only one concurrent request reactivates
           },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      )
-        .populate('userId', 'username avatar role')
-        .exec();
+          {
+            $set: {
+              role: isOwner ? 'host' : 'member',
+              status: 'active',
+              joinedAt: new Date(),
+              leftAt: null,
+            },
+          },
+          { new: true }
+        )
+          .populate('userId', 'username avatar role')
+          .exec();
+
+        if (!reactivated) {
+          // Another concurrent request reactivated it already. Roll back reserved capacity!
+          await RoomModel.findByIdAndUpdate(roomObjectId, {
+            $inc: { currentParticipantsCount: -1 },
+          }).exec();
+
+          const activeMem = await RoomMembershipModel.findById(existingDoc._id)
+            .populate('userId', 'username avatar role')
+            .exec();
+
+          return { success: true, membership: activeMem || existingDoc, alreadyJoined: true };
+        }
+
+        membership = reactivated;
+      }
 
       return { success: true, membership: membership!, alreadyJoined: false };
-    } catch (err) {
-      // Rollback reserved capacity on membership persistence failure
+    } catch (err: unknown) {
+      // Rollback reserved capacity on unhandled membership persistence failure
       await RoomModel.findByIdAndUpdate(roomObjectId, {
         $inc: { currentParticipantsCount: -1 },
       }).exec();
+
       throw err;
     }
   }

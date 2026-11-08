@@ -5,11 +5,15 @@ import { env } from './config/env.js';
 import { apiV1Router } from './routes/index.js';
 import { globalRateLimiter } from './middlewares/rate-limiter.middleware.js';
 import { cookieParserMiddleware } from './middlewares/cookie.middleware.js';
+import { correlationIdMiddleware } from './middlewares/correlation.middleware.js';
 import { notFoundHandler } from './middlewares/not-found.middleware.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 
 export function createApp(): Express {
   const app = express();
+
+  // Request Correlation ID (must be first)
+  app.use(correlationIdMiddleware);
 
   // Security headers
   app.use(helmet());
@@ -20,7 +24,8 @@ export function createApp(): Express {
       origin: [env.FRONTEND_URL, 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3001', 'http://127.0.0.1:3001'],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-request-id'],
+      exposedHeaders: ['x-request-id'],
     })
   );
 

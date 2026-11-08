@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
+import { Types } from 'mongoose';
 import { roomService } from './room.service.js';
+import { roomReconciliationService } from './room-reconciliation.service.js';
+import { RoomMembershipModel } from './membership.model.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { CreateRoomDto, RoomQueryDto, UpdateRoomDto } from '@ktv/contracts';
 
@@ -45,6 +48,35 @@ export class RoomController {
       if (!room) {
         sendError(res, 'Room not found', 404);
         return;
+      }
+
+      // Security: Private room protection - only host or active members can view
+      if (room.visibility === 'private') {
+        if (!req.user) {
+          sendError(res, 'Authentication required to view private room', 401);
+          return;
+        }
+
+        const isOwner =
+          (room.ownerId as { _id?: { toString(): string } } | undefined)?._id?.toString() ===
+            req.user.id || room.ownerId.toString() === req.user.id;
+
+        if (!isOwner) {
+          const isMember = await RoomMembershipModel.exists({
+            roomId: room._id,
+            userId: new Types.ObjectId(req.user.id),
+            status: 'active',
+          });
+
+          if (!isMember) {
+            sendError(
+              res,
+              'Access denied: You do not have permission to view this private lounge',
+              403
+            );
+            return;
+          }
+        }
       }
 
       sendSuccess(res, room.toJSON(), 'Room retrieved successfully');
@@ -329,6 +361,17 @@ export class RoomController {
 
       const updatedRoom = await roomService.update(id, updateData);
       if (!updatedRoom) {
+        if (updateData.capacity !== undefined) {
+          const recheck = await roomService.findById(id);
+          if (recheck && recheck.currentParticipantsCount > updateData.capacity) {
+            sendError(
+              res,
+              `Capacity cannot be reduced below current participant count (${recheck.currentParticipantsCount})`,
+              400
+            );
+            return;
+          }
+        }
         sendError(res, 'Room not found', 404);
         return;
       }
@@ -379,6 +422,36 @@ export class RoomController {
       }
 
       sendSuccess(res, closedRoom.toJSON(), 'Room closed successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async reconcileRooms(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const dryRun = req.query.dryRun === 'true';
+      const roomId = req.query.roomId as string | undefined;
+
+      if (roomId) {
+        const result = await roomReconciliationService.reconcileRoom(roomId, dryRun);
+        if (!result) {
+          sendError(res, 'Room not found', 404);
+          return;
+        }
+        sendSuccess(
+          res,
+          result,
+          dryRun ? 'Dry-run room reconciliation completed' : 'Room reconciled successfully'
+        );
+        return;
+      }
+
+      const summary = await roomReconciliationService.reconcileAllRooms(dryRun);
+      sendSuccess(
+        res,
+        summary,
+        dryRun ? 'Dry-run reconciliation completed' : 'All rooms reconciled successfully'
+      );
     } catch (error) {
       next(error);
     }

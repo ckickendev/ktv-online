@@ -1,13 +1,18 @@
 import { Router } from 'express';
 import { roomController } from './room.controller.js';
 import { validateBody, validateQuery } from '../../middlewares/validate.middleware.js';
-import { requireAuth, optionalAuth } from '../../middlewares/auth.middleware.js';
+import { requireAuth, optionalAuth, requireRole } from '../../middlewares/auth.middleware.js';
 import { CreateRoomSchema, RoomQuerySchema, UpdateRoomSchema } from './room.validation.js';
 
 export const roomRoutes = Router();
 
 roomRoutes.get('/', validateQuery(RoomQuerySchema), (req, res, next) => {
   roomController.getRooms(req, res, next);
+});
+
+// Protected administrative endpoint for room invariant reconciliation
+roomRoutes.post('/reconcile', requireAuth, requireRole('admin'), (req, res, next) => {
+  roomController.reconcileRooms(req, res, next);
 });
 
 // Protected: list rooms owned by current user (must be declared before /:id)
@@ -20,7 +25,7 @@ roomRoutes.get('/joined-rooms', requireAuth, (req, res, next) => {
   roomController.getJoinedRooms(req, res, next);
 });
 
-roomRoutes.get('/:id', (req, res, next) => {
+roomRoutes.get('/:id', optionalAuth, (req, res, next) => {
   roomController.getRoomById(req, res, next);
 });
 

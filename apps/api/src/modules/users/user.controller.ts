@@ -19,7 +19,13 @@ export class UserController {
         return;
       }
 
-      sendSuccess(res, user.toJSON(), 'User retrieved successfully');
+      const userJson = user.toJSON() as Record<string, unknown>;
+      // Security: Do not expose email to third parties unless viewing own profile
+      if (!req.user || req.user.id !== userId) {
+        delete userJson.email;
+      }
+
+      sendSuccess(res, userJson, 'User retrieved successfully');
     } catch (error) {
       next(error);
     }

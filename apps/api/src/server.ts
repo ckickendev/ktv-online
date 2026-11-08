@@ -35,6 +35,16 @@ async function bootstrap() {
 
   process.on('SIGTERM', () => handleShutdown('SIGTERM'));
   process.on('SIGINT', () => handleShutdown('SIGINT'));
+
+  process.on('unhandledRejection', (reason) => {
+    logger.fatal({ reason }, 'Unhandled Promise Rejection detected');
+    process.exit(1);
+  });
+
+  process.on('uncaughtException', (err) => {
+    logger.fatal({ err }, 'Uncaught Exception detected');
+    process.exit(1);
+  });
 }
 
 bootstrap().catch((err) => {
