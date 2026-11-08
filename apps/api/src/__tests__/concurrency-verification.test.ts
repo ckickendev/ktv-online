@@ -27,7 +27,19 @@ describe('Sprint 1.6.1: Final Concurrency & Operational Verification', () => {
   });
 
   async function cleanup() {
-    await RoomMembershipModel.deleteMany({});
+    const s161Rooms = await RoomModel.find({ name: { $regex: /Sprint161/ } }).select('_id');
+    const roomIds = s161Rooms.map((r) => r._id);
+    const s161Users = await UserModel.find({ email: { $regex: /@verif-test\.ktv/ } }).select('_id');
+    const userIds = s161Users.map((u) => u._id);
+
+    if (roomIds.length > 0 || userIds.length > 0) {
+      await RoomMembershipModel.deleteMany({
+        $or: [
+          ...(roomIds.length > 0 ? [{ roomId: { $in: roomIds } }] : []),
+          ...(userIds.length > 0 ? [{ userId: { $in: userIds } }] : []),
+        ],
+      });
+    }
     await RoomModel.deleteMany({ name: { $regex: /Sprint161/ } });
     await UserModel.deleteMany({ email: { $regex: /@verif-test\.ktv/ } });
   }
