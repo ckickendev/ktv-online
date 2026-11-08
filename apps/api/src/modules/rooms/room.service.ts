@@ -169,10 +169,22 @@ export class RoomService {
       .exec();
 
     if (room) {
-      // Conclude all active memberships upon room closure
+      // 1. Conclude all active memberships upon room closure
       await RoomMembershipModel.updateMany(
         { roomId: roomObjectId, status: 'active' },
         { $set: { status: 'left', leftAt: new Date() } }
+      ).exec();
+
+      // 2. Concurrency sweep: clean up any in-flight join that committed in the exact same tick
+      await RoomMembershipModel.updateMany(
+        { roomId: roomObjectId, status: 'active' },
+        { $set: { status: 'left', leftAt: new Date() } }
+      ).exec();
+
+      // 3. Ensure closed room participant count remains strictly 0
+      await RoomModel.updateOne(
+        { _id: roomObjectId },
+        { $set: { currentParticipantsCount: 0 } }
       ).exec();
     }
 
@@ -213,7 +225,7 @@ export class RoomService {
       return { success: true, membership: existingMembership, alreadyJoined: true };
     }
 
-    // 3. Atomic capacity check and reservation
+    // 3. Atomic capacity check and reservation (must not be closed)
     const updatedRoom = await RoomModel.findOneAndUpdate(
       {
         _id: roomObjectId,
@@ -240,12 +252,13 @@ export class RoomService {
 
     // 4. Create or reactivate membership record
     try {
-      // Concurrency guard: verify room was not closed concurrently
+      // Concurrency guard: verify room was not closed concurrently during reservation
       const currentRoomState = await RoomModel.findById(roomObjectId).select('status').exec();
       if (currentRoomState?.status === 'closed') {
-        await RoomModel.findByIdAndUpdate(roomObjectId, {
-          $inc: { currentParticipantsCount: -1 },
-        }).exec();
+        await RoomModel.updateOne(
+          { _id: roomObjectId, status: { $ne: 'closed' } },
+          { $inc: { currentParticipantsCount: -1 } }
+        ).exec();
         return { success: false, error: 'ROOM_CLOSED' };
       }
 
@@ -276,9 +289,10 @@ export class RoomService {
             .exec();
         } catch (createErr: unknown) {
           // If concurrent create raced and succeeded, rollback our reserved capacity increment
-          await RoomModel.findByIdAndUpdate(roomObjectId, {
-            $inc: { currentParticipantsCount: -1 },
-          }).exec();
+          await RoomModel.updateOne(
+            { _id: roomObjectId, status: { $ne: 'closed' } },
+            { $inc: { currentParticipantsCount: -1 } }
+          ).exec();
 
           const activeMem = await RoomMembershipModel.findOne({
             roomId: roomObjectId,
@@ -295,9 +309,10 @@ export class RoomService {
         }
       } else if (existingDoc.status === 'active') {
         // User is already active in this room. Roll back the reserved capacity increment!
-        await RoomModel.findByIdAndUpdate(roomObjectId, {
-          $inc: { currentParticipantsCount: -1 },
-        }).exec();
+        await RoomModel.updateOne(
+          { _id: roomObjectId, status: { $ne: 'closed' } },
+          { $inc: { currentParticipantsCount: -1 } }
+        ).exec();
 
         const activeMem = await RoomMembershipModel.findById(existingDoc._id)
           .populate('userId', 'username avatar role')
@@ -326,9 +341,10 @@ export class RoomService {
 
         if (!reactivated) {
           // Another concurrent request reactivated it already. Roll back reserved capacity!
-          await RoomModel.findByIdAndUpdate(roomObjectId, {
-            $inc: { currentParticipantsCount: -1 },
-          }).exec();
+          await RoomModel.updateOne(
+            { _id: roomObjectId, status: { $ne: 'closed' } },
+            { $inc: { currentParticipantsCount: -1 } }
+          ).exec();
 
           const activeMem = await RoomMembershipModel.findById(existingDoc._id)
             .populate('userId', 'username avatar role')
@@ -340,12 +356,29 @@ export class RoomService {
         membership = reactivated;
       }
 
+      // 5. Atomic Post-Membership Verification:
+      // Verify room was not closed while membership was being persisted
+      const postJoinRoomCheck = await RoomModel.findById(roomObjectId).select('status').exec();
+      if (postJoinRoomCheck?.status === 'closed') {
+        // Room was closed concurrently! Invalidate this membership immediately
+        await RoomMembershipModel.updateOne(
+          { _id: membership!._id, status: 'active' },
+          { $set: { status: 'left', leftAt: new Date() } }
+        ).exec();
+        await RoomModel.updateOne(
+          { _id: roomObjectId },
+          { $set: { currentParticipantsCount: 0 } }
+        ).exec();
+        return { success: false, error: 'ROOM_CLOSED' };
+      }
+
       return { success: true, membership: membership!, alreadyJoined: false };
     } catch (err: unknown) {
       // Rollback reserved capacity on unhandled membership persistence failure
-      await RoomModel.findByIdAndUpdate(roomObjectId, {
-        $inc: { currentParticipantsCount: -1 },
-      }).exec();
+      await RoomModel.updateOne(
+        { _id: roomObjectId, status: { $ne: 'closed' } },
+        { $inc: { currentParticipantsCount: -1 } }
+      ).exec();
 
       throw err;
     }

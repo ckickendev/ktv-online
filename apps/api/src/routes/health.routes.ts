@@ -18,10 +18,13 @@ healthRoutes.get('/health/live', (_req: Request, res: Response) => {
   sendSuccess(res, data, 'Application process is alive', 200);
 });
 
-// Readiness probe: returns 200 only if MongoDB is connected; returns 503 if unavailable
+import { isAppShuttingDown } from '../utils/lifecycle.js';
+
+// Readiness probe: returns 200 only if MongoDB is connected and process is not shutting down
 healthRoutes.get('/health/ready', (_req: Request, res: Response) => {
   const dbStatus = getDatabaseStatus();
-  const isReady = dbStatus === 'connected';
+  const shuttingDown = isAppShuttingDown();
+  const isReady = dbStatus === 'connected' && !shuttingDown;
 
   const data: ReadinessStatusDto = {
     status: isReady ? 'ready' : 'not_ready',
@@ -36,7 +39,9 @@ healthRoutes.get('/health/ready', (_req: Request, res: Response) => {
   if (!isReady) {
     res.status(503).json({
       success: false,
-      message: 'Service is not ready: database is disconnected',
+      message: shuttingDown
+        ? 'Service is shutting down'
+        : 'Service is not ready: database is disconnected',
       data,
     });
     return;
@@ -48,7 +53,8 @@ healthRoutes.get('/health/ready', (_req: Request, res: Response) => {
 // Consolidated health check
 healthRoutes.get('/health', (_req: Request, res: Response) => {
   const dbStatus = getDatabaseStatus();
-  const isHealthy = dbStatus === 'connected';
+  const shuttingDown = isAppShuttingDown();
+  const isHealthy = dbStatus === 'connected' && !shuttingDown;
 
   const healthData: HealthStatusDto = {
     status: isHealthy ? 'ok' : 'degraded',
@@ -66,7 +72,7 @@ healthRoutes.get('/health', (_req: Request, res: Response) => {
   if (!isHealthy) {
     res.status(503).json({
       success: false,
-      message: 'Service degraded (database unavailable)',
+      message: shuttingDown ? 'Service is shutting down' : 'Service degraded (database unavailable)',
       data: healthData,
     });
     return;

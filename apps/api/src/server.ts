@@ -4,6 +4,8 @@ import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './database/connection.js';
 
+import { setAppShuttingDown } from './utils/lifecycle.js';
+
 async function bootstrap() {
   const app = createApp();
   const server = http.createServer(app);
@@ -17,8 +19,19 @@ async function bootstrap() {
     logger.info(`🌍 Environment: ${env.NODE_ENV}`);
   });
 
+  let isShuttingDown = false;
+
   const handleShutdown = async (signal: string) => {
+    if (isShuttingDown) {
+      logger.warn(`Shutdown already in progress, ignoring duplicate ${signal}`);
+      return;
+    }
+    isShuttingDown = true;
+    setAppShuttingDown(true);
+
     logger.info(`Received ${signal}, initiating graceful shutdown...`);
+
+    // Stop accepting new connections
     server.close(async () => {
       logger.info('HTTP server closed');
       await disconnectDatabase();
@@ -26,11 +39,11 @@ async function bootstrap() {
       process.exit(0);
     });
 
-    // Force shutdown after timeout
+    // Bounded timeout: force exit after 10 seconds if hanging
     setTimeout(() => {
       logger.error('Graceful shutdown timed out, forcing exit');
       process.exit(1);
-    }, 10000);
+    }, 10000).unref();
   };
 
   process.on('SIGTERM', () => handleShutdown('SIGTERM'));

@@ -11,7 +11,11 @@ export interface RoomReconcileResult {
   actualActiveMembers: number;
   drift: number;
   reconciled: boolean;
-  actionTaken: 'NONE' | 'COUNT_REPAIRED' | 'MEMBERSHIPS_CONCLUDED_AND_COUNT_ZEROED';
+  actionTaken:
+    | 'NONE'
+    | 'COUNT_REPAIRED'
+    | 'MEMBERSHIPS_CONCLUDED_AND_COUNT_ZEROED'
+    | 'ABORTED_CONCURRENT_MUTATION';
 }
 
 export interface ReconcileSummary {
@@ -52,7 +56,7 @@ export class RoomReconciliationService {
               { $set: { status: 'left', leftAt: new Date() } }
             ).exec(),
             RoomModel.updateOne(
-              { _id: roomObjectId },
+              { _id: roomObjectId, status: 'closed' },
               { $set: { currentParticipantsCount: 0 } }
             ).exec(),
           ]);
@@ -81,12 +85,39 @@ export class RoomReconciliationService {
     let actionTaken: RoomReconcileResult['actionTaken'] = 'NONE';
 
     if (drift !== 0) {
-      actionTaken = 'COUNT_REPAIRED';
-      if (!dryRun) {
-        await RoomModel.updateOne(
-          { _id: roomObjectId },
+      if (dryRun) {
+        actionTaken = 'COUNT_REPAIRED';
+      } else {
+        // CAS (Compare-And-Swap): Only apply repair if count and status have NOT changed concurrently
+        const casResult = await RoomModel.updateOne(
+          {
+            _id: roomObjectId,
+            status: room.status,
+            currentParticipantsCount: storedCount,
+          },
           { $set: { currentParticipantsCount: activeCount } }
         ).exec();
+
+        if (casResult.matchedCount === 0) {
+          // A concurrent join/leave/close modified the room while reconciliation was computing!
+          // Do NOT overwrite with stale data! Abort to preserve newer valid state.
+          logger.warn(
+            { roomId: room.id, storedCount, activeCount },
+            '⚠️ Reconciliation CAS aborted: Room state was modified concurrently'
+          );
+          return {
+            roomId: room.id,
+            roomName: room.name,
+            status: room.status,
+            storedCount,
+            actualActiveMembers: activeCount,
+            drift,
+            reconciled: false,
+            actionTaken: 'ABORTED_CONCURRENT_MUTATION',
+          };
+        }
+
+        actionTaken = 'COUNT_REPAIRED';
         logger.info(
           { roomId: room.id, storedCount, activeCount, drift },
           '🛠️ Reconciled room participant count drift'
@@ -101,7 +132,7 @@ export class RoomReconciliationService {
       storedCount,
       actualActiveMembers: activeCount,
       drift,
-      reconciled: !dryRun && actionTaken !== 'NONE',
+      reconciled: !dryRun && actionTaken === 'COUNT_REPAIRED',
       actionTaken,
     };
   }

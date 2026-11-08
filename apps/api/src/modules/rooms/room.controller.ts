@@ -4,6 +4,7 @@ import { roomService } from './room.service.js';
 import { roomReconciliationService } from './room-reconciliation.service.js';
 import { RoomMembershipModel } from './membership.model.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
+import { logger } from '../../utils/logger.js';
 import { CreateRoomDto, RoomQueryDto, UpdateRoomDto } from '@ktv/contracts';
 
 export class RoomController {
@@ -431,6 +432,11 @@ export class RoomController {
     try {
       const dryRun = req.query.dryRun === 'true';
       const roomId = req.query.roomId as string | undefined;
+
+      logger.info(
+        { adminId: req.user?.id, roomId: roomId || 'ALL', dryRun },
+        '🛡️ Administrative room reconciliation initiated'
+      );
 
       if (roomId) {
         const result = await roomReconciliationService.reconcileRoom(roomId, dryRun);
