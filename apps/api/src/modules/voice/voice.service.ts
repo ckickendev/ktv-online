@@ -1,57 +1,59 @@
 import crypto from 'crypto';
-import mongoose from 'mongoose';
 import { RoomServiceClient } from 'livekit-server-sdk';
-import { VoiceTokenResponseDto } from '@ktv/contracts';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
+import { UserModel } from '../users/user.model.js';
 import { RoomModel } from '../rooms/room.model.js';
 import { RoomMembershipModel } from '../rooms/membership.model.js';
-import { UserModel } from '../users/user.model.js';
 import { SessionModel } from '../auth/session.model.js';
-import { voiceTokenService } from './voice-token.service.js';
 import { VoiceParticipantMetadata } from './voice.types.js';
+import { voiceTokenService } from './voice-token.service.js';
 import { voiceSessionRegistry } from './voice-session.registry.js';
 import { VoiceEvictionTaskModel } from './voice-eviction-task.model.js';
 
-export interface AuthenticatedVoiceUser {
-  id: string;
-  email?: string;
-  username: string;
-  displayName?: string;
-  avatar?: string | null;
-  avatarUrl?: string;
-  role?: string;
-  familyId?: string;
+export interface GenerateVoiceTokenParams {
+  roomId: string;
+  user: {
+    id: string;
+    username: string;
+    displayName?: string;
+    avatar?: string;
+    avatarUrl?: string;
+    familyId?: string;
+  };
+  tabId?: string;
+}
+
+export interface VoiceTokenResult {
+  serverUrl: string;
+  token: string;
+  roomName: string;
+  participantIdentity: string;
+  expiresAt: string;
 }
 
 export class VoiceService {
-  private roomServiceClient: RoomServiceClient | null = null;
+  private client: RoomServiceClient | null = null;
 
-  public isConfigured(): boolean {
-    return Boolean(env.LIVEKIT_URL && env.LIVEKIT_API_KEY && env.LIVEKIT_API_SECRET);
+  public getClient(): RoomServiceClient | null {
+    if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+      return null;
+    }
+    if (!this.client) {
+      const httpUrl = env.LIVEKIT_URL.replace('wss://', 'https://').replace('ws://', 'http://');
+      this.client = new RoomServiceClient(httpUrl, env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET);
+    }
+    return this.client;
   }
 
-  /**
-   * Deterministically maps a KTVOnline room ID to an opaque LiveKit room identifier.
-   */
   public getLiveKitRoomName(roomId: string): string {
     return `ktv_room_${roomId}`;
-  }
-
-  private getClient(): RoomServiceClient | null {
-    if (!this.isConfigured()) return null;
-    if (!this.roomServiceClient) {
-      // RoomServiceClient expects http/https URL format
-      const httpUrl = env.LIVEKIT_URL!.replace(/^ws(s)?:/, 'http$1:');
-      this.roomServiceClient = new RoomServiceClient(httpUrl, env.LIVEKIT_API_KEY!, env.LIVEKIT_API_SECRET!);
-    }
-    return this.roomServiceClient;
   }
 
   /**
    * Records a failed eviction task for background recovery.
    */
-  private async recordPendingEviction(
+  public async recordPendingEviction(
     targetType: 'user' | 'family' | 'room',
     targetId: string,
     roomId?: string,
@@ -69,6 +71,7 @@ export class VoiceService {
         status: 'pending',
         nextAttemptAt: new Date(Date.now() + 2000), // 2s initial delay
         lastError: lastError || null,
+        errorCategory: 'transient',
       });
       logger.info(
         { targetType, targetId, roomId, participantIdentity },
@@ -83,44 +86,42 @@ export class VoiceService {
   }
 
   /**
-   * Authorizes caller and generates a LiveKit access token for room voice participation.
+   * Generates a signed LiveKit access token after validating authorization invariants.
    */
-  public async generateVoiceToken(
-    roomId: string,
-    user: AuthenticatedVoiceUser,
-    tabId?: string
-  ): Promise<VoiceTokenResponseDto> {
-    if (!this.isConfigured()) {
-      throw new Error('VOICE_SERVICE_NOT_CONFIGURED');
+  public async generateVoiceToken(params: GenerateVoiceTokenParams): Promise<VoiceTokenResult> {
+    const { roomId, user, tabId } = params;
+
+    // Check if LiveKit configuration is available
+    if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+      throw new Error('VOICE_NOT_CONFIGURED');
     }
 
-    if (!mongoose.Types.ObjectId.isValid(roomId)) {
-      throw new Error('INVALID_ROOM_ID');
-    }
-
-    // 1. Verify user status
+    // 1. Verify user exists and is active (not suspended/deactivated)
     const dbUser = await UserModel.findById(user.id);
     if (!dbUser || dbUser.status === 'suspended') {
       throw new Error('FORBIDDEN_USER_INACTIVE');
     }
 
-    // 2. Verify session family is active and not revoked
+    // 2. Verify session family is not revoked
     if (user.familyId) {
       const activeSession = await SessionModel.findOne({
         familyId: user.familyId,
         isRevoked: false,
-      }).exec();
+      })
+        .select('_id')
+        .lean()
+        .exec();
 
       if (!activeSession) {
         logger.warn(
-          { userId: user.id, familyId: user.familyId },
-          'Rejected voice token request for revoked session family'
+          { userId: user.id, familyId: user.familyId, roomId },
+          'Voice token denied: session family has been revoked'
         );
         throw new Error('FORBIDDEN_SESSION_REVOKED');
       }
     }
 
-    // 3. Verify room existence and open status
+    // 3. Verify room exists and is open
     const room = await RoomModel.findById(roomId);
     if (!room) {
       throw new Error('ROOM_NOT_FOUND');
@@ -144,22 +145,30 @@ export class VoiceService {
       throw new Error('FORBIDDEN_KICKED');
     }
 
-    // 6. Sanitize tabId and generate participant identity
-    const cleanTabId = (tabId && /^[a-zA-Z0-9-]{1,16}$/.test(tabId))
-      ? tabId
-      : crypto.randomUUID().slice(0, 8);
-    const participantIdentity = `${user.id}_${cleanTabId}`;
+    // 6. Backend-controlled opaque participant session identifier
+    const cleanTabHint = (tabId && /^[a-zA-Z0-9-]{1,16}$/.test(tabId)) ? tabId : undefined;
+    let participantSessionId: string;
+    let participantIdentity: string;
+
+    const existingSession = voiceSessionRegistry.findExistingSession(roomId, user.id, cleanTabHint);
+    if (existingSession) {
+      participantSessionId = existingSession.participantSessionId;
+      participantIdentity = existingSession.identity;
+      existingSession.lastRenewedAt = new Date();
+    } else {
+      participantSessionId = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+      participantIdentity = `${user.id}_vps_${participantSessionId}`;
+    }
+
     const roomName = this.getLiveKitRoomName(roomId);
 
+    // Public metadata contains strictly UI-necessary fields (NO familyId, NO tabId, NO security flags)
     const avatar = user.avatar || user.avatarUrl || dbUser.avatar || undefined;
     const metadata: VoiceParticipantMetadata = {
       userId: user.id,
       username: user.username,
       displayName: user.displayName || user.username,
       avatarUrl: avatar || undefined,
-      tabId: cleanTabId,
-      familyId: user.familyId,
-      issuedAt: new Date().toISOString(),
     };
 
     const { token, expiresAt } = await voiceTokenService.generateToken({
@@ -169,14 +178,16 @@ export class VoiceService {
       metadata,
     });
 
-    // 7. Track in server-side session registry
+    // 7. Track in server-side session registry (private mapping)
     voiceSessionRegistry.register({
       identity: participantIdentity,
+      participantSessionId,
       userId: user.id,
       roomId,
       familyId: user.familyId,
-      tabId: cleanTabId,
-      createdAt: new Date(),
+      tabHint: cleanTabHint,
+      createdAt: existingSession ? existingSession.createdAt : new Date(),
+      lastRenewedAt: new Date(),
     });
 
     logger.info(
@@ -282,6 +293,26 @@ export class VoiceService {
   }
 
   /**
+   * Evicts all active LiveKit voice participants belonging to a specific KTVOnline user across ALL rooms
+   * (e.g. upon user suspension, deactivation, or global security revocation).
+   */
+  public async evictUserFromAllRooms(userId: string): Promise<void> {
+    const userSessions = voiceSessionRegistry.getByUser(userId);
+    const roomIds = new Set<string>();
+    for (const s of userSessions) {
+      roomIds.add(s.roomId);
+      voiceSessionRegistry.unregister(s.identity);
+    }
+
+    const client = this.getClient();
+    if (!client) return;
+
+    for (const roomId of roomIds) {
+      await this.evictLiveKitParticipant(roomId, userId);
+    }
+  }
+
+  /**
    * Deletes and terminates a LiveKit voice room when a KTVOnline room is closed.
    */
   public async closeLiveKitRoom(roomId: string): Promise<void> {
@@ -302,65 +333,6 @@ export class VoiceService {
         'Failed to delete LiveKit room; recording for recovery retry'
       );
       await this.recordPendingEviction('room', roomId, roomId, undefined, errorMsg);
-    }
-  }
-
-  /**
-   * Sweeps pending eviction tasks and retries provider calls with exponential backoff.
-   */
-  public async retryPendingEvictions(batchSize = 20): Promise<void> {
-    const client = this.getClient();
-    if (!client) return;
-
-    const tasks = await VoiceEvictionTaskModel.find({
-      status: 'pending',
-      nextAttemptAt: { $lte: new Date() },
-    })
-      .limit(batchSize)
-      .exec();
-
-    for (const task of tasks) {
-      try {
-        if (task.targetType === 'room' && task.roomId) {
-          const roomName = this.getLiveKitRoomName(task.roomId);
-          await client.deleteRoom(roomName);
-        } else if (task.targetType === 'user' && task.roomId && task.targetId) {
-          const roomName = this.getLiveKitRoomName(task.roomId);
-          await client.removeParticipant(
-            roomName,
-            task.participantIdentity || `${task.targetId}_`
-          );
-        } else if (task.targetType === 'family' && task.roomId && task.participantIdentity) {
-          const roomName = this.getLiveKitRoomName(task.roomId);
-          await client.removeParticipant(roomName, task.participantIdentity);
-        }
-
-        task.status = 'completed';
-        task.lastError = null;
-        await task.save();
-
-        logger.info(
-          { taskId: task._id.toString(), targetType: task.targetType, targetId: task.targetId },
-          'Successfully recovered and completed pending voice eviction'
-        );
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        task.attemptCount += 1;
-        task.lastError = errorMsg;
-
-        if (task.attemptCount >= task.maxAttempts) {
-          task.status = 'exhausted';
-          logger.error(
-            { taskId: task._id.toString(), targetType: task.targetType, targetId: task.targetId, attempts: task.attemptCount, err: errorMsg },
-            'Exhausted max retry attempts for voice eviction task'
-          );
-        } else {
-          // Bounded exponential backoff: 2s, 4s, 8s, 16s... up to 60s
-          const backoffMs = Math.min(60000, 2000 * Math.pow(2, task.attemptCount));
-          task.nextAttemptAt = new Date(Date.now() + backoffMs);
-        }
-        await task.save();
-      }
     }
   }
 }

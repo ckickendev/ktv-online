@@ -1,10 +1,12 @@
 export interface ActiveVoiceSession {
   identity: string;
+  participantSessionId: string;
   userId: string;
   roomId: string;
   familyId?: string;
-  tabId?: string;
+  tabHint?: string;
   createdAt: Date;
+  lastRenewedAt: Date;
 }
 
 export class VoiceSessionRegistry {
@@ -84,6 +86,17 @@ export class VoiceSessionRegistry {
     return list;
   }
 
+  public getByUser(userId: string): ActiveVoiceSession[] {
+    const identities = this.byUser.get(userId);
+    if (!identities) return [];
+    const list: ActiveVoiceSession[] = [];
+    for (const id of identities) {
+      const s = this.sessions.get(id);
+      if (s) list.push(s);
+    }
+    return list;
+  }
+
   public getByRoom(roomId: string): ActiveVoiceSession[] {
     const identities = this.byRoom.get(roomId);
     if (!identities) return [];
@@ -104,6 +117,12 @@ export class VoiceSessionRegistry {
       if (s && s.userId === userId) list.push(s);
     }
     return list;
+  }
+
+  public findExistingSession(roomId: string, userId: string, tabHint?: string): ActiveVoiceSession | null {
+    if (!tabHint) return null;
+    const roomSessions = this.getByUserAndRoom(roomId, userId);
+    return roomSessions.find((s) => s.tabHint === tabHint) || null;
   }
 
   public clearRoom(roomId: string): void {

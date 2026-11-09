@@ -3,9 +3,17 @@ export interface VoiceParticipantMetadata {
   username: string;
   displayName?: string;
   avatarUrl?: string;
-  tabId?: string;
-  familyId?: string;
-  issuedAt?: string;
+}
+
+export interface VoicePrivateSessionMapping {
+  identity: string;
+  participantSessionId: string;
+  userId: string;
+  roomId: string;
+  familyId: string;
+  tabHint?: string;
+  createdAt: Date;
+  lastRenewedAt: Date;
 }
 
 export interface GenerateVoiceTokenOptions {

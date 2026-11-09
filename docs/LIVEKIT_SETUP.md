@@ -123,20 +123,22 @@ Select the following events in the LiveKit dashboard:
 ### 6.3 ICE / Network Disconnection
 - **Symptom**: Status switches to `reconnecting` with amber indicator.
 - **Remedy**:
-  - LiveKit client automatically attempts ICE restart and reconnection using `room.engine.token`.
+  - LiveKit client automatically attempts ICE restart and reconnection.
   - If network returns, status transitions back to `connected`.
+  - If reconnect requires re-authorization, client uses `latestTokenRef` and re-validates credentials with the backend.
   - If network is permanently lost, state transitions to `disconnected` after timeout, and audio resources are released.
 
 ### 6.4 Provider Eviction Recovery & Queue Monitoring
 - **Symptom**: Kicked participant or revoked session remains temporarily in WebRTC voice due to LiveKit Cloud API timeout.
 - **Architecture**:
   - Unsuccessful evictions are recorded in the `VoiceEvictionTask` collection.
+  - A managed worker (`VoiceEvictionWorker`) runs on API startup and reclaims ready tasks with atomic leasing.
   - The tasks retry automatically with exponential backoff up to 5 attempts.
-  - Query pending tasks in MongoDB:
+  - Query permanently failed tasks requiring operator review in MongoDB:
     ```javascript
-    db.voiceevictiontasks.find({ status: 'pending' })
+    db.voiceevictiontasks.find({ status: 'failed_permanent' })
     ```
-  - Permanently failed tasks (`status: 'failed'`) produce `error` level structured logs for alerting.
+  - Unresolved security tasks are preserved permanently and are never pruned by TTL.
 
 ### 6.5 Audio-Only Publication Policy
 - LiveKit access tokens strictly enforce `canPublishSources: [TrackSource.MICROPHONE]`.

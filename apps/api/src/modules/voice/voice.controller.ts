@@ -30,7 +30,11 @@ export class VoiceController {
         return;
       }
 
-      const tokenData = await voiceService.generateVoiceToken(roomId, req.user, tabId);
+      const tokenData = await voiceService.generateVoiceToken({
+        roomId,
+        user: req.user,
+        tabId,
+      });
 
       res.status(200).json({
         success: true,

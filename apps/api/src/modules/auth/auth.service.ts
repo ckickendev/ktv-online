@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { UserModel } from '../users/user.model.js';
 import { SessionModel } from './session.model.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, hashToken } from '../../utils/jwt.js';
-import { disconnectSessionSockets } from '../../realtime/socket.server.js';
+import { disconnectSessionSockets, disconnectUserSockets } from '../../realtime/socket.server.js';
 import { voiceService } from '../voice/voice.service.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
@@ -95,16 +95,7 @@ export class AuthService {
             { userId: revokedSession.userId, familyId: revokedSession.familyId },
             '🚨 Security alert: Refresh token replay detected! Revoking token family.'
           );
-          await SessionModel.updateMany(
-            { familyId: revokedSession.familyId },
-            { $set: { isRevoked: true } }
-          ).exec();
-          await disconnectSessionSockets(revokedSession.familyId);
-          try {
-            await voiceService.evictLiveKitSessionFamily(revokedSession.familyId);
-          } catch {
-            // Non-blocking
-          }
+          await this.revokeSessionFamily(revokedSession.familyId, 'REFRESH_TOKEN_REPLAY');
           return { success: false, error: 'REPLAY_DETECTED' };
         }
         return { success: false, error: 'INVALID_TOKEN' };
@@ -161,6 +152,36 @@ export class AuthService {
     }
   }
 
+  /**
+   * Centralized session family revocation:
+   * Persists revocation in SessionModel, severs Socket.IO connections, and evicts LiveKit voice participants.
+   */
+  async revokeSessionFamily(familyId: string, reason: string): Promise<void> {
+    logger.info({ familyId, reason }, 'Revoking session family and connected realtime services');
+    await SessionModel.updateMany({ familyId }, { $set: { isRevoked: true } }).exec();
+    await disconnectSessionSockets(familyId);
+    try {
+      await voiceService.evictLiveKitSessionFamily(familyId);
+    } catch (err: unknown) {
+      logger.warn({ familyId, err }, 'Voice eviction failed during session family revocation; queued for worker retry');
+    }
+  }
+
+  /**
+   * Centralized user-wide session revocation:
+   * Revokes all session families for a user, severs all user sockets, and evicts voice participants from all rooms.
+   */
+  async revokeUserSessions(userId: string, reason: string): Promise<void> {
+    logger.info({ userId, reason }, 'Revoking all user sessions and connected realtime services');
+    await SessionModel.updateMany({ userId }, { $set: { isRevoked: true } }).exec();
+    await disconnectUserSockets(userId);
+    try {
+      await voiceService.evictUserFromAllRooms(userId);
+    } catch (err: unknown) {
+      logger.warn({ userId, err }, 'Voice eviction failed during user revocation; queued for worker retry');
+    }
+  }
+
   async logout(token: string): Promise<boolean> {
     try {
       const tokenHash = hashToken(token);
@@ -169,16 +190,9 @@ export class AuthService {
         return false;
       }
 
-      // Revoke this session and its family, and disconnect active sockets
       session.isRevoked = true;
       await session.save();
-      await SessionModel.updateMany({ familyId: session.familyId }, { $set: { isRevoked: true } }).exec();
-      await disconnectSessionSockets(session.familyId);
-      try {
-        await voiceService.evictLiveKitSessionFamily(session.familyId);
-      } catch {
-        // Non-blocking
-      }
+      await this.revokeSessionFamily(session.familyId, 'EXPLICIT_LOGOUT');
       return true;
     } catch {
       return false;

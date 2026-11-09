@@ -52,19 +52,19 @@ This system works alongside the existing **Socket.IO** realtime foundation and *
 ### 3.2 Participant Identity & Multi-Tab Isolation
 If a user joins the same KTVOnline room in two separate browser tabs, standard user ID assignment would cause a participant identity collision in LiveKit.
 - **Identity Scheme**:
-  $$\text{participantIdentity} = \text{userId} + \text{"\_"} + \text{sessionSalt}$$
-  Where `sessionSalt` is either the client's unique `tabId` (truncated to 12 chars) or a secure random 8-character hex string.
-- **Cryptographic Metadata**: The server embeds trusted metadata in the LiveKit JWT token:
+  $$\text{participantIdentity} = \text{userId} + \text{"\_vps\_"} + \text{participantSessionId}$$
+  Where `participantSessionId` is an opaque 12-character hex string generated on the backend. Client-supplied tab IDs serve strictly as diagnostic hints and do not dictate the authoritative identity.
+- **Public Participant Metadata**: To prevent internal credential leaks, LiveKit participant metadata is strictly restricted to UI-necessary attributes:
   ```json
   {
     "userId": "65f...",
     "username": "MiaSingz",
     "displayName": "Mia Singer",
-    "avatarUrl": "https://...",
-    "tabId": "tab-abc-123"
+    "avatarUrl": "https://..."
   }
   ```
-- **UI Aggregation**: The frontend groups voice participants or annotates local session instances with `(You)` while displaying the authentic display name and avatar.
+  Internal authentication credentials (such as `familyId` and `tabId`) remain strictly in backend server memory and database mappings.
+- **UI Aggregation**: The frontend groups voice participants by `userId` to compute composite mute and speaking states while annotating multi-tab presences with a subtle badge.
 
 ---
 
@@ -191,9 +191,10 @@ When a session family is revoked (via explicit logout or refresh token replay de
 ### 6.5 Durable Provider Eviction Recovery
 1. Persistent database transitions (kick, leave, close, logout) always commit first.
 2. If LiveKit's API is temporarily unavailable or returns an error, the operation is **never** rolled back.
-3. The failed eviction is persisted to MongoDB via `VoiceEvictionTaskModel` with an exponential backoff schedule.
-4. A background sweep worker (`voiceService.retryPendingEvictions()`) retries failed calls up to 5 times.
-5. Expired tasks are automatically garbage collected via MongoDB's 24-hour TTL index.
+3. The failed eviction is persisted to MongoDB via `VoiceEvictionTaskModel` utilizing a 5-state lifecycle: `pending`, `processing`, `retry_scheduled`, `completed`, and `failed_permanent`.
+4. An atomic lease mechanism (`claimNextTask`) with a 30-second timeout ensures multiple API instances never process the same eviction concurrently and abandoned tasks are safely recovered.
+5. A background recovery worker (`VoiceEvictionWorker`) starts automatically on API boot and shuts down cleanly on `SIGTERM`/`SIGINT`.
+6. **Permanent Task Retention**: A partial TTL index purges completed tasks after 24 hours. Unresolved security evictions (`failed_permanent`) are **never deleted by TTL** and remain persisted for operator alerting.
 
 ---
 
@@ -202,11 +203,12 @@ When a session family is revoked (via explicit logout or refresh token replay de
 LiveKit delivers lifecycle webhooks to `POST /api/v1/webhooks/livekit`.
 1. **Raw Body Validation**: Express captures the raw request Buffer in `req.rawBody` prior to JSON parsing.
 2. **Signature Verification**: `WebhookReceiver.receive(rawBodyString, req.headers.authorization)` verifies the JWT signature against `LIVEKIT_API_KEY` and `LIVEKIT_WEBHOOK_SECRET` (or `LIVEKIT_API_SECRET`).
-3. **Idempotency**:
-   - An in-memory LRU cache stores event IDs for 10 minutes (up to 5,000 entries).
-   - Duplicate deliveries are acknowledged immediately with HTTP 200 without duplicate side-effects.
-4. **Monotonic Sequence Ordering**:
-   - Webhook arrival timestamps are tracked per participant (`${roomName}:${identity}`).
+3. **Durable Deduplication (`VoiceWebhookEventModel`)**:
+   - Webhook deliveries are atomically claimed and deduplicated in MongoDB across all API instances.
+   - Deterministic event IDs are generated via SHA-256 fallback if LiveKit omits `event.id`.
+   - Re-delivered events are acknowledged with HTTP 200 `{ duplicate: true }` without repeating side effects.
+4. **Monotonic Sequence Ordering (`VoiceParticipantSequenceModel`)**:
+   - Monotonic timestamps are tracked per participant across horizontal instances.
    - Older events arriving after newer events are dropped to prevent delayed `participant_joined` from resurrecting departed participants.
 5. **Closed Room Guard**:
    - If a delayed `participant_joined` webhook arrives for a closed room, the participant is immediately evicted.

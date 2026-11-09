@@ -7,6 +7,8 @@ import { connectDatabase, disconnectDatabase } from './database/connection.js';
 import { setAppShuttingDown } from './utils/lifecycle.js';
 import { createSocketServer, closeSocketServer } from './realtime/index.js';
 
+import { voiceEvictionWorker } from './modules/voice/voice-eviction.worker.js';
+
 async function bootstrap() {
   const app = createApp();
   const server = http.createServer(app);
@@ -16,6 +18,9 @@ async function bootstrap() {
 
   // Attempt database connection
   await connectDatabase();
+
+  // Start voice eviction background recovery worker
+  voiceEvictionWorker.start();
 
   server.listen(env.PORT, () => {
     logger.info(`🚀 KTV Online API server running at http://localhost:${env.PORT}`);
@@ -36,10 +41,13 @@ async function bootstrap() {
 
     logger.info(`Received ${signal}, initiating graceful shutdown...`);
 
-    // 1. Close Socket.IO connections first
+    // 1. Stop background workers
+    await voiceEvictionWorker.stop();
+
+    // 2. Close Socket.IO connections
     await closeSocketServer();
 
-    // 2. Stop accepting new HTTP connections
+    // 3. Stop accepting new HTTP connections
     server.close(async () => {
       logger.info('HTTP server closed');
       await disconnectDatabase();

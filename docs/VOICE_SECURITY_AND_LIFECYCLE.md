@@ -1,10 +1,16 @@
-# Voice Security & Lifecycle Hardening Specification
+# Voice Security & Lifecycle Hardening Specification (Sprint 2.3.2)
 
 ## 1. Executive Overview
 
-This document specifies the voice security, lifecycle hardening, and provider failure handling architecture implemented in **Sprint 2.3.1** for **KTVOnline**.
+This document specifies the distributed voice security, lifecycle hardening, and provider failure handling architecture implemented across **Sprint 2.3.1** and **Sprint 2.3.2** for **KTVOnline**.
 
-While Sprint 2.3 introduced the initial LiveKit WebRTC voice capability, Sprint 2.3.1 hardens the integration against session revocation leakage, audio-only publishing bypasses, webhook delivery duplication/out-of-order execution, provider API eviction failures, token renewal race conditions, multi-tab identity collisions, and frontend resource leaks.
+While Sprint 2.3 introduced the initial LiveKit WebRTC voice capability, and Sprint 2.3.1 introduced session family mapping and audio-only grants, **Sprint 2.3.2** hardens the architecture for distributed and resilient production:
+1. **Durable Webhook Idempotency**: Replaced in-memory caches with MongoDB-backed atomic event claiming (`VoiceWebhookEventModel`) and monotonic timestamp sequence tracking (`VoiceParticipantSequenceModel`).
+2. **Security-Critical Eviction Reliability**: Upgraded task lifecycle to a 5-state machine with atomic leasing, bounded exponential retries, and partial TTL filtering that guarantees unresolved security evictions (`failed_permanent`) are **never silently deleted**.
+3. **Private Metadata Separation**: Stripped internal `familyId` and `tabId` from client-visible LiveKit participant metadata; private mappings remain strictly server-side.
+4. **Supported Token Refresh Strategy**: Eliminated reliance on undocumented SDK internals (`room.engine.token`) in favor of supported token state management and re-authorization reconnects.
+5. **Centralized Session Revocation**: Wired every session revocation pathway (logout, token replay, user suspension, account deactivation) to synchronous socket disconnects and recoverable voice evictions.
+6. **Backend-Controlled Participant Identity**: Derives opaque participant session IDs on the backend (`${userId}_vps_${opaqueSessionId}`), preventing client tab collision and identity reuse.
 
 ---
 
@@ -18,232 +24,256 @@ While Sprint 2.3 introduced the initial LiveKit WebRTC voice capability, Sprint 
 3. **Session-Family Scoped Invalidation**:
    Voice sessions are bound to the authenticated user's session family (`familyId`). Revoking a session family (e.g. explicit logout or refresh-token reuse detection) invalidates and evicts only voice sessions associated with that specific family, leaving other concurrent session families of the same user unaffected.
 4. **Authoritative Backend Control**:
-   The backend derives room names, participant identities, and source-publishing grants. Clients can neither supply arbitrary identities nor claim permissions beyond audio publication.
+   The backend derives room names, participant identities, and source-publishing grants. Clients can neither supply arbitrary identities nor claim permissions beyond microphone audio.
 5. **Durable Provider Failure Recovery**:
-   Persistent room membership and session revocation decisions commit first. LiveKit API failures never rollback database transactions. Unsuccessful evictions are recorded in a durable task queue (`VoiceEvictionTaskModel`) and recovered with exponential backoff.
+   Persistent room membership and session revocation decisions commit first. LiveKit API failures never roll back database transactions. Unsuccessful evictions are recorded in a durable task queue (`VoiceEvictionTaskModel`) and recovered with exponential backoff.
 6. **Zero Secret Exposure**:
    LiveKit API keys, secrets, and raw tokens are never logged or leaked to unauthorized clients.
 
 ---
 
-## 3. Session-Family to Voice Participant Mapping
+## 3. Participant Metadata & Identity Architecture
 
-### 3.1 Mapping Architecture
+### 3.1 Public vs. Private Metadata Separation
 
 ```
-+---------------------------------------------------------------------------------------+
-| Express Backend / In-Memory Registry (VoiceSessionRegistry)                           |
-|                                                                                       |
-|   participantIdentity = `${userId}_${tabId}`                                          |
-|                                                                                       |
-|   ActiveVoiceSession {                                                                |
-|     identity: string;       // Primary Key                                            |
-|     userId: string;         // Indexed for user-level eviction (kick, account suspend)|
-|     roomId: string;         // Indexed for room-level scope                           |
-|     familyId: string;       // Indexed for session revocation (logout, token replay)  |
-|     issuedAt: Date;                                                                   |
-|   }                                                                                   |
-+---------------------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------------------------+
+| Express Backend / In-Memory Registry (VoiceSessionRegistry)                                             |
+|                                                                                                         |
+|   participantIdentity = `${userId}_vps_${participantSessionId}`                                         |
+|                                                                                                         |
+|   ActiveVoiceSession {                                                                                  |
+|     identity: string;               // e.g. "65f01..._vps_a1b2c3d4e5f6"                                 |
+|     participantSessionId: string;   // Opaque backend-generated ID                                      |
+|     userId: string;                 // KTVOnline user ID                                                |
+|     roomId: string;                 // KTVOnline room ID                                                |
+|     familyId: string;               // Session family ID (STRICTLY PRIVATE)                             |
+|     tabHint?: string;               // Client tab hint for session reuse (STRICTLY PRIVATE)             |
+|     createdAt: Date;                                                                                    |
+|     lastRenewedAt: Date;                                                                                |
+|   }                                                                                                     |
++---------------------------------------------------------------------------------------------------------+
         |                                                        |
         v                                                        v
-+-------------------------------+               +-------------------------------+
-| LiveKit Room JWT Claims       |               | Signed LiveKit Metadata       |
-|                               |               |                               |
-| {                             |               | {                             |
-|   "sub": "userId_tabId",      |               |   "userId": "...",            |
-|   "video": {                  |               |   "familyId": "...",          |
-|     "room": "ktv_room_...",   |               |   "issuedAt": "...",          |
-|     "canPublishSources":      |               |   "tabId": "...",             |
-|       ["microphone"]          |               |   "displayName": "..."        |
-|   }                           |               | }                             |
-| }                             |               +-------------------------------+
-+-------------------------------+
++-------------------------------+               +-------------------------------------------------------+
+| LiveKit Room JWT Claims       |               | Signed LiveKit Public Metadata (Client-Visible)       |
+|                               |               |                                                       |
+| {                             |               | {                                                     |
+|   "sub": "userId_vps_...",    |               |   "userId": "65f...",                                 |
+|   "video": {                  |               |   "username": "MiaSingz",                             |
+|     "room": "ktv_room_...",   |               |   "displayName": "Mia Singer",                        |
+|     "canPublishSources":      |               |   "avatarUrl": "https://..."                          |
+|       ["microphone"]          |               | }                                                     |
+|   }                           |               |                                                       |
+| }                             |               | * NOTE: familyId, tabHint, and security flags         |
++-------------------------------+               |   are EXCLUDED to prevent credential leakage          |
+                                                +-------------------------------------------------------+
 ```
 
-### 3.2 Authorization at Issuance and Renewal
-Every token generation request (`POST /api/v1/rooms/:roomId/voice/token`) verifies:
-1. **Authenticated Context**: Token bearer must be authenticated; `user.id` and `user.familyId` are derived from the verified JWT.
-2. **Account Status**: `UserModel.status !== 'suspended' && UserModel.status !== 'deactivated'`.
-3. **Session Revocation**: `SessionModel.findOne({ familyId: user.familyId, isRevoked: false })` must exist and be active. If revoked, token generation fails immediately with HTTP 403 `FORBIDDEN_SESSION_REVOKED`.
-4. **Room Status**: `RoomModel.status !== 'closed'`.
-5. **Membership Status**: `RoomMembershipModel.findOne({ roomId, userId: user.id, status: 'active', kickedAt: null })`.
-
-Upon passing authorization:
-- `VoiceTokenService` signs a token with 300s TTL.
-- The session is registered in `voiceSessionRegistry`.
-
-### 3.3 Revocation Integration Paths
-- **Explicit User Logout** (`POST /api/v1/auth/logout`):
-  Invokes `voiceService.evictLiveKitSessionFamily(session.familyId)` immediately.
-- **Refresh Token Reuse Detection** (`auth.service.ts`):
-  When a previously revoked refresh token is replayed, the entire session family is compromised and revoked. The system revokes the session family, disconnects its Socket.IO connections, and calls `voiceService.evictLiveKitSessionFamily(compromisedSession.familyId)`.
-- **Account Suspension / Deactivation**:
-  Invokes `voiceService.evictLiveKitParticipant(roomId, userId)` across all active rooms.
+### 3.2 Backend-Controlled Identity Lifecycle
+- Format: `${userId}_vps_${participantSessionId}`.
+- `userId` is extracted strictly from verified JWT token context.
+- `participantSessionId` is generated using `crypto.randomUUID().replace(/-/g, '').slice(0, 12)`.
+- **Session Reuse on Renewal**: When a client requests renewal with `tabId`, `voiceSessionRegistry.findExistingSession(roomId, userId, tabId)` identifies the active session and reuses the assigned `participantIdentity`, preventing duplicate participant instances.
+- **Kicked/Revoked Invalidation**: Once kicked or revoked, old participant identities are unregistered and rejected from token generation.
 
 ---
 
-## 4. Audio-Only Publication Restrictions
+## 4. Distributed Webhook Processing & Idempotency
 
-### 4.1 Server-Side Enforcement via `canPublishSources`
-Sprint 2.3 granted `canPublish: true`, which permitted clients to publish video cameras or screen shares if a modified client bypassed frontend controls.
+### 4.1 Processing Sequence
 
-Sprint 2.3.1 enforces strict source-level restrictions using `livekit-server-sdk` v2.19.2:
-
-```typescript
-import { AccessToken, TrackSource } from 'livekit-server-sdk';
-
-token.addGrant({
-  roomJoin: true,
-  room: options.roomName,
-  canPublish: true,
-  canPublishSources: [TrackSource.MICROPHONE], // Enforces microphone audio ONLY
-  canSubscribe: true,
-  canPublishData: false, // Disallows WebRTC data packets; Socket.IO is authoritative
-  roomAdmin: false,
-  roomRecord: false,
-});
+```
+LiveKit Cloud                      Express API (Instance A)               MongoDB
+     |                                        |                              |
+     | 1. POST /api/v1/webhooks/livekit       |                              |
+     |--------------------------------------->|                              |
+     |                                        | 2. Verify HMAC Signature     |
+     |                                        |    via WebhookReceiver       |
+     |                                        | 3. Compute deterministic ID  |
+     |                                        | 4. claimEvent(eventId)       |
+     |                                        |----------------------------->|
+     |                                        |    (Atomic findOneAndUpdate) |
+     |                                        |<-----------------------------|
+     |                                        |    { claimed: true/false }   |
+     |                                        |                              |
+     |                                        | [If already completed/leased]|
+     | 5. HTTP 200 { duplicate: true }        |    (Skip side effects)       |
+     |<---------------------------------------|                              |
+     |                                        |                              |
+     |                                        | 6. Monotonic Ordering Check  |
+     |                                        |    assertMonotonicEventOrder |
+     |                                        |----------------------------->|
+     |                                        |<-----------------------------|
+     |                                        |    { isMonotonic: true/false}|
+     |                                        |                              |
+     |                                        | 7. Apply Ephemeral Effects   |
+     |                                        |    (e.g. closed-room evict)  |
+     |                                        | 8. Mark event 'completed'    |
+     |                                        |----------------------------->|
+     | 9. HTTP 200 { received: true }         |                              |
+     |<---------------------------------------|                              |
 ```
 
-### 4.2 Security Boundary
-- LiveKit SFU natively validates tracks published against `canPublishSources`. Any attempt to publish a video track (`TrackSource.CAMERA`) or screen track (`TrackSource.SCREEN_SHARE`) is rejected at the protocol level with a permission error.
-- Even if a compromised client attempts to send video RTP packets, the LiveKit SFU drops the stream.
+### 4.2 Durable Deduplication Model (`VoiceWebhookEventModel`)
+- **Collection**: `voicewebhookevents`.
+- **Unique Index**: `eventId: 1`.
+- **Lease Mechanism**: `claimedBy`, `claimedAt`, `leaseExpiresAt: Date` (30-second default).
+- If two API instances receive the same webhook concurrently, only one atomically acquires the claim. The second receives `{ claimed: false, isDuplicate: true }` and returns HTTP 200 without duplicate execution.
+- If an instance crashes while processing, the 30-second lease expires, allowing another instance or retry to reclaim and process the event.
+- **TTL Retention**: Completed events expire after 24 hours.
+
+### 4.3 Monotonic Ordering Across Instances (`VoiceParticipantSequenceModel`)
+- **Collection**: `voiceparticipantsequences`.
+- **Unique Index**: `participantKey: 1` (`${roomName}:${participantIdentity}`).
+- **Sequence Field**: `lastEventTimestampMs`.
+- If a delayed `participant_joined` event arrives with a timestamp older than an already-processed `participant_left` event, `assertMonotonicEventOrder` detects the regression atomically and drops the stale event.
+- Prevents out-of-order provider deliveries from resurrecting departed participants.
 
 ---
 
-## 5. Webhook Idempotency & Monotonic Ordering
+## 5. Security-Critical Eviction Task Reliability
 
-### 5.1 Official Signature Verification
-LiveKit webhooks delivered to `POST /api/v1/webhooks/livekit` are verified using `WebhookReceiver.receive(rawBody, authHeader)` from `livekit-server-sdk`.
-- `req.rawBody` contains the untouched HTTP request buffer.
-- Requests with invalid signatures or missing authorization headers are rejected with HTTP 401.
+### 5.1 Task State Machine
 
-### 5.2 Deduplication Cache
-Network retries by LiveKit could deliver duplicate webhook payloads.
-- An in-memory LRU cache tracks `event.id` (or deterministic SHA-256 fallback of `event + roomName + identity + createdAt`) with a 10-minute TTL and 5,000 entry cap.
-- Duplicate event deliveries are detected immediately and logged safely:
-  ```json
-  { "eventId": "EV_abc123", "event": "participant_joined", "msg": "Duplicate LiveKit webhook ignored" }
-  ```
-  The server responds with HTTP 200 to acknowledge receipt without executing duplicate side-effects.
+```
+                      +-------------------+
+                      |      pending      |<----------------------+
+                      +---------+---------+                       |
+                                |                                 |
+                                | claimNextTask()                 |
+                                v                                 |
+                      +-------------------+                       |
+                      |    processing     |                       |
+                      +----+---------+----+                       |
+                           |         |                            |
+          Provider Success |         | Provider Transient Failure |
+                           v         v (attempts < maxAttempts)   |
+             +---------------+     +--------------------+         |
+             |   completed   |     |  retry_scheduled   |---------+
+             +---------------+     +---------+----------+ (nextAttemptAt)
+                     |                       |
+          24h TTL    |                       | Provider Terminal / Max Attempts
+          Purge      v                       v
+                  (Purged)         +--------------------+
+                                   |  failed_permanent  |
+                                   +--------------------+
+                                             |
+                                   * NEVER Purged by TTL
+                                   * Operator Visible Alert
+```
 
-### 5.3 Monotonic Sequence Ordering
-Because network transit delays can cause a `participant_joined` event to arrive after a `participant_left` event:
-- The controller maintains a per-participant sequence map:
-  $$\text{key} = \text{roomName} + \text{":"} + \text{identity}$$
-  $$\text{value} = \text{lastProcessedTimestampMs}$$
-- If a webhook has `createdAt < lastProcessedTimestampMs`, it is dropped as a stale out-of-order event.
+### 5.2 Atomic Task Leasing & Worker Lifecycle
+- `VoiceEvictionWorker` runs on every API instance, polling every 10 seconds.
+- Uses `VoiceEvictionTaskModel.claimNextTask(instanceId, leaseDurationMs = 30000)`:
+  - Atomically claims ready `pending` or `retry_scheduled` tasks (`nextAttemptAt <= now`).
+  - Automatically reclaims abandoned `processing` tasks whose lease expired (`leaseExpiresAt <= now`).
+- Multiple workers never execute the same eviction concurrently.
+- Bounded exponential backoff: 2s, 4s, 8s, 16s... capped at 60s.
+- **Permanent Failure Retention**:
+  - Universal TTL was removed.
+  - Partial TTL index applies strictly to `{ status: 'completed' }`.
+  - Unresolved tasks (`failed_permanent`) are **never deleted**.
+- **Graceful Shutdown**:
+  - `server.ts` registers `voiceEvictionWorker.stop()` on `SIGTERM` and `SIGINT`.
+  - Halts new task polling and awaits in-flight provider calls with a 5-second timeout.
 
-### 5.4 Closed Room Defense
-If a delayed `participant_joined` webhook arrives for a KTVOnline room that has already been closed:
-- The webhook handler queries `RoomModel.findById(roomId).select('status')`.
-- If `status === 'closed'`, it automatically disconnects the participant via `evictLiveKitParticipant` to guarantee no zombie participants linger in closed rooms.
-- Webhooks **never** recreate rooms or mutate membership records.
-
----
-
-## 6. Provider Failure & Eviction Recovery
-
-### 6.1 Persistent Decision Priority
-Persistent membership transitions (kick, leave, close) and authentication revocations must remain authoritative. A LiveKit network failure must **never** rollback a database transaction.
-
-### 6.2 Durable Eviction Task Queue (`VoiceEvictionTaskModel`)
-When an immediate eviction call to LiveKit fails (e.g. timeout, 502 Bad Gateway):
-1. A pending eviction task is committed to MongoDB:
-   ```typescript
-   {
-     targetType: 'user' | 'session_family' | 'room',
-     targetId: string,
-     roomId?: string,
-     familyId?: string,
-     attempts: 1,
-     maxAttempts: 5,
-     status: 'pending',
-     nextRetryAt: new Date(Date.now() + 5000), // Exponential backoff: 5s, 10s, 20s, 40s
-     lastError: 'LiveKit API connection timeout'
-   }
+### 5.3 Operator Recovery Procedure for `failed_permanent` Tasks
+When a security task reaches `failed_permanent` (e.g. LiveKit API credentials misconfigured during eviction), structured logs alert operators:
+```json
+{
+  "taskId": "673...",
+  "targetType": "user",
+  "targetId": "65f...",
+  "roomId": "65f...",
+  "attempts": 5,
+  "status": "failed_permanent",
+  "msg": "CRITICAL: Exhausted max retries for voice eviction task. Marked failed_permanent for operator intervention"
+}
+```
+**Operator Steps**:
+1. Query failed tasks in MongoDB:
+   ```javascript
+   db.voiceevictiontasks.find({ status: 'failed_permanent' })
    ```
-2. The model includes a 24-hour TTL index on completed/failed records for automated storage cleanup:
-   ```typescript
-   VoiceEvictionTaskSchema.index(
-     { updatedAt: 1 },
-     { expireAfterSeconds: 86400, partialFilterExpression: { status: { $in: ['completed', 'failed'] } } }
-   );
+2. Diagnose LiveKit connectivity or room status.
+3. Manually retry the task:
+   ```javascript
+   db.voiceevictiontasks.updateOne(
+     { _id: ObjectId("673...") },
+     { $set: { status: 'pending', attemptCount: 0, nextAttemptAt: new Date() } }
+   )
    ```
-3. A background sweep worker (`voiceService.retryPendingEvictions()`) retries pending tasks with exponential backoff up to 5 attempts. Once retries are exhausted, the task is marked as `failed` with structured error logging for operational alerting.
+   The background worker will claim and execute it on the next sweep cycle.
 
 ---
 
-## 7. Token Renewal Lifecycle
+## 6. Complete Session Revocation Coverage
 
-### 7.1 Lifecycle Rules
-1. **Renewal Mechanism**:
-   Clients request a refreshed token at 80% of TTL (every 4 minutes).
-2. **Re-Authorization**:
-   The renewal request hits `POST /api/v1/rooms/:roomId/voice/token`, re-verifying active room membership, room open status, and unrevoked session family status.
-3. **Request Coalescing**:
-   Concurrent renewal attempts in `useVoiceClient` are guarded by an in-flight lock (`isRenewingRef`). Multiple timers or event triggers coalesce into a single HTTP request.
-4. **Signaling Token Synchronization**:
-   In `livekit-client` v2.23.0, the active connection signaling token is stored at `room.engine.token`. When a renewed token is fetched, `room.engine.token = freshTokenData.token` updates the engine so that background ICE restarts or signal reconnects succeed without credential expiration errors.
-5. **Session Fencing**:
-   A monotonic `sessionGenRef` ensures that asynchronous renewal callbacks belonging to an unmounted room or abandoned voice session are dropped and do not corrupt a newer active room session.
-6. **Explicit Leave Stops Renewal**:
-   Calling `leaveVoice()` clears renewal timers and aborts in-flight token requests.
-7. **Reconnection Verification**:
-   When LiveKit fires `RoomEvent.Reconnected`, the client immediately verifies that the session is still authorized by checking room membership. If the user was kicked while reconnecting, `leaveVoice()` is invoked immediately.
+### 6.1 Centralized Revocation Architecture
+All session revocations are centralized in `AuthService`:
+- `revokeSessionFamily(familyId, reason)`: Scoped to a specific session family.
+- `revokeUserSessions(userId, reason)`: Scoped to all session families of a user.
 
----
+| Revocation Pathway | Trigger Point | Sessions Affected | Socket.IO Scope | Voice Eviction Scope |
+| :--- | :--- | :--- | :--- | :--- |
+| **User Logout** | `POST /api/v1/auth/logout` | Single `familyId` | Sockets matching `familyId` | LiveKit participants matching `familyId` |
+| **Token Replay** | `POST /api/v1/auth/refresh` | Single `familyId` | Sockets matching `familyId` | LiveKit participants matching `familyId` |
+| **Account Suspension** | `userService.update(id, { status: 'suspended' })` | All families for `userId` | All sockets matching `userId` | All rooms where user is active |
+| **Account Deactivation** | `userService.update(id, { status: 'deactivated' })` | All families for `userId` | All sockets matching `userId` | All rooms where user is active |
+| **Host Kick** | `POST /api/v1/rooms/:id/members/:userId/kick` | Room membership | Room socket channel | Room LiveKit participant |
+| **Room Closure** | `POST /api/v1/rooms/:id/close` | Room active state | Entire room socket channel | Entire LiveKit room deleted |
 
-## 8. Multi-Tab Identity & Display Grouping
-
-### 8.1 Identity Generation
-- Format: `${userId}_${tabId}`.
-- `userId` is strictly extracted from verified backend auth context.
-- `tabId` is generated client-side via `crypto.randomUUID()` and sanitized by the backend (`/^[a-zA-Z0-9-]{1,16}$/`), falling back to a cryptographically secure random string if invalid.
-- Prevents identity collisions when the same user opens multiple tabs in the same room.
-
-### 8.2 Frontend Aggregation
-- `VoiceParticipants` aggregates participant instances by `userId`:
-  - `sessionCount`: Displayed as a subtle badge (e.g. `2 tabs`) when a user has multiple active tabs.
-  - `isSpeaking`: Active if any session of the user is speaking.
-  - `isMuted`: Muted only if all sessions of the user are muted.
-  - `isLocal`: True if any of the active sessions match the current client.
-- Remote audio tracks from duplicate local tabs are muted locally to prevent audio feedback and echo loops.
+### 6.2 Guaranteed Task Enqueueing
+If the synchronous LiveKit API call encounters a network blip during revocation:
+1. The database revocation transition commits first.
+2. `recordPendingEviction` persists a task to `VoiceEvictionTaskModel`.
+3. `voiceEvictionWorker` executes bounded retries until confirmed.
 
 ---
 
-## 9. Observability & Safe Logging Standards
+## 7. Supported LiveKit Token Refresh Strategy
 
-All voice events are logged with structured context while strictly omitting sensitive credentials:
+### 7.1 SDK Assessment (`livekit-client` v2.23.0)
+- `livekit-client` v2.23.0 does not offer a public `room.updateToken()` method on the `Room` class.
+- Sprint 2.3.1's direct mutation of `room.engine.token` has been removed.
 
-| Event | Log Level | Context Fields |
+### 7.2 Implemented Client Lifecycle
+1. **Proactive Background Authorization**:
+   At 80% of TTL (approx. 4 minutes), `useVoiceClient` calls `voiceApi.getVoiceToken(roomId, { tabId })`.
+2. **Token Storage**:
+   The refreshed token is stored in `latestTokenRef.current`.
+3. **Reconnection Verification**:
+   When LiveKit emits `RoomEvent.Reconnected`, the client immediately re-validates authorization against `POST /api/v1/rooms/:roomId/voice/token`.
+   - If authorization succeeded: updates `latestTokenRef.current` and schedules the next renewal timer.
+   - If authorization failed (e.g. kicked or session revoked while offline): transitions state to `unauthorized` and invokes `leaveVoice()`.
+4. **Explicit Leave Protection**:
+   `isExplicitLeaveRef.current` tracks intentional leaves. Once a user clicks "Leave Voice", all timers are cleared and no background reconnection can occur.
+
+---
+
+## 8. Single-Instance and Multi-Instance Guarantees
+
+| Concern | Single-Instance Behavior | Multi-Instance Behavior (Shared MongoDB) |
 | :--- | :--- | :--- |
-| `Voice token issued` | `info` | `correlationId`, `roomId`, `userId`, `tabId`, `familyId` |
-| `Voice token denied` | `warn` | `correlationId`, `roomId`, `userId`, `reason` |
-| `Session family revoked` | `info` | `familyId`, `evictedSessionsCount` |
-| `Participant eviction requested` | `info` | `roomId`, `userId`, `participantIdentity` |
-| `Provider eviction failure recorded` | `warn` | `targetType`, `targetId`, `attempts`, `error` |
-| `Webhook duplicate ignored` | `info` | `eventId`, `event`, `roomName` |
-| `Webhook stale event dropped` | `warn` | `event`, `identity`, `eventTime`, `lastProcessedTime` |
-| `Token renewed` | `info` | `roomId`, `userId`, `expiresAt` |
-
-**Security Blacklist**:
-Under no circumstances are the following logged:
-- LiveKit access tokens or JWT signatures.
-- `LIVEKIT_API_SECRET` or `LIVEKIT_WEBHOOK_SECRET`.
-- HTTP Authorization headers.
-- Raw PCM/Opus audio buffers.
+| **Webhook Deduplication** | Guaranteed via MongoDB unique index on `eventId` | Guaranteed via MongoDB unique index on `eventId` |
+| **Webhook Ordering** | Guaranteed via `VoiceParticipantSequenceModel` | Guaranteed across all instances via monotonic atomic updates |
+| **Eviction Task Claiming**| Claimed sequentially | Atomically claimed via `findOneAndUpdate` lease; no duplicate runs |
+| **Eviction Worker Failover**| Worker restarts on process restart | Healthy instances reclaim tasks if an instance dies during processing |
+| **Session Registry** | In-memory lookup + LiveKit metadata fallback | LiveKit participant query provides ground truth across instances |
 
 ---
 
-## 10. Summary Verification Checklist
+## 9. Verification Summary Checklist
 
-- [x] Session revocation evicts LiveKit voice sessions associated with the revoked family.
-- [x] Other concurrent session families of the same user remain connected.
-- [x] Audio-only publishing enforced via `canPublishSources: [TrackSource.MICROPHONE]`.
-- [x] Webhook signatures verified using raw request body.
-- [x] Webhook duplicates deduplicated via bounded LRU cache.
-- [x] Stale webhooks discarded via monotonic timestamp tracking.
-- [x] Provider eviction failures recovered via `VoiceEvictionTaskModel`.
-- [x] Token renewal coalesced and synchronized to `room.engine.token`.
-- [x] Multi-tab identities isolated on backend and aggregated on frontend.
-- [x] Static typecheck and lint clean across monorepo.
+- [x] Webhook processing persisted and deduplicated across restarts via MongoDB.
+- [x] Monotonic event ordering enforced across horizontal API instances.
+- [x] Eviction tasks use 5-state machine (`pending`, `processing`, `retry_scheduled`, `completed`, `failed_permanent`).
+- [x] Atomic task claiming with 30s lease expiration and abandoned task recovery.
+- [x] Partial TTL index applied strictly to completed eviction tasks; failed tasks preserved.
+- [x] Background worker starts at API boot and shuts down gracefully on SIGTERM/SIGINT.
+- [x] Public metadata separated from private session family and tab identifiers.
+- [x] Backend derives opaque participant session IDs (`${userId}_vps_${id}`).
+- [x] Direct assignment to `room.engine.token` removed in favor of supported token state management.
+- [x] All session revocation pathways centralized and wired to socket and voice eviction.
+- [x] Static typecheck and linting pass with 0 errors across monorepo.

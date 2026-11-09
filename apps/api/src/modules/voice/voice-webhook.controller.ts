@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { WebhookReceiver } from 'livekit-server-sdk';
 import { env } from '../../config/env.js';
@@ -5,17 +6,16 @@ import { logger } from '../../utils/logger.js';
 import { voiceSessionRegistry } from './voice-session.registry.js';
 import { RoomModel } from '../rooms/room.model.js';
 import { voiceService } from './voice.service.js';
+import { VoiceWebhookEventModel } from './voice-webhook-event.model.js';
+import { assertMonotonicEventOrder } from './voice-participant-sequence.model.js';
 
 export class VoiceWebhookController {
   private receiver: WebhookReceiver | null = null;
+  private readonly instanceId: string;
 
-  // Bounded LRU deduplication cache: eventId -> processed timestamp
-  private processedEventIds = new Map<string, number>();
-  private readonly maxDeduplicationEntries = 5000;
-  private readonly deduplicationTtlMs = 10 * 60 * 1000; // 10 minutes
-
-  // Per-participant monotonic event ordering tracker: `${roomName}:${identity}` -> timestamp
-  private participantLastEventTimes = new Map<string, number>();
+  constructor() {
+    this.instanceId = `webhook_handler_${process.pid}_${crypto.randomBytes(4).toString('hex')}`;
+  }
 
   private getReceiver(): WebhookReceiver | null {
     if (!env.LIVEKIT_API_KEY || (!env.LIVEKIT_WEBHOOK_SECRET && !env.LIVEKIT_API_SECRET)) {
@@ -29,23 +29,26 @@ export class VoiceWebhookController {
   }
 
   /**
-   * Cleans up expired entries from the deduplication map when size limit is exceeded.
+   * Generates a deterministic, collision-resistant event ID if LiveKit omits an official event ID.
    */
-  private pruneDeduplicationCache(): void {
-    const now = Date.now();
-    for (const [id, time] of this.processedEventIds.entries()) {
-      if (now - time > this.deduplicationTtlMs) {
-        this.processedEventIds.delete(id);
-      }
+  private getDeterministicEventId(event: {
+    id?: string;
+    event?: string;
+    createdAt?: number | string | bigint;
+    room?: { name?: string };
+    participant?: { identity?: string };
+  }): string {
+    if (event.id && event.id.trim().length > 0) {
+      return event.id.trim();
     }
+    const raw = [
+      event.event || 'unknown',
+      String(event.createdAt || ''),
+      event.room?.name || '',
+      event.participant?.identity || '',
+    ].join(':');
 
-    if (this.processedEventIds.size > this.maxDeduplicationEntries) {
-      // Evict oldest 20%
-      const keys = Array.from(this.processedEventIds.keys()).slice(0, Math.floor(this.maxDeduplicationEntries * 0.2));
-      for (const k of keys) {
-        this.processedEventIds.delete(k);
-      }
-    }
+    return `wh_${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 24)}`;
   }
 
   public async handleWebhook(req: Request, res: Response, _next: NextFunction): Promise<void> {
@@ -73,44 +76,71 @@ export class VoiceWebhookController {
       ? req.body
       : JSON.stringify(req.body);
 
+    let event;
     try {
-      const event = await receiver.receive(bodyString, authHeader);
-      const eventId = event.id || `${event.event}_${event.createdAt}_${event.participant?.identity || ''}`;
+      // 1. Mandatory official SDK signature verification before any processing
+      event = await receiver.receive(bodyString, authHeader);
+    } catch (err: unknown) {
+      logger.warn(
+        {
+          correlationId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        'LiveKit webhook signature verification failed'
+      );
+      res.status(401).json({ error: 'Invalid webhook signature' });
+      return;
+    }
 
-      // 1. Idempotency Check: deduplicate re-delivered events
-      if (this.processedEventIds.has(eventId)) {
-        logger.info(
-          { correlationId, eventId, eventType: event.event },
-          'Duplicate LiveKit webhook event ignored'
-        );
-        res.status(200).json({ received: true, duplicate: true });
-        return;
-      }
+    const eventId = this.getDeterministicEventId(event);
+    const roomName = event.room?.name || '';
+    const participantIdentity = event.participant?.identity || '';
+    const eventTimestampMs = Number(event.createdAt) ? Number(event.createdAt) * 1000 : Date.now();
 
-      this.processedEventIds.set(eventId, Date.now());
-      if (this.processedEventIds.size > this.maxDeduplicationEntries) {
-        this.pruneDeduplicationCache();
-      }
+    // 2. Durable Deduplication & Atomic Claim in MongoDB across all API instances
+    const claimResult = await VoiceWebhookEventModel.claimEvent(
+      eventId,
+      event.event,
+      roomName,
+      eventTimestampMs,
+      this.instanceId,
+      participantIdentity || undefined
+    );
 
-      const roomName = event.room?.name || '';
-      const participantIdentity = event.participant?.identity || '';
-      const eventTimestamp = Number(event.createdAt) ? Number(event.createdAt) * 1000 : Date.now();
+    if (!claimResult.claimed) {
+      logger.info(
+        { correlationId, eventId, eventType: event.event },
+        'Duplicate or in-flight LiveKit webhook event ignored'
+      );
+      res.status(200).json({ received: true, duplicate: true });
+      return;
+    }
 
-      // 2. Monotonic Ordering Check per participant in room
+    const eventDoc = claimResult.eventDoc;
+
+    try {
+      // 3. Monotonic Ordering Check per participant in room (across all instances)
       if (participantIdentity && roomName) {
         const participantKey = `${roomName}:${participantIdentity}`;
-        const lastSeen = this.participantLastEventTimes.get(participantKey);
+        const isMonotonic = await assertMonotonicEventOrder(
+          participantKey,
+          eventTimestampMs,
+          event.event
+        );
 
-        if (lastSeen && eventTimestamp < lastSeen) {
+        if (!isMonotonic) {
           logger.warn(
-            { correlationId, eventId, eventType: event.event, participantKey, eventTimestamp, lastSeen },
+            { correlationId, eventId, eventType: event.event, participantKey, eventTimestampMs },
             'Stale out-of-order LiveKit webhook event ignored'
           );
+          if (eventDoc) {
+            eventDoc.status = 'completed';
+            eventDoc.processedAt = new Date();
+            await eventDoc.save();
+          }
           res.status(200).json({ received: true, stale: true });
           return;
         }
-
-        this.participantLastEventTimes.set(participantKey, eventTimestamp);
       }
 
       logger.info(
@@ -121,13 +151,13 @@ export class VoiceWebhookController {
           participantIdentity,
           eventId,
         },
-        'Verified and processing LiveKit webhook event'
+        'Processing claimed LiveKit webhook event'
       );
 
       // Extract raw roomId from ktv_room_<roomId>
       const parsedRoomId = roomName.startsWith('ktv_room_') ? roomName.replace('ktv_room_', '') : undefined;
 
-      // 3. Handle lifecycle events ephemerally (NEVER mutate Room.currentParticipantsCount or RoomMembership)
+      // 4. Handle lifecycle events ephemerally (NEVER mutate Room.currentParticipantsCount or RoomMembership)
       switch (event.event) {
         case 'participant_joined': {
           // If KTVOnline room is already closed, evict delayed participant
@@ -180,16 +210,29 @@ export class VoiceWebhookController {
           break;
       }
 
+      // 5. Mark event as completed
+      if (eventDoc) {
+        eventDoc.status = 'completed';
+        eventDoc.processedAt = new Date();
+        eventDoc.error = null;
+        await eventDoc.save();
+      }
+
       res.status(200).json({ received: true });
     } catch (err: unknown) {
-      logger.warn(
-        {
-          correlationId,
-          err: err instanceof Error ? err.message : String(err),
-        },
-        'LiveKit webhook signature verification failed'
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.error(
+        { correlationId, eventId, eventType: event.event, err: errorMsg },
+        'Error processing claimed LiveKit webhook event'
       );
-      res.status(401).json({ error: 'Invalid webhook signature' });
+
+      if (eventDoc) {
+        eventDoc.status = 'failed';
+        eventDoc.error = errorMsg;
+        await eventDoc.save();
+      }
+
+      res.status(500).json({ error: 'Internal webhook processing failure' });
     }
   }
 }

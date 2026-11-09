@@ -33,6 +33,8 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const tabIdRef = useRef<string>('');
   const sessionGenRef = useRef<number>(0);
+  const latestTokenRef = useRef<string | null>(null);
+  const isExplicitLeaveRef = useRef<boolean>(false);
 
   // Initialize unique session tab ID once
   useEffect(() => {
@@ -110,6 +112,9 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
 
   // Disconnect and clean up room
   const leaveVoice = useCallback(async () => {
+    isExplicitLeaveRef.current = true;
+    latestTokenRef.current = null;
+
     // Invalidate current room session generation
     sessionGenRef.current += 1;
 
@@ -168,10 +173,8 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
       try {
         const freshTokenData = await voiceApi.getVoiceToken(roomId, { tabId: tabIdRef.current });
 
-        // Synchronize fresh token with LiveKit engine to ensure future ICE restarts succeed
-        if (roomRef.current && (roomRef.current as unknown as { engine?: { token?: string } }).engine) {
-          (roomRef.current as unknown as { engine: { token?: string } }).engine.token = freshTokenData.token;
-        }
+        // Maintain latest verified token for supported reconnection
+        latestTokenRef.current = freshTokenData.token;
 
         scheduleTokenRenewal(freshTokenData.expiresAt);
       } catch (err: unknown) {
@@ -206,6 +209,8 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
     try {
       // 1. Obtain short-lived voice token
       const tokenData = await voiceApi.getVoiceToken(roomId, { tabId: tabIdRef.current });
+      latestTokenRef.current = tokenData.token;
+      isExplicitLeaveRef.current = false;
 
       // Stale callback guard
       if (sessionGenRef.current !== currentSessionGen) return;
@@ -264,9 +269,7 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
         try {
           const reauth = await voiceApi.getVoiceToken(roomId, { tabId: tabIdRef.current });
           if (sessionGenRef.current === currentSessionGen && roomRef.current) {
-            if ((roomRef.current as unknown as { engine?: { token?: string } }).engine) {
-              (roomRef.current as unknown as { engine: { token?: string } }).engine.token = reauth.token;
-            }
+            latestTokenRef.current = reauth.token;
             scheduleTokenRenewal(reauth.expiresAt);
           }
         } catch {
