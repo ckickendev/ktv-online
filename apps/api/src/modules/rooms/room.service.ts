@@ -17,6 +17,7 @@ import { evictKickedMember } from '../../realtime/socket.server.js';
 import { publishRoomStateEvent } from '../../realtime/room-state.publisher.js';
 import { presenceManager } from '../../realtime/presence.manager.js';
 import { RoomReconciliationService } from './room-reconciliation.service.js';
+import { voiceService } from '../voice/voice.service.js';
 import { logger } from '../../utils/logger.js';
 
 const roomReconciliationService = new RoomReconciliationService();
@@ -560,6 +561,13 @@ export class RoomService {
       );
     }
 
+    // Invalidate/disconnect active LiveKit voice session for leaving user
+    try {
+      await voiceService.evictLiveKitParticipant(roomId, userId);
+    } catch {
+      // Non-blocking
+    }
+
     return { success: true };
   }
 
@@ -777,6 +785,13 @@ export class RoomService {
 
     // Evict socket
     await evictKickedMember(roomId, targetUserId, reason);
+
+    // Evict LiveKit voice participant
+    try {
+      await voiceService.evictLiveKitParticipant(roomId, targetUserId);
+    } catch {
+      // Non-blocking
+    }
 
     return { success: true };
   }

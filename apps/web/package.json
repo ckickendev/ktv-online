@@ -14,8 +14,10 @@
   "dependencies": {
     "@hookform/resolvers": "^4.1.0",
     "@ktv/contracts": "workspace:*",
+    "@livekit/components-react": "^2.9.25",
     "@tanstack/react-query": "^5.66.7",
     "clsx": "^2.1.1",
+    "livekit-client": "^2.23.0",
     "lucide-react": "^0.475.0",
     "next": "^15.2.0",
     "react": "^19.0.0",

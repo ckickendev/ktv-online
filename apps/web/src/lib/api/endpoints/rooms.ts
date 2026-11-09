@@ -9,6 +9,8 @@ import {
   RoomStateSnapshotDto,
   RoomStateVersionDto,
   UpdateRoomDto,
+  VoiceTokenRequestDto,
+  VoiceTokenResponseDto,
 } from '@ktv/contracts';
 
 export interface PaginatedRoomsResult {
@@ -81,5 +83,9 @@ export const roomApi = {
 
   async getRoomVersion(roomId: string): Promise<RoomStateVersionDto> {
     return apiClient.get<RoomStateVersionDto>(`/rooms/${roomId}/version`);
+  },
+
+  async getVoiceToken(roomId: string, payload?: VoiceTokenRequestDto): Promise<VoiceTokenResponseDto> {
+    return apiClient.post<VoiceTokenResponseDto>(`/rooms/${roomId}/voice/token`, payload || {});
   },
 };

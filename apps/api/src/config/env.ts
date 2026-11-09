@@ -18,9 +18,48 @@ export const EnvSchema = z
     FRONTEND_URL: z.string().default('http://localhost:3000'),
     COOKIE_DOMAIN: z.string().optional(),
     COOKIE_SECURE: z.coerce.boolean().optional(),
+    LIVEKIT_URL: z
+      .string()
+      .optional()
+      .refine(
+        (val) => {
+          if (!val) return true;
+          try {
+            const url = new URL(val);
+            return ['ws:', 'wss:', 'http:', 'https:'].includes(url.protocol);
+          } catch {
+            return false;
+          }
+        },
+        { message: 'LIVEKIT_URL must be a valid URL with ws, wss, http, or https protocol' }
+      ),
+    LIVEKIT_API_KEY: z.string().optional(),
+    LIVEKIT_API_SECRET: z.string().optional(),
+    LIVEKIT_WEBHOOK_SECRET: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === 'production') {
+      if (!data.LIVEKIT_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['LIVEKIT_URL'],
+          message: 'LIVEKIT_URL is required in production',
+        });
+      }
+      if (!data.LIVEKIT_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['LIVEKIT_API_KEY'],
+          message: 'LIVEKIT_API_KEY is required in production',
+        });
+      }
+      if (!data.LIVEKIT_API_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['LIVEKIT_API_SECRET'],
+          message: 'LIVEKIT_API_SECRET is required in production',
+        });
+      }
       if (!process.env.JWT_ACCESS_SECRET || data.JWT_ACCESS_SECRET === DEV_DEFAULT_ACCESS_SECRET) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

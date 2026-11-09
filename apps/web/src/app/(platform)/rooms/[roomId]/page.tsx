@@ -5,18 +5,11 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Mic,
-  MicOff,
-  Volume2,
-  VolumeX,
-  Play,
-  Pause,
-  SkipForward,
   Plus,
   Users,
   LogOut,
   Crown,
   Disc3,
-  Sliders,
   MessageSquare,
   ListMusic,
   Share2,
@@ -44,7 +37,7 @@ import { useKickMember } from '@/hooks/queries/use-chat';
 import { useAuth } from '@/hooks/use-auth';
 import { useRoomState } from '@/hooks/use-room-state';
 import { useRoomChat } from '@/hooks/use-room-chat';
-import { useAppStore } from '@/stores/use-app-store';
+import { useVoiceClient, VoiceControls, VoiceParticipants } from '@/features/voice';
 import { cn } from '@/lib/utils';
 
 export default function RoomDetailPage() {
@@ -79,10 +72,7 @@ export default function RoomDetailPage() {
   const [joinErrorMessage, setJoinErrorMessage] = useState<string | null>(null);
   const [leaveErrorMessage, setLeaveErrorMessage] = useState<string | null>(null);
 
-  const { isMuted, toggleMute, volume, setVolume } = useAppStore();
-  const [isPlaying, setIsPlaying] = useState(true);
   const [activeTab, setActiveTab] = useState<'chat' | 'queue' | 'activities'>('chat');
-  const [reverbMode, setReverbMode] = useState<'Studio' | 'Hall' | 'Club' | 'Off'>('Studio');
 
   const {
     messages: chatMessages,
@@ -96,6 +86,11 @@ export default function RoomDetailPage() {
     addReaction,
     removeReaction,
   } = useRoomChat(roomId, { enabled: isAuthenticated });
+
+  const voice = useVoiceClient({
+    roomId,
+    enabled: Boolean(roomId && isAuthenticated && viewer?.isMember && room?.status !== 'closed' && !stateIsKicked && !isKicked),
+  });
 
   const [kickTarget, setKickTarget] = useState<{ userId: string; username: string } | null>(null);
   const kickMutation = useKickMember(roomId);
@@ -124,6 +119,7 @@ export default function RoomDetailPage() {
   const handleLeaveConfirm = async () => {
     setLeaveErrorMessage(null);
     try {
+      await voice.leaveVoice();
       await leaveMutation.mutateAsync(roomId);
       setIsLeaveDialogOpen(false);
       refreshState();
@@ -248,6 +244,18 @@ export default function RoomDetailPage() {
               </span>
               {connectionStatus === 'connected' && <span>({totalOnline})</span>}
             </div>
+
+            {/* LiveKit Voice Status Indicator */}
+            {voice.isConnected && (
+              <div
+                data-testid="header-voice-indicator"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                title={`LiveKit Voice: connected (${voice.participants.length} in voice)`}
+              >
+                <Mic className={cn('w-3.5 h-3.5', voice.isSpeaking && 'animate-pulse text-emerald-300')} />
+                <span className="hidden sm:inline">Voice ({voice.participants.length})</span>
+              </div>
+            )}
 
             {/* Host Controls or Member Leave Button */}
             {isMember ? (
@@ -518,88 +526,28 @@ export default function RoomDetailPage() {
             </div>
           </div>
 
-          {/* Voice Controls & Reverb Panel */}
-          <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              {/* Mic & Volume */}
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={toggleMute}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all shadow-md ${
-                    isMuted
-                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
-                      : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
-                  }`}
-                >
-                  {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isMuted ? 'Muted' : 'Mic Active'}</span>
-                </button>
+          {/* LiveKit Realtime Voice Participants */}
+          <VoiceParticipants
+            participants={voice.participants}
+            isConnected={voice.isConnected}
+          />
 
-                {/* Volume slider */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setVolume(volume === 0 ? 80 : 0)}
-                    className="text-slate-400 hover:text-white"
-                  >
-                    {volume === 0 ? (
-                      <VolumeX className="w-4 h-4" />
-                    ) : (
-                      <Volume2 className="w-4 h-4 text-cyan-400" />
-                    )}
-                  </button>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={volume}
-                    onChange={(e) => setVolume(Number(e.target.value))}
-                    className="w-20 sm:w-28 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-violet-500"
-                  />
-                  <span className="text-[11px] text-slate-400 w-6">{volume}%</span>
-                </div>
-              </div>
-
-              {/* Playback simulation controls */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  className="p-2 rounded-xl bg-white/10 hover:bg-white/15 text-white transition-colors"
-                >
-                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </button>
-                <button
-                  onClick={() => alert('Skipping to next song in queue (Sprint 3)')}
-                  className="p-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
-                >
-                  <SkipForward className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Reverb mode selectors */}
-            <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs text-slate-400">
-              <span className="flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5 text-violet-400" />
-                <span>Reverb Presets:</span>
-              </span>
-
-              <div className="flex items-center gap-1">
-                {(['Studio', 'Hall', 'Club', 'Off'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setReverbMode(mode)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${
-                      reverbMode === mode
-                        ? 'bg-violet-600 text-white'
-                        : 'bg-white/5 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+          {/* Realtime LiveKit Voice Controls */}
+          <VoiceControls
+            connectionState={voice.connectionState}
+            isConnected={voice.isConnected}
+            isConnecting={voice.isConnecting}
+            isMuted={voice.isMuted}
+            isSpeaking={voice.isSpeaking}
+            errorMessage={voice.errorMessage}
+            audioDevices={voice.audioDevices}
+            activeDeviceId={voice.activeDeviceId}
+            isRoomMember={isMember}
+            onJoinVoice={voice.joinVoice}
+            onLeaveVoice={voice.leaveVoice}
+            onToggleMute={voice.toggleMute}
+            onSwitchDevice={voice.switchDevice}
+          />
         </div>
 
         {/* Right: Song Queue & Live Chat Tabs (Col 3) */}
