@@ -11,6 +11,7 @@ export const queryKeys = {
     list: (filters?: Partial<RoomQueryDto>) => [...queryKeys.rooms.lists(), filters ?? {}] as const,
     details: () => [...queryKeys.rooms.all, 'detail'] as const,
     detail: (id: string) => [...queryKeys.rooms.details(), id] as const,
+    state: (id: string) => [...queryKeys.rooms.detail(id), 'state'] as const,
     members: (id: string) => [...queryKeys.rooms.detail(id), 'members'] as const,
     membership: (id: string) => [...queryKeys.rooms.detail(id), 'membership'] as const,
     mine: (params?: { page?: number; limit?: number }) =>

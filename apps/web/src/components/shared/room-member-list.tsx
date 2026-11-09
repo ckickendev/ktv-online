@@ -4,6 +4,8 @@ import { UserAvatar } from './user-avatar';
 import { useRoomMembers } from '@/hooks/queries/use-room';
 import { cn } from '@/lib/utils';
 
+import { RoomMembershipDto } from '@ktv/contracts';
+
 interface RoomMemberListProps {
   roomId: string;
   currentUserId?: string | null;
@@ -11,6 +13,8 @@ interface RoomMemberListProps {
   isHost?: boolean;
   onKickMember?: (userId: string, username: string) => void;
   className?: string;
+  members?: RoomMembershipDto[];
+  onRefresh?: () => void;
 }
 
 export function RoomMemberList({
@@ -20,15 +24,23 @@ export function RoomMemberList({
   isHost,
   onKickMember,
   className,
+  members: propMembers,
+  onRefresh: propOnRefresh,
 }: RoomMemberListProps) {
-  const {
-    data: members,
-    isLoading,
-    isError,
-    error,
-    refetch,
-    isFetching,
-  } = useRoomMembers(roomId);
+  const queryResult = useRoomMembers(roomId, { enabled: !propMembers });
+  const members = propMembers ?? queryResult.data;
+  const isLoading = propMembers ? false : queryResult.isLoading;
+  const isError = propMembers ? false : queryResult.isError;
+  const error = propMembers ? null : queryResult.error;
+  const isFetching = propMembers ? false : queryResult.isFetching;
+
+  const handleRefresh = () => {
+    if (propOnRefresh) {
+      propOnRefresh();
+    } else {
+      queryResult.refetch();
+    }
+  };
 
   return (
     <div
@@ -70,7 +82,7 @@ export function RoomMemberList({
 
         <button
           type="button"
-          onClick={() => refetch()}
+          onClick={handleRefresh}
           disabled={isFetching}
           data-testid="refresh-members-button"
           title="Refresh member list"
@@ -116,7 +128,7 @@ export function RoomMemberList({
             </p>
             <button
               type="button"
-              onClick={() => refetch()}
+              onClick={handleRefresh}
               className="text-xs text-cyan-400 hover:text-cyan-300 underline font-medium pt-1"
             >
               Try again

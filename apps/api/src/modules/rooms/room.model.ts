@@ -60,6 +60,11 @@ const RoomSchema = new Schema<IRoomDocument>(
       type: Boolean,
       default: true,
     },
+    stateVersion: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
     currentSongTitle: {
       type: String,
       default: null,
@@ -75,6 +80,7 @@ const RoomSchema = new Schema<IRoomDocument>(
       virtuals: true,
       transform: (_doc, ret: Record<string, unknown>) => {
         ret.id = ret._id ? (ret._id as { toString(): string }).toString() : undefined;
+        ret.stateVersion = typeof ret.stateVersion === 'number' ? ret.stateVersion : 1;
         if (ret.ownerId && typeof ret.ownerId === 'object') {
           if ('username' in ret.ownerId) {
             const hostUser = ret.ownerId as {

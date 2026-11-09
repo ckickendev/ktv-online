@@ -3,9 +3,30 @@ import { RoomModel } from './room.model.js';
 import { RoomMembershipModel } from './membership.model.js';
 import { IRoomDocument } from './room.types.js';
 import { IRoomMembershipDocument } from './membership.types.js';
-import { CreateRoomDto, RoomQueryDto, UpdateRoomDto } from '@ktv/contracts';
+import {
+  CreateRoomDto,
+  RoomQueryDto,
+  UpdateRoomDto,
+  RoomStateSnapshotDto,
+  RoomSnapshotDto,
+  RoomMembershipDto,
+} from '@ktv/contracts';
 import { chatService } from '../chat/chat.service.js';
 import { evictKickedMember } from '../../realtime/socket.server.js';
+import { publishRoomStateEvent } from '../../realtime/room-state.publisher.js';
+import { presenceManager } from '../../realtime/presence.manager.js';
+
+export type GetRoomStateSnapshotResult =
+  | { success: true; snapshot: RoomStateSnapshotDto }
+  | {
+      success: false;
+      error:
+        | 'ROOM_NOT_FOUND'
+        | 'INVALID_ID'
+        | 'UNAUTHORIZED'
+        | 'FORBIDDEN_PRIVATE_ROOM'
+        | 'FORBIDDEN_KICKED';
+    };
 
 export type JoinRoomResult =
   | { success: true; membership: IRoomMembershipDocument; alreadyJoined: boolean }
@@ -111,6 +132,7 @@ export class RoomService {
       ownerId: new Types.ObjectId(ownerId),
       status: 'idle',
       currentParticipantsCount: 1,
+      stateVersion: 1,
     });
 
     const savedRoom = await room.save();
@@ -162,13 +184,36 @@ export class RoomService {
       filter.currentParticipantsCount = { $lte: data.capacity };
     }
 
-    return RoomModel.findOneAndUpdate(
+    const updatedRoom = await RoomModel.findOneAndUpdate(
       filter,
-      { $set: data },
+      {
+        $set: data,
+        $inc: { stateVersion: 1 },
+      },
       { new: true, runValidators: true }
     )
       .populate('ownerId', 'username avatar')
       .exec();
+
+    if (updatedRoom) {
+      publishRoomStateEvent(
+        id,
+        'room.settings.updated',
+        {
+          name: updatedRoom.name,
+          description: updatedRoom.description,
+          visibility: updatedRoom.visibility,
+          capacity: updatedRoom.capacity,
+          status: updatedRoom.status,
+          category: updatedRoom.category,
+          isChatEnabled: updatedRoom.isChatEnabled !== false,
+          currentParticipantsCount: updatedRoom.currentParticipantsCount,
+        },
+        updatedRoom.stateVersion
+      );
+    }
+
+    return updatedRoom;
   }
 
   async closeRoom(id: string): Promise<IRoomDocument | null> {
@@ -178,7 +223,10 @@ export class RoomService {
     const roomObjectId = new Types.ObjectId(id);
     const room = await RoomModel.findByIdAndUpdate(
       roomObjectId,
-      { $set: { status: 'closed', currentParticipantsCount: 0 } },
+      {
+        $set: { status: 'closed', currentParticipantsCount: 0 },
+        $inc: { stateVersion: 1 },
+      },
       { new: true, runValidators: true }
     )
       .populate('ownerId', 'username avatar')
@@ -202,6 +250,13 @@ export class RoomService {
         { _id: roomObjectId },
         { $set: { currentParticipantsCount: 0 } }
       ).exec();
+
+      publishRoomStateEvent(
+        id,
+        'room.closed',
+        { reason: 'Room has been closed by host' },
+        room.stateVersion
+      );
     }
 
     return room;
@@ -248,7 +303,7 @@ export class RoomService {
         status: { $ne: 'closed' },
         $expr: { $lt: ['$currentParticipantsCount', '$capacity'] },
       },
-      { $inc: { currentParticipantsCount: 1 } },
+      { $inc: { currentParticipantsCount: 1, stateVersion: 1 } },
       { new: true }
     ).exec();
 
@@ -348,6 +403,8 @@ export class RoomService {
               status: 'active',
               joinedAt: new Date(),
               leftAt: null,
+              kickedAt: null,
+              kickedBy: null,
             },
           },
           { new: true }
@@ -387,6 +444,16 @@ export class RoomService {
         ).exec();
         return { success: false, error: 'ROOM_CLOSED' };
       }
+
+      publishRoomStateEvent(
+        roomId,
+        'member.joined',
+        {
+          member: membership!.toJSON() as unknown as RoomMembershipDto,
+          currentParticipantsCount: updatedRoom.currentParticipantsCount,
+        },
+        updatedRoom.stateVersion
+      );
 
       return { success: true, membership: membership!, alreadyJoined: false };
     } catch (err: unknown) {
@@ -438,11 +505,26 @@ export class RoomService {
       return { success: false, error: 'NOT_A_MEMBER' };
     }
 
-    // 3. Safely decrement room participant count exactly once
-    await RoomModel.findOneAndUpdate(
+    // 3. Safely decrement room participant count and increment stateVersion
+    const updatedRoom = await RoomModel.findOneAndUpdate(
       { _id: roomObjectId, currentParticipantsCount: { $gt: 0 } },
-      { $inc: { currentParticipantsCount: -1 } }
+      { $inc: { currentParticipantsCount: -1, stateVersion: 1 } },
+      { new: true }
     ).exec();
+
+    const username = (updatedMembership.userId as any)?.username || 'Member';
+    if (updatedRoom) {
+      publishRoomStateEvent(
+        roomId,
+        'member.left',
+        {
+          userId,
+          username,
+          currentParticipantsCount: updatedRoom.currentParticipantsCount,
+        },
+        updatedRoom.stateVersion
+      );
+    }
 
     return { success: true };
   }
@@ -620,14 +702,30 @@ export class RoomService {
       return { success: false, error: 'NOT_A_MEMBER' };
     }
 
-    // Safely decrement room participant count
-    await RoomModel.findOneAndUpdate(
+    // Safely decrement room participant count and increment stateVersion
+    const updatedRoom = await RoomModel.findOneAndUpdate(
       { _id: roomObjectId, currentParticipantsCount: { $gt: 0 } },
-      { $inc: { currentParticipantsCount: -1 } }
+      { $inc: { currentParticipantsCount: -1, stateVersion: 1 } },
+      { new: true }
     ).exec();
 
     const hostUsername = (room.ownerId as any).username || 'Host';
     const targetUsername = (updatedMembership.userId as any)?.username || 'Member';
+
+    if (updatedRoom) {
+      publishRoomStateEvent(
+        roomId,
+        'member.kicked',
+        {
+          userId: targetUserId,
+          username: targetUsername,
+          reason: reason || 'Removed by host',
+          kickedBy: hostUserId,
+          currentParticipantsCount: updatedRoom.currentParticipantsCount,
+        },
+        updatedRoom.stateVersion
+      );
+    }
 
     // Record activity
     try {
@@ -647,6 +745,147 @@ export class RoomService {
     await evictKickedMember(roomId, targetUserId, reason);
 
     return { success: true };
+  }
+
+  /**
+   * Retrieve authoritative server room state snapshot for synchronized client hydration.
+   */
+  async getRoomStateSnapshot(
+    roomId: string,
+    requestingUserId?: string
+  ): Promise<GetRoomStateSnapshotResult> {
+    if (!Types.ObjectId.isValid(roomId)) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
+
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    const hostOwnerIdStr = (room.ownerId as any)._id
+      ? (room.ownerId as any)._id.toString()
+      : room.ownerId.toString();
+
+    const isOwner = Boolean(requestingUserId && hostOwnerIdStr === requestingUserId);
+
+    // Check if user was kicked from this room
+    let isKicked = false;
+    if (requestingUserId && !isOwner) {
+      const kickedRecord = await RoomMembershipModel.findOne({
+        roomId: roomObjectId,
+        userId: new Types.ObjectId(requestingUserId),
+        status: 'left',
+        kickedAt: { $ne: null },
+      }).exec();
+
+      if (kickedRecord) {
+        isKicked = true;
+        // If room is private, kicked members are completely forbidden from viewing snapshot
+        if (room.visibility === 'private') {
+          return { success: false, error: 'FORBIDDEN_KICKED' };
+        }
+      }
+    }
+
+    // Private room authorization check
+    if (room.visibility === 'private' && !isOwner) {
+      if (!requestingUserId) {
+        return { success: false, error: 'UNAUTHORIZED' };
+      }
+
+      const isMember = await RoomMembershipModel.exists({
+        roomId: roomObjectId,
+        userId: new Types.ObjectId(requestingUserId),
+        status: 'active',
+      });
+
+      if (!isMember) {
+        return { success: false, error: 'FORBIDDEN_PRIVATE_ROOM' };
+      }
+    }
+
+    // Determine viewer membership and role
+    let isMember = false;
+    let role: 'host' | 'member' | 'viewer' | 'none' = 'none';
+
+    if (requestingUserId) {
+      if (isOwner) {
+        isMember = true;
+        role = 'host';
+      } else {
+        const myMembership = await RoomMembershipModel.findOne({
+          roomId: roomObjectId,
+          userId: new Types.ObjectId(requestingUserId),
+          status: 'active',
+        }).exec();
+
+        if (myMembership) {
+          isMember = true;
+          role = myMembership.role as 'host' | 'member';
+        } else {
+          role = 'viewer';
+        }
+      }
+    }
+
+    // Fetch active memberships
+    const activeMembersDocs = await RoomMembershipModel.find({
+      roomId: roomObjectId,
+      status: 'active',
+    })
+      .populate('userId', 'username avatar role')
+      .sort({ joinedAt: 1 })
+      .exec();
+
+    const members: RoomMembershipDto[] = activeMembersDocs.map(
+      (m) => m.toJSON() as unknown as RoomMembershipDto
+    );
+
+    // Fetch active ephemeral presence
+    const presenceSnapshot = presenceManager.getRoomPresence(roomId);
+    const presence = presenceSnapshot.map((p) => p.userId);
+
+    const host = {
+      id: hostOwnerIdStr,
+      username: (room.ownerId as any).username || 'Host',
+      avatar: (room.ownerId as any).avatar ?? null,
+    };
+
+    const roomSnapshot: RoomSnapshotDto = {
+      id: room._id.toString(),
+      name: room.name,
+      description: room.description ?? null,
+      ownerId: host.id,
+      roomType: room.roomType,
+      visibility: room.visibility,
+      capacity: room.capacity,
+      status: room.status,
+      category: room.category,
+      currentParticipantsCount: room.currentParticipantsCount,
+      isChatEnabled: room.isChatEnabled !== false,
+      currentSongTitle: room.currentSongTitle ?? null,
+      currentSingerName: room.currentSingerName ?? null,
+    };
+
+    return {
+      success: true,
+      snapshot: {
+        room: roomSnapshot,
+        host,
+        members,
+        presence,
+        viewer: {
+          isMember,
+          role,
+          isKicked,
+        },
+        version: room.stateVersion || 1,
+        generatedAt: new Date().toISOString(),
+      },
+    };
   }
 }
 

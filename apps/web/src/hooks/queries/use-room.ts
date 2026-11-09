@@ -62,6 +62,7 @@ export function useJoinRoom() {
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.members(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.membership(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.state(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.joined() });
     },
@@ -79,6 +80,7 @@ export function useLeaveRoom() {
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.members(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.membership(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.state(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.joined() });
     },

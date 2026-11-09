@@ -29,6 +29,10 @@ roomRoutes.get('/:id', optionalAuth, (req, res, next) => {
   roomController.getRoomById(req, res, next);
 });
 
+roomRoutes.get('/:id/state', optionalAuth, (req, res, next) => {
+  roomController.getRoomState(req, res, next);
+});
+
 roomRoutes.get('/:id/members', optionalAuth, (req, res, next) => {
   roomController.getMembers(req, res, next);
 });

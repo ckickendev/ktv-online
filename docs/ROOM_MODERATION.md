@@ -132,3 +132,13 @@ if (room.isChatEnabled === false && !isHost) {
   *"Chat is currently disabled by the room host."*
 - The input field is hidden or disabled for non-hosts.
 - Existing message history remains scrollable and readable.
+
+---
+
+## 7. Sprint 2.2 Realtime State Synchronization Integration
+
+Starting in Sprint 2.2, all moderation actions that alter persistent room state atomically advance the room's `stateVersion`:
+- **Member Kick:** Atomically decrements `currentParticipantsCount`, sets `RoomMembership` status to `left` with kick metadata, advances `stateVersion`, and publishes `room:state:event` with type `member.kicked`. Kicked users are blocked from `GET /api/v1/rooms/:id/state` snapshots and socket subscriptions (`FORBIDDEN_KICKED`).
+- **Room Settings & Chat Toggle:** Modifying `isChatEnabled` or room capacity atomically updates the database, advances `stateVersion`, and publishes `room:state:event` with type `room.settings.updated`.
+- See [ROOM_STATE_ARCHITECTURE.md](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/docs/ROOM_STATE_ARCHITECTURE.md) for sequence details and gap recovery semantics.
+

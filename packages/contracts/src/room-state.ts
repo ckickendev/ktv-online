@@ -1,0 +1,76 @@
+import { z } from 'zod';
+import {
+  HostDtoSchema,
+  RoomCategorySchema,
+  RoomMembershipDtoSchema,
+  RoomStatusSchema,
+  RoomTypeSchema,
+  RoomVisibilitySchema,
+} from './room.js';
+
+// Safe snapshot representation of Room entity
+export const RoomSnapshotDtoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  ownerId: z.string(),
+  roomType: RoomTypeSchema,
+  visibility: RoomVisibilitySchema,
+  capacity: z.number().int(),
+  status: RoomStatusSchema,
+  category: RoomCategorySchema,
+  currentParticipantsCount: z.number().int().nonnegative(),
+  isChatEnabled: z.boolean().default(true),
+  currentSongTitle: z.string().nullable().optional(),
+  currentSingerName: z.string().nullable().optional(),
+});
+export type RoomSnapshotDto = z.infer<typeof RoomSnapshotDtoSchema>;
+
+// Viewer state in relation to the room
+export const RoomViewerStateSchema = z.object({
+  isMember: z.boolean(),
+  role: z.enum(['host', 'member', 'viewer', 'none']).default('none'),
+  isKicked: z.boolean().default(false),
+});
+export type RoomViewerState = z.infer<typeof RoomViewerStateSchema>;
+
+// Authoritative Room State Snapshot
+export const RoomStateSnapshotSchema = z.object({
+  room: RoomSnapshotDtoSchema,
+  host: HostDtoSchema,
+  members: z.array(RoomMembershipDtoSchema),
+  presence: z.array(z.string()), // Array of active online userIds in room
+  viewer: RoomViewerStateSchema,
+  version: z.number().int().positive(),
+  generatedAt: z.string(),
+});
+export type RoomStateSnapshotDto = z.infer<typeof RoomStateSnapshotSchema>;
+
+// Supported Room State Event Types
+export const RoomStateEventTypeSchema = z.enum([
+  'room.updated',
+  'room.settings.updated',
+  'member.joined',
+  'member.left',
+  'member.kicked',
+  'room.closed',
+]);
+export type RoomStateEventType = z.infer<typeof RoomStateEventTypeSchema>;
+
+// Versioned Room State Event
+export const RoomStateEventSchema = z.object({
+  roomId: z.string(),
+  version: z.number().int().positive(),
+  eventId: z.string(),
+  type: RoomStateEventTypeSchema,
+  occurredAt: z.string(),
+  payload: z.record(z.unknown()),
+});
+export type RoomStateEventDto = z.infer<typeof RoomStateEventSchema>;
+
+// Client -> Server request for state snapshot
+export const RoomStateRequestPayloadSchema = z.object({
+  roomId: z.string().min(1, 'Room ID is required'),
+  correlationId: z.string().optional(),
+});
+export type RoomStateRequestPayload = z.infer<typeof RoomStateRequestPayloadSchema>;

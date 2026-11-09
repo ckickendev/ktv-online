@@ -37,14 +37,12 @@ import { RoomChatPanel } from '@/components/chat/room-chat-panel';
 import { RoomActivityTimeline } from '@/components/chat/room-activity-timeline';
 import { KickMemberDialog } from '@/components/rooms/kick-member-dialog';
 import {
-  useRoom,
-  useMyRoomMembership,
   useJoinRoom,
   useLeaveRoom,
 } from '@/hooks/queries/use-room';
 import { useKickMember } from '@/hooks/queries/use-chat';
 import { useAuth } from '@/hooks/use-auth';
-import { useRoomSocket } from '@/hooks/use-room-socket';
+import { useRoomState } from '@/hooks/use-room-state';
 import { useRoomChat } from '@/hooks/use-room-chat';
 import { useAppStore } from '@/stores/use-app-store';
 import { cn } from '@/lib/utils';
@@ -55,17 +53,24 @@ export default function RoomDetailPage() {
   const roomId = params?.roomId as string;
 
   const { isAuthenticated, user: currentUser } = useAuth();
-  const { data: room, isLoading: isRoomLoading, isError: isRoomError, error: roomError } = useRoom(roomId);
   const {
-    data: myMembership,
-  } = useMyRoomMembership(roomId, { enabled: isAuthenticated });
-
-  const {
-    status: socketStatus,
+    room,
+    host,
+    members,
     onlineUserIds,
     totalOnline,
+    viewer,
+    version: roomStateVersion,
+    syncStatus,
+    connectionStatus,
+    isLoading: isRoomLoading,
+    isError: isRoomError,
+    errorMessage: roomErrorMessage,
     roomClosedNotice,
-  } = useRoomSocket(roomId, { enabled: isAuthenticated });
+    isKicked: stateIsKicked,
+    kickedReason: stateKickedReason,
+    refreshState,
+  } = useRoomState(roomId, { enabled: Boolean(roomId) });
 
   const joinMutation = useJoinRoom();
   const leaveMutation = useLeaveRoom();
@@ -106,6 +111,7 @@ export default function RoomDetailPage() {
     setJoinErrorMessage(null);
     try {
       await joinMutation.mutateAsync(roomId);
+      refreshState();
     } catch (err: unknown) {
       const errorMsg =
         err instanceof Error
@@ -120,6 +126,7 @@ export default function RoomDetailPage() {
     try {
       await leaveMutation.mutateAsync(roomId);
       setIsLeaveDialogOpen(false);
+      refreshState();
     } catch (err: unknown) {
       const errorMsg =
         err instanceof Error ? err.message : 'Unable to leave lounge. Please try again.';
@@ -142,9 +149,7 @@ export default function RoomDetailPage() {
           icon={AlertCircle}
           title="Lounge Not Found"
           description={
-            roomError instanceof Error
-              ? roomError.message
-              : 'The requested karaoke lounge could not be loaded or has been closed.'
+            roomErrorMessage || 'The requested karaoke lounge could not be loaded or has been closed.'
           }
           action={{
             label: 'Back to Lounges',
@@ -157,11 +162,13 @@ export default function RoomDetailPage() {
     );
   }
 
-  const isMember = Boolean(myMembership?.isMember);
-  const isHost = isMember && myMembership?.role === 'host';
-  const isClosed = room.status === 'closed';
+  const isMember = Boolean(viewer.isMember);
+  const isHost = isMember && viewer.role === 'host';
+  const isClosed = room.status === 'closed' || Boolean(roomClosedNotice);
   const isFull = (room.currentParticipantsCount ?? 0) >= room.capacity;
   const isPrivate = room.visibility === 'private';
+  const effectiveIsKicked = isKicked || stateIsKicked;
+  const effectiveKickedReason = kickedReason || stateKickedReason;
 
   return (
     <div className="flex-1 flex flex-col bg-[#07090f] overflow-hidden">
@@ -217,25 +224,29 @@ export default function RoomDetailPage() {
               data-testid="realtime-status-pill"
               className={cn(
                 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors',
-                socketStatus === 'connected' && 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-                socketStatus === 'connecting' && 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
-                socketStatus === 'reconnecting' && 'bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse',
-                (socketStatus === 'disconnected' || socketStatus === 'error') &&
+                syncStatus === 'synced' && connectionStatus === 'connected' && 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+                (syncStatus === 'initializing' || connectionStatus === 'connecting') && 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
+                (syncStatus === 'reconnecting' || connectionStatus === 'reconnecting') && 'bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse',
+                syncStatus === 'desynchronized' && 'bg-amber-500/10 text-amber-300 border-amber-500/30 animate-pulse',
+                (connectionStatus === 'disconnected' || connectionStatus === 'error') &&
                   'bg-white/5 text-slate-400 border-white/5'
               )}
-              title={`Realtime presence: ${socketStatus}`}
+              title={`Realtime presence: ${connectionStatus} (v${roomStateVersion}, ${syncStatus})`}
             >
               <span
                 className={cn(
                   'w-2 h-2 rounded-full',
-                  socketStatus === 'connected' && 'bg-emerald-400 shadow-sm shadow-emerald-400/50',
-                  socketStatus === 'connecting' && 'bg-cyan-400 animate-ping',
-                  socketStatus === 'reconnecting' && 'bg-amber-400 animate-bounce',
-                  (socketStatus === 'disconnected' || socketStatus === 'error') && 'bg-slate-500'
+                  syncStatus === 'synced' && connectionStatus === 'connected' && 'bg-emerald-400 shadow-sm shadow-emerald-400/50',
+                  (syncStatus === 'initializing' || connectionStatus === 'connecting') && 'bg-cyan-400 animate-ping',
+                  (syncStatus === 'reconnecting' || connectionStatus === 'reconnecting') && 'bg-amber-400 animate-bounce',
+                  syncStatus === 'desynchronized' && 'bg-amber-400 animate-pulse',
+                  (connectionStatus === 'disconnected' || connectionStatus === 'error') && 'bg-slate-500'
                 )}
               />
-              <span className="hidden sm:inline capitalize">{socketStatus}</span>
-              {socketStatus === 'connected' && <span>({totalOnline})</span>}
+              <span className="hidden sm:inline capitalize">
+                {syncStatus === 'desynchronized' ? 'Re-syncing...' : connectionStatus}
+              </span>
+              {connectionStatus === 'connected' && <span>({totalOnline})</span>}
             </div>
 
             {/* Host Controls or Member Leave Button */}
@@ -316,12 +327,12 @@ export default function RoomDetailPage() {
       )}
 
       {/* Kicked by Host Notification Banner */}
-      {isKicked && (
+      {effectiveIsKicked && (
         <div className="bg-rose-500/20 border-b border-rose-500/40 px-6 py-3 flex items-center justify-between text-xs text-rose-200">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
             <span>
-              <strong>Removed by Host:</strong> {kickedReason || 'You have been removed from this room by the host.'}
+              <strong>Removed by Host:</strong> {effectiveKickedReason || 'You have been removed from this room by the host.'}
             </span>
           </div>
           <button
@@ -340,9 +351,11 @@ export default function RoomDetailPage() {
           <RoomMemberList
             roomId={roomId}
             currentUserId={currentUser?.id}
+            members={members}
             onlineUserIds={onlineUserIds}
             isHost={isHost}
             onKickMember={(userId, username) => setKickTarget({ userId, username })}
+            onRefresh={refreshState}
             className="h-full"
           />
         </div>
@@ -373,7 +386,7 @@ export default function RoomDetailPage() {
                     Capacity: {room.currentParticipantsCount ?? 0}/{room.capacity}
                   </span>
                   <span className="text-[10px] text-slate-500">
-                    Host: {room.host?.username ?? 'Lounge Host'}
+                    Host: {host?.username ?? 'Lounge Host'}
                   </span>
                 </div>
               </div>

@@ -33,6 +33,7 @@ export const RoomDtoSchema = z.object({
   currentParticipantsCount: z.number().int().nonnegative().default(0),
   category: RoomCategorySchema.default('all'),
   isChatEnabled: z.boolean().default(true).optional(),
+  stateVersion: z.number().int().positive().default(1).optional(),
   currentSongTitle: z.string().optional().nullable(),
   currentSingerName: z.string().optional().nullable(),
   createdAt: z.string().datetime(),

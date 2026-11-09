@@ -4,12 +4,15 @@ import {
   JoinRoomPayloadSchema,
   LeaveRoomPayloadSchema,
   PresenceRequestPayloadSchema,
+  RoomStateRequestPayloadSchema,
+  RoomStateSnapshotDto,
   SOCKET_EVENTS,
   SocketAckResponse,
   PresenceMemberDto,
 } from '@ktv/contracts';
 import { RoomModel } from '../modules/rooms/room.model.js';
 import { RoomMembershipModel } from '../modules/rooms/membership.model.js';
+import { roomService } from '../modules/rooms/room.service.js';
 import { presenceManager } from './presence.manager.js';
 import { logger } from '../utils/logger.js';
 import { AuthenticatedSocketData } from './socket.auth.js';
@@ -175,6 +178,12 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
           correlationId,
         });
 
+        // Send authoritative room state snapshot to the joining socket
+        const snapshotResult = await roomService.getRoomStateSnapshot(roomId, user.id);
+        if (snapshotResult.success) {
+          socket.emit(SOCKET_EVENTS.SERVER.ROOM_STATE_SNAPSHOT, snapshotResult.snapshot);
+        }
+
         ack?.({
           success: true,
           data: { roomId, totalOnline },
@@ -265,7 +274,56 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
     }
   );
 
-  // 4. Socket disconnection
+  // 4. Client requests a fresh authoritative room state snapshot
+  socket.on(
+    SOCKET_EVENTS.CLIENT.ROOM_STATE_REQUEST,
+    async (rawPayload: unknown, ack?: (res: SocketAckResponse<RoomStateSnapshotDto>) => void) => {
+      const parsed = RoomStateRequestPayloadSchema.safeParse(rawPayload);
+      if (!parsed.success) {
+        ack?.({
+          success: false,
+          error: {
+            code: 'INVALID_PAYLOAD',
+            message: parsed.error.issues[0]?.message || 'Invalid room state request payload',
+          },
+        });
+        return;
+      }
+
+      const { roomId, correlationId } = parsed.data;
+
+      try {
+        const snapshotResult = await roomService.getRoomStateSnapshot(roomId, user.id);
+        if (!snapshotResult.success) {
+          ack?.({
+            success: false,
+            error: {
+              code: snapshotResult.error,
+              message: 'Failed to retrieve room state snapshot',
+            },
+            correlationId,
+          });
+          return;
+        }
+
+        socket.emit(SOCKET_EVENTS.SERVER.ROOM_STATE_SNAPSHOT, snapshotResult.snapshot);
+        ack?.({
+          success: true,
+          data: snapshotResult.snapshot,
+          correlationId,
+        });
+      } catch (err: unknown) {
+        logger.error({ err, roomId, userId: user.id }, 'Error retrieving room state snapshot');
+        ack?.({
+          success: false,
+          error: { code: 'INTERNAL_ERROR', message: 'Failed to retrieve room state snapshot' },
+          correlationId,
+        });
+      }
+    }
+  );
+
+  // 5. Socket disconnection
   socket.on('disconnect', (reason) => {
     logger.info({ socketId: socket.id, userId: user.id, reason }, 'Socket disconnected');
     const result = presenceManager.removeSocket(socket.id);

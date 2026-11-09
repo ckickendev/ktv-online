@@ -12,6 +12,7 @@ export interface IRoom {
   category: RoomCategory;
   currentParticipantsCount: number;
   isChatEnabled?: boolean;
+  stateVersion: number;
   currentSongTitle?: string | null;
   currentSingerName?: string | null;
   createdAt: Date;

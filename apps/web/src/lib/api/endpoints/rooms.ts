@@ -6,6 +6,7 @@ import {
   RoomMembershipDto,
   RoomMyMembershipDto,
   RoomQueryDto,
+  RoomStateSnapshotDto,
   UpdateRoomDto,
 } from '@ktv/contracts';
 
@@ -29,6 +30,10 @@ export const roomApi = {
 
   async getRoomById(roomId: string): Promise<RoomDto> {
     return apiClient.get<RoomDto>(`/rooms/${roomId}`);
+  },
+
+  async getRoomState(roomId: string): Promise<RoomStateSnapshotDto> {
+    return apiClient.get<RoomStateSnapshotDto>(`/rooms/${roomId}/state`);
   },
 
   async createRoom(payload: CreateRoomDto): Promise<RoomDto> {

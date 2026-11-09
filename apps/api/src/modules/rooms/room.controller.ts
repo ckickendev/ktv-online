@@ -516,6 +516,42 @@ export class RoomController {
       next(error);
     }
   }
+
+  async getRoomState(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id: roomId } = req.params;
+      if (!roomId) {
+        sendError(res, 'Room ID is required', 400);
+        return;
+      }
+
+      const result = await roomService.getRoomStateSnapshot(roomId, req.user?.id);
+
+      if (!result.success) {
+        switch (result.error) {
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'UNAUTHORIZED':
+            sendError(res, 'Authentication required to view private room state', 401);
+            return;
+          case 'FORBIDDEN_PRIVATE_ROOM':
+            sendError(res, 'Access denied to private room state', 403);
+            return;
+          case 'FORBIDDEN_KICKED':
+            sendError(res, 'You have been removed from this room by the host', 403);
+            return;
+          default:
+            sendError(res, 'Failed to retrieve room state', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, result.snapshot, 'Room state snapshot retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const roomController = new RoomController();
