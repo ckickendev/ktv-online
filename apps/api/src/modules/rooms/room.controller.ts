@@ -499,6 +499,9 @@ export class RoomController {
           case 'CANNOT_KICK_SELF':
             sendError(res, 'Host cannot remove themselves from the room', 400);
             return;
+          case 'CANNOT_KICK_HOST':
+            sendError(res, 'Cannot remove a host from the room', 400);
+            return;
           case 'NOT_A_MEMBER':
             sendError(res, 'User is not an active member of this room', 404);
             return;

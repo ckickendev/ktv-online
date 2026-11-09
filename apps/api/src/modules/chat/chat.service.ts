@@ -68,21 +68,27 @@ setInterval(() => {
   reactionRateLimiter.cleanup();
 }, 300000);
 
+export interface SendMessageResult {
+  message: ChatMessageDto;
+  isDuplicate: boolean;
+}
+
 export class ChatService {
   /**
-   * Send a text message in a room.
+   * Send a text message in a room with database-enforced idempotency.
    */
   async sendMessage(
     roomId: string,
     user: { id: string; username: string; avatar?: string | null },
     content: string,
     clientMessageId?: string
-  ): Promise<ChatMessageDto> {
+  ): Promise<SendMessageResult> {
     if (!Types.ObjectId.isValid(roomId)) {
       throw new Error('INVALID_ROOM_ID');
     }
 
     const roomObjectId = new Types.ObjectId(roomId);
+    const userObjectId = new Types.ObjectId(user.id);
     const room = await RoomModel.findById(roomObjectId).select('status visibility ownerId isChatEnabled').exec();
 
     if (!room) {
@@ -100,7 +106,7 @@ export class ChatService {
       throw new Error('CHAT_DISABLED');
     }
 
-    // Rate limiting check
+    // Rate limiting check: keyed by authenticated user ID (shared across tabs)
     if (!chatRateLimiter.consume(user.id, 5, 3000)) {
       throw new Error('RATE_LIMITED');
     }
@@ -108,7 +114,7 @@ export class ChatService {
     // Verify active membership
     const isMember = await RoomMembershipModel.exists({
       roomId: roomObjectId,
-      userId: new Types.ObjectId(user.id),
+      userId: userObjectId,
       status: 'active',
     });
 
@@ -125,28 +131,79 @@ export class ChatService {
       throw new Error('MESSAGE_TOO_LONG');
     }
 
+    // Fast pre-check for existing clientMessageId if provided
+    if (clientMessageId) {
+      const existing = await RoomMessageModel.findOne({
+        roomId: roomObjectId,
+        senderId: userObjectId,
+        clientMessageId,
+      }).exec();
+
+      if (existing) {
+        logger.info(
+          { roomId, messageId: existing.id, senderId: user.id, clientMessageId },
+          'Idempotent message send detected before insert: returning existing record'
+        );
+        return {
+          message: existing.toJSON() as unknown as ChatMessageDto,
+          isDuplicate: true,
+        };
+      }
+    }
+
     const senderRole = isHost ? 'host' : 'member';
 
-    const messageDoc = await RoomMessageModel.create({
-      roomId: roomObjectId,
-      senderId: new Types.ObjectId(user.id),
-      senderUsername: user.username,
-      senderAvatar: user.avatar ?? null,
-      senderRole,
-      content: trimmedContent,
-      messageType: 'text',
-      clientMessageId: clientMessageId ?? null,
-      reactions: [],
-    });
+    try {
+      const messageDoc = await RoomMessageModel.create({
+        roomId: roomObjectId,
+        senderId: userObjectId,
+        senderUsername: user.username,
+        senderAvatar: user.avatar ?? null,
+        senderRole,
+        content: trimmedContent,
+        messageType: 'text',
+        clientMessageId: clientMessageId ?? null,
+        reactions: [],
+      });
 
-    const dto = messageDoc.toJSON() as unknown as ChatMessageDto;
+      const dto = messageDoc.toJSON() as unknown as ChatMessageDto;
 
-    logger.info(
-      { roomId, messageId: dto.id, senderId: user.id },
-      'Room chat message persisted successfully'
-    );
+      logger.info(
+        { roomId, messageId: dto.id, senderId: user.id },
+        'Room chat message persisted successfully'
+      );
 
-    return dto;
+      return { message: dto, isDuplicate: false };
+    } catch (err: unknown) {
+      // Catch MongoDB duplicate key error (code 11000) on (roomId, senderId, clientMessageId)
+      if (
+        clientMessageId &&
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: unknown }).code === 11000
+      ) {
+        logger.warn(
+          { roomId, senderId: user.id, clientMessageId },
+          'Idempotent duplicate message send caught by MongoDB unique index constraint'
+        );
+
+        const existingDoc = await RoomMessageModel.findOne({
+          roomId: roomObjectId,
+          senderId: userObjectId,
+          clientMessageId,
+        }).exec();
+
+        if (existingDoc) {
+          return {
+            message: existingDoc.toJSON() as unknown as ChatMessageDto,
+            isDuplicate: true,
+          };
+        }
+      }
+
+      throw err;
+    }
   }
 
   /**
@@ -170,7 +227,7 @@ export class ChatService {
   }
 
   /**
-   * Retrieve message history with cursor-based pagination.
+   * Retrieve message history with deterministic compound cursor pagination (createdAt_id).
    */
   async getMessages(
     roomId: string,
@@ -213,11 +270,31 @@ export class ChatService {
     const query: Record<string, unknown> = { roomId: roomObjectId };
 
     if (before) {
-      const parsedDate = new Date(before);
-      if (!isNaN(parsedDate.getTime())) {
-        query.createdAt = { $lt: parsedDate };
-      } else if (Types.ObjectId.isValid(before)) {
-        query._id = { $lt: new Types.ObjectId(before) };
+      if (before.includes('_')) {
+        const parts = before.split('_');
+        const dateStr = parts[0];
+        const idStr = parts[1];
+        if (!dateStr || !idStr) {
+          throw new Error('INVALID_CURSOR');
+        }
+        const parsedDate = new Date(dateStr);
+        if (isNaN(parsedDate.getTime()) || !Types.ObjectId.isValid(idStr)) {
+          throw new Error('INVALID_CURSOR');
+        }
+        query.$or = [
+          { createdAt: { $lt: parsedDate } },
+          { createdAt: parsedDate, _id: { $lt: new Types.ObjectId(idStr) } },
+        ];
+      } else {
+        // Fallback for legacy single-field cursors
+        const parsedDate = new Date(before);
+        if (!isNaN(parsedDate.getTime())) {
+          query.createdAt = { $lt: parsedDate };
+        } else if (Types.ObjectId.isValid(before)) {
+          query._id = { $lt: new Types.ObjectId(before) };
+        } else {
+          throw new Error('INVALID_CURSOR');
+        }
       }
     }
 
@@ -234,7 +311,10 @@ export class ChatService {
       .map((d) => d.toJSON() as unknown as ChatMessageDto)
       .reverse();
     const lastItem = items[items.length - 1];
-    const nextCursor = hasMore && lastItem ? lastItem.createdAt.toISOString() : undefined;
+    const nextCursor =
+      hasMore && lastItem && lastItem.createdAt && lastItem._id
+        ? `${lastItem.createdAt.toISOString()}_${lastItem._id.toString()}`
+        : undefined;
 
     return { messages, nextCursor };
   }
@@ -307,39 +387,39 @@ export class ChatService {
     const messageObjectId = new Types.ObjectId(messageId);
     const userObjectId = new Types.ObjectId(user.id);
 
-    // Verify active membership
+    // Verify room exists and active membership or host status
+    const room = await RoomModel.findById(roomObjectId).select('status ownerId').exec();
+    if (!room) {
+      throw new Error('ROOM_NOT_FOUND');
+    }
+
+    if (room.status === 'closed') {
+      throw new Error('ROOM_CLOSED');
+    }
+
+    const isHost = room.ownerId.toString() === user.id;
     const isMember = await RoomMembershipModel.exists({
       roomId: roomObjectId,
       userId: userObjectId,
       status: 'active',
     });
 
-    if (!isMember) {
+    if (!isMember && !isHost) {
       throw new Error('FORBIDDEN_NOT_A_MEMBER');
     }
 
-    const message = await RoomMessageModel.findOne({
-      _id: messageObjectId,
-      roomId: roomObjectId,
-    }).exec();
-
-    if (!message) {
-      throw new Error('MESSAGE_NOT_FOUND');
-    }
-
-    if (message.deletedAt) {
-      throw new Error('CANNOT_REACT_DELETED_MESSAGE');
-    }
-
-    // Remove existing reaction of the same emoji by this user to avoid duplicates
-    await RoomMessageModel.updateOne(
-      { _id: messageObjectId },
-      { $pull: { reactions: { emoji, userId: userObjectId } } }
-    ).exec();
-
-    // Push new reaction
-    const updated = await RoomMessageModel.findByIdAndUpdate(
-      messageObjectId,
+    // Atomic conditional addition: push reaction only if user has not already reacted with this emoji
+    const updateResult = await RoomMessageModel.updateOne(
+      {
+        _id: messageObjectId,
+        roomId: roomObjectId,
+        deletedAt: null,
+        reactions: {
+          $not: {
+            $elemMatch: { emoji, userId: userObjectId },
+          },
+        },
+      },
       {
         $push: {
           reactions: {
@@ -349,16 +429,41 @@ export class ChatService {
             createdAt: new Date(),
           },
         },
-      },
-      { new: true }
+      }
     ).exec();
 
-    const dto = updated?.toJSON() as unknown as ChatMessageDto;
-    return dto?.reactions || [];
+    if (updateResult.matchedCount === 0) {
+      const existing = await RoomMessageModel.findOne({
+        _id: messageObjectId,
+        roomId: roomObjectId,
+      }).select('deletedAt reactions').exec();
+
+      if (!existing) {
+        throw new Error('MESSAGE_NOT_FOUND');
+      }
+
+      if (existing.deletedAt) {
+        throw new Error('CANNOT_REACT_DELETED_MESSAGE');
+      }
+
+      // If user already reacted with this emoji, treat as idempotent duplicate
+      logger.info(
+        { roomId, messageId, userId: user.id, emoji },
+        'Idempotent duplicate reaction add detected'
+      );
+    }
+
+    const updated = await RoomMessageModel.findById(messageObjectId).exec();
+    if (!updated) {
+      throw new Error('MESSAGE_NOT_FOUND');
+    }
+
+    const dto = updated.toJSON() as unknown as ChatMessageDto;
+    return dto.reactions || [];
   }
 
   /**
-   * Remove emoji reaction from a message.
+   * Remove emoji reaction from a message with authoritative membership verification.
    */
   async removeReaction(
     roomId: string,
@@ -374,11 +479,32 @@ export class ChatService {
       throw new Error('INVALID_EMOJI');
     }
 
+    const roomObjectId = new Types.ObjectId(roomId);
     const messageObjectId = new Types.ObjectId(messageId);
     const userObjectId = new Types.ObjectId(userId);
 
-    const updated = await RoomMessageModel.findByIdAndUpdate(
-      messageObjectId,
+    // Verify room exists and active membership or host status
+    const room = await RoomModel.findById(roomObjectId).select('status ownerId').exec();
+    if (!room) {
+      throw new Error('ROOM_NOT_FOUND');
+    }
+
+    const isHost = room.ownerId.toString() === userId;
+    const isMember = await RoomMembershipModel.exists({
+      roomId: roomObjectId,
+      userId: userObjectId,
+      status: 'active',
+    });
+
+    if (!isMember && !isHost) {
+      throw new Error('FORBIDDEN_NOT_A_MEMBER');
+    }
+
+    const updated = await RoomMessageModel.findOneAndUpdate(
+      {
+        _id: messageObjectId,
+        roomId: roomObjectId,
+      },
       { $pull: { reactions: { emoji, userId: userObjectId } } },
       { new: true }
     ).exec();

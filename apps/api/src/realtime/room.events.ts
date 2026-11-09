@@ -70,10 +70,34 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
           return;
         }
 
-        // Private room authorization check:
-        // Only room owner or active members may subscribe
+        // Reconnection and authorization check: verify user was not kicked from this room
         const isOwner = room.ownerId.toString() === user.id;
         let role: 'host' | 'member' | 'viewer' = isOwner ? 'host' : 'viewer';
+
+        if (!isOwner) {
+          const wasKicked = await RoomMembershipModel.exists({
+            roomId: roomObjectId,
+            userId: new Types.ObjectId(user.id),
+            status: 'left',
+            kickedAt: { $ne: null },
+          });
+
+          if (wasKicked) {
+            logger.warn(
+              { roomId, userId: user.id },
+              'Socket room join rejected: User was kicked from this room'
+            );
+            ack?.({
+              success: false,
+              error: {
+                code: 'FORBIDDEN_KICKED',
+                message: 'You have been removed from this room by the host',
+              },
+              correlationId,
+            });
+            return;
+          }
+        }
 
         if (room.visibility === 'private') {
           if (!isOwner) {

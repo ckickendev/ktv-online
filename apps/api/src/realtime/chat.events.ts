@@ -34,7 +34,7 @@ export function registerChatEvents(io: Server, socket: Socket<any, any, any, Aut
       const { roomId, content, clientMessageId, correlationId } = parsed.data;
 
       try {
-        const message = await chatService.sendMessage(
+        const { message, isDuplicate } = await chatService.sendMessage(
           roomId,
           {
             id: user.id,
@@ -47,12 +47,14 @@ export function registerChatEvents(io: Server, socket: Socket<any, any, any, Aut
 
         const channel = getRoomChannel(roomId);
 
-        // Broadcast to all sockets subscribed to the room channel
-        io.to(channel).emit(SOCKET_EVENTS.SERVER.CHAT_MESSAGE_NEW, {
-          roomId,
-          message,
-          correlationId,
-        });
+        // Broadcast to all sockets in channel only if this is an authoritative new message (not an idempotent duplicate)
+        if (!isDuplicate) {
+          io.to(channel).emit(SOCKET_EVENTS.SERVER.CHAT_MESSAGE_NEW, {
+            roomId,
+            message,
+            correlationId,
+          });
+        }
 
         ack?.({
           success: true,

@@ -39,6 +39,10 @@ export class ChatController {
           sendError(res, 'Authentication required to view messages in private room', 401);
           return;
         }
+        if (error.message === 'INVALID_CURSOR') {
+          sendError(res, 'Invalid pagination cursor format', 400);
+          return;
+        }
       }
       next(error);
     }

@@ -27,6 +27,7 @@ export type KickMemberResult =
         | 'ROOM_CLOSED'
         | 'FORBIDDEN_NOT_HOST'
         | 'CANNOT_KICK_SELF'
+        | 'CANNOT_KICK_HOST'
         | 'NOT_A_MEMBER'
         | 'INVALID_ID';
     };
@@ -573,12 +574,34 @@ export class RoomService {
       return { success: false, error: 'FORBIDDEN_NOT_HOST' };
     }
 
+    // A host cannot kick another host or room owner
+    if (targetUserId === hostOwnerIdStr) {
+      return { success: false, error: 'CANNOT_KICK_HOST' };
+    }
+
+    // Verify target active membership and ensure target is not a host
+    const targetMembership = await RoomMembershipModel.findOne({
+      roomId: roomObjectId,
+      userId: targetObjectId,
+      status: 'active',
+    }).exec();
+
+    if (!targetMembership) {
+      return { success: false, error: 'NOT_A_MEMBER' };
+    }
+
+    if (targetMembership.role === 'host') {
+      return { success: false, error: 'CANNOT_KICK_HOST' };
+    }
+
     // Atomically transition target membership to 'left' with kicked metadata
+    // Atomic filter role: { $ne: 'host' } prevents concurrent host elevation races
     const updatedMembership = await RoomMembershipModel.findOneAndUpdate(
       {
         roomId: roomObjectId,
         userId: targetObjectId,
         status: 'active',
+        role: { $ne: 'host' },
       },
       {
         $set: {

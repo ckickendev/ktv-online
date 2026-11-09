@@ -137,6 +137,15 @@ const RoomMessageSchema = new Schema<IRoomMessageDocument>(
 // Compound index for fast reverse cursor pagination by room
 RoomMessageSchema.index({ roomId: 1, createdAt: -1, _id: -1 });
 
+// Partial unique compound index for database-enforced message idempotency
+RoomMessageSchema.index(
+  { roomId: 1, senderId: 1, clientMessageId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { clientMessageId: { $type: 'string' } },
+  }
+);
+
 // TTL index: 30 days retention policy (2592000 seconds)
 RoomMessageSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 });
 

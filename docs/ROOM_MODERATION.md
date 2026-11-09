@@ -1,7 +1,7 @@
 # KTV Online — Room Moderation Architecture & Controls
 
 **Document:** Room Moderation & Host Controls  
-**Sprint:** Sprint 2.1  
+**Sprint:** Sprint 2.1 (Hardened in Sprint 2.1.1)  
 **Status:** CODE COMPLETE — NOT RUNTIME VERIFIED  
 **Audience:** Backend Engineers, Frontend Engineers, Moderation Leads
 
@@ -18,7 +18,7 @@ Host moderation controls ensure virtual karaoke rooms remain safe, engaging, and
 | Action | Permitted Roles | Target Entity | Mechanism | Resulting Realtime Event |
 | :--- | :--- | :--- | :--- | :--- |
 | **Delete Message** | Room Host | Any room message | REST `DELETE` or Socket `chat:message:delete` | `chat:message:deleted` |
-| **Remove Member (Kick)** | Room Host | Active regular member | REST `POST /rooms/:id/members/:userId/kick` | `room:member:kicked`, `room:member:left`, `room:activity:new` |
+| **Remove Member (Kick)** | Room Host | Active regular member (`role !== 'host'`) | REST `POST /rooms/:id/members/:userId/kick` | `room:member:kicked`, `room:member:left`, `room:activity:new` |
 | **Toggle Room Chat** | Room Host | Entire room | REST `PATCH /rooms/:id` (`isChatEnabled: boolean`) | `room:activity:new` |
 
 ---
@@ -39,38 +39,72 @@ sequenceDiagram
     actor Occupants as Room Occupants
 
     Host->>API: POST /api/v1/rooms/:id/members/:userId/kick { reason }
-    API->>API: Verify host identity & target active membership
-    API->>DB: Atomically set RoomMembership status = 'left', kickedAt, kickedBy
-    API->>DB: Atomically decrement Room.currentParticipantsCount
-    API->>DB: Create RoomActivity (type: 'member_kicked')
-    API->>SocketServer: evictKickedMember(roomId, targetUserId, reason)
-    SocketServer->>Member: emit("room:member:kicked", { roomId, reason })
-    SocketServer->>SocketServer: socket.leave("room:" + roomId)
-    SocketServer->>Presence: removeUserFromRoom(roomId, targetUserId)
-    SocketServer->>Occupants: broadcast("room:member:left", { roomId, userId })
-    SocketServer->>Occupants: broadcast("room:activity:new", { activity })
-    API-->>Host: 200 OK (Member removed)
+    API->>API: Verify host identity & target role !== 'host'
+    API->>DB: Atomically set RoomMembership status = 'left', kickedAt, kickedBy where status == 'active' and role != 'host'
+    alt Target is active regular member
+        DB-->>API: Returns updated membership document
+        API->>DB: Atomically decrement Room.currentParticipantsCount (where > 0)
+        API->>DB: Create RoomActivity (type: 'member_kicked')
+        API->>SocketServer: evictKickedMember(roomId, targetUserId, reason)
+        SocketServer->>Member: emit across all target sockets ("room:member:kicked", { roomId, reason })
+        SocketServer->>SocketServer: Force all target sockets to leave "room:" + roomId
+        SocketServer->>Presence: removeUserFromRoom(roomId, targetUserId)
+        SocketServer->>Occupants: broadcast("room:member:left", { roomId, userId })
+        SocketServer->>Occupants: broadcast("room:activity:new", { activity })
+        API-->>Host: 200 OK (Member removed)
+    else Target already left, kicked, or host
+        DB-->>API: Returns null
+        API-->>Host: 400/404 Error (NOT_A_MEMBER / CANNOT_KICK_HOST)
+        Note over API,Occupants: Zero occupancy mutation, zero duplicate broadcasts
+    end
 ```
-
-### 3.1 Strict Invariant Preservation
-
-- **Persistent Occupancy Count:**
-  $$\text{Room.currentParticipantsCount} \equiv \text{Count of active RoomMemberships}$$
-  The kick operation decrements `Room.currentParticipantsCount` by exactly 1 in the same transaction/operation, preventing orphaned seat allocations.
-- **Eviction from Socket Channels:**
-  The target's sockets are removed from `room:${roomId}`. Even if the target attempts to emit chat messages, subsequent operations are rejected with `FORBIDDEN_NOT_A_MEMBER`.
 
 ---
 
-## 4. Message Deletion Architecture
+## 4. Strict Invariant & Concurrency Protection
 
-### 4.1 Soft Deletion Semantics
+### 4.1 Invariant: Single Decrement & Occupancy Integrity
+$$\text{Room.currentParticipantsCount} \equiv \text{Count of active RoomMemberships}$$
 
-Rather than physically removing documents from MongoDB, message deletion performs a soft delete:
+- **Atomic Transition Guard:**
+  The transition query matches:
+  `{ roomId: roomObjectId, userId: targetObjectId, status: 'active', role: { $ne: 'host' } }`.
+- **Duplicate & Concurrent Request Safety:**
+  If duplicate kick requests arrive simultaneously or sequentially, only the first request matches `{ status: 'active' }`. Subsequent requests find `null` and return `{ success: false, error: 'NOT_A_MEMBER' }`, preventing double occupancy decrements or orphaned counter drift.
+- **Concurrent Leave vs. Kick:**
+  If the member voluntarily leaves while the host initiates a kick, the atomic status check ensures only the first operation decrements `currentParticipantsCount`.
+
+### 4.2 Host Immunity
+- A host cannot kick themselves (`CANNOT_KICK_SELF`).
+- A host cannot kick another host or the room owner (`CANNOT_KICK_HOST`).
+- Target membership must have `role: { $ne: 'host' }`.
+
+### 4.3 Multi-Tab Socket Eviction
+`evictKickedMember` iterates all active sockets across the instance via `ioInstance.fetchSockets()`:
+1. Every socket belonging to `targetUserId` receives `room:member:kicked` with the kick reason.
+2. Every socket belonging to `targetUserId` leaves the Socket.IO room channel `room:${roomId}`.
+3. The user's multi-device presence entries are cleared from `RoomPresenceManager`.
+4. A single `room:member:left` event is broadcast to remaining room occupants.
+
+### 4.4 Reconnect Protection
+- **Room Subscription Handler (`room:join`):**
+  When a socket attempts to join a room via `room:join`, the server queries:
+  `RoomMembershipModel.exists({ roomId, userId, status: 'left', kickedAt: { $ne: null } })`.
+  If the user was kicked from the room, `room:join` is rejected with `FORBIDDEN_KICKED`. The kicked user cannot reconnect or resubscribe as a viewer to listen to private or public room channels.
+- **Message and Reaction Handlers:**
+  `chatService.sendMessage`, `chatService.addReaction`, and `chatService.removeReaction` independently check `RoomMembershipModel.exists({ roomId, userId, status: 'active' })`. Even if a client bypasses socket channels, all mutations are blocked at the domain boundary.
+
+---
+
+## 5. Message Deletion Architecture
+
+### 5.1 Soft Deletion Semantics
+
+Rather than physically purging documents from MongoDB, message deletion performs a soft delete:
 - `deletedAt = new Date()`
 - `deletedBy = hostObjectId`
 
-### 4.2 Presentation & Audit Integrity
+### 5.2 Presentation & Audit Integrity
 
 - **Auditability:** Server logs and database records retain the original message text, sender details, and host moderation timestamp for safety reviews.
 - **Public API Sanitization:** When queried by clients, deleted messages replace their text content with:
@@ -79,11 +113,11 @@ Rather than physically removing documents from MongoDB, message deletion perform
 
 ---
 
-## 5. Room Chat Controls
+## 6. Room Chat Controls
 
 Hosts can disable text chat for their room via `PATCH /api/v1/rooms/:roomId` with `{ isChatEnabled: false }`.
 
-### 5.1 Enforcement in `ChatService`
+### 6.1 Enforcement in `ChatService`
 
 ```typescript
 // If chat is disabled, only the room host may send messages
@@ -92,7 +126,7 @@ if (room.isChatEnabled === false && !isHost) {
 }
 ```
 
-### 5.2 Frontend UX
+### 6.2 Frontend UX
 
 - When chat is disabled, regular members see an alert banner:
   *"Chat is currently disabled by the room host."*
