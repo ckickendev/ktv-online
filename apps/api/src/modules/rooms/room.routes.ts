@@ -33,6 +33,10 @@ roomRoutes.get('/:id/state', optionalAuth, (req, res, next) => {
   roomController.getRoomState(req, res, next);
 });
 
+roomRoutes.get('/:id/version', optionalAuth, (req, res, next) => {
+  roomController.getRoomVersion(req, res, next);
+});
+
 roomRoutes.get('/:id/members', optionalAuth, (req, res, next) => {
   roomController.getMembers(req, res, next);
 });
@@ -65,4 +69,9 @@ roomRoutes.post('/:id/leave', requireAuth, (req, res, next) => {
 roomRoutes.post('/:id/members/:userId/kick', requireAuth, (req, res, next) => {
   roomController.kickMember(req, res, next);
 });
+
+roomRoutes.post('/:id/members/:userId/reinstate', requireAuth, (req, res, next) => {
+  roomController.reinstateMember(req, res, next);
+});
+
 

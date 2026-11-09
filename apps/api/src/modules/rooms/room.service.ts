@@ -10,11 +10,16 @@ import {
   RoomStateSnapshotDto,
   RoomSnapshotDto,
   RoomMembershipDto,
+  RoomStateVersionDto,
 } from '@ktv/contracts';
 import { chatService } from '../chat/chat.service.js';
 import { evictKickedMember } from '../../realtime/socket.server.js';
 import { publishRoomStateEvent } from '../../realtime/room-state.publisher.js';
 import { presenceManager } from '../../realtime/presence.manager.js';
+import { RoomReconciliationService } from './room-reconciliation.service.js';
+import { logger } from '../../utils/logger.js';
+
+const roomReconciliationService = new RoomReconciliationService();
 
 export type GetRoomStateSnapshotResult =
   | { success: true; snapshot: RoomStateSnapshotDto }
@@ -32,7 +37,13 @@ export type JoinRoomResult =
   | { success: true; membership: IRoomMembershipDocument; alreadyJoined: boolean }
   | {
       success: false;
-      error: 'ROOM_NOT_FOUND' | 'ROOM_CLOSED' | 'ROOM_FULL' | 'PRIVATE_ROOM' | 'JOIN_FAILED';
+      error:
+        | 'ROOM_NOT_FOUND'
+        | 'ROOM_CLOSED'
+        | 'ROOM_FULL'
+        | 'PRIVATE_ROOM'
+        | 'JOIN_FAILED'
+        | 'FORBIDDEN_KICKED';
     };
 
 export type LeaveRoomResult =
@@ -296,14 +307,27 @@ export class RoomService {
       return { success: true, membership: existingMembership, alreadyJoined: true };
     }
 
+    // 2b. Moderation check: Kicked users cannot rejoin unless reinstated by host
+    const kickedCheck = await RoomMembershipModel.findOne({
+      roomId: roomObjectId,
+      userId: userObjectId,
+      status: 'left',
+      kickedAt: { $ne: null },
+    }).exec();
+
+    if (kickedCheck && room.ownerId.toString() !== userId) {
+      return { success: false, error: 'FORBIDDEN_KICKED' };
+    }
+
     // 3. Atomic capacity check and reservation (must not be closed)
+    // Note: Do not increment stateVersion here; only advance upon verified membership commit
     const updatedRoom = await RoomModel.findOneAndUpdate(
       {
         _id: roomObjectId,
         status: { $ne: 'closed' },
         $expr: { $lt: ['$currentParticipantsCount', '$capacity'] },
       },
-      { $inc: { currentParticipantsCount: 1, stateVersion: 1 } },
+      { $inc: { currentParticipantsCount: 1 } },
       { new: true }
     ).exec();
 
@@ -445,14 +469,24 @@ export class RoomService {
         return { success: false, error: 'ROOM_CLOSED' };
       }
 
+      // 5b. Atomically advance stateVersion now that membership is committed
+      const versionedRoom = await RoomModel.findByIdAndUpdate(
+        roomObjectId,
+        { $inc: { stateVersion: 1 } },
+        { new: true }
+      ).exec();
+
+      const finalVersion = versionedRoom?.stateVersion || 1;
+      const finalCount = versionedRoom?.currentParticipantsCount ?? updatedRoom.currentParticipantsCount;
+
       publishRoomStateEvent(
         roomId,
         'member.joined',
         {
           member: membership!.toJSON() as unknown as RoomMembershipDto,
-          currentParticipantsCount: updatedRoom.currentParticipantsCount,
+          currentParticipantsCount: finalCount,
         },
-        updatedRoom.stateVersion
+        finalVersion
       );
 
       return { success: true, membership: membership!, alreadyJoined: false };
@@ -748,7 +782,86 @@ export class RoomService {
   }
 
   /**
+   * Reinstates a previously kicked member, removing their kick flag so they may rejoin.
+   */
+  async reinstateMember(
+    roomId: string,
+    hostUserId: string,
+    targetUserId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (
+      !Types.ObjectId.isValid(roomId) ||
+      !Types.ObjectId.isValid(hostUserId) ||
+      !Types.ObjectId.isValid(targetUserId)
+    ) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const targetObjectId = new Types.ObjectId(targetUserId);
+
+    const room = await RoomModel.findById(roomObjectId).select('ownerId status').exec();
+    if (!room) return { success: false, error: 'ROOM_NOT_FOUND' };
+
+    const hostOwnerIdStr = (room.ownerId as any)._id
+      ? (room.ownerId as any)._id.toString()
+      : room.ownerId.toString();
+
+    if (hostOwnerIdStr !== hostUserId) {
+      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    }
+
+    const updated = await RoomMembershipModel.findOneAndUpdate(
+      {
+        roomId: roomObjectId,
+        userId: targetObjectId,
+        status: 'left',
+        kickedAt: { $ne: null },
+      },
+      {
+        $set: { kickedAt: null, kickedBy: null },
+      },
+      { new: true }
+    ).exec();
+
+    if (!updated) {
+      return { success: false, error: 'NOT_KICKED' };
+    }
+
+    logger.info(
+      { roomId, hostUserId, targetUserId },
+      'Host reinstated previously kicked member'
+    );
+
+    return { success: true };
+  }
+
+  /**
+   * Retrieve lightweight room version and occupancy for lost final event detection.
+   */
+  async getRoomStateVersion(
+    roomId: string
+  ): Promise<{ success: true; data: RoomStateVersionDto } | { success: false; error: string }> {
+    if (!Types.ObjectId.isValid(roomId)) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+    const room = await RoomModel.findById(roomId).select('stateVersion status currentParticipantsCount').exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+    return {
+      success: true,
+      data: {
+        version: room.stateVersion || 1,
+        status: room.status,
+        currentParticipantsCount: room.currentParticipantsCount,
+      },
+    };
+  }
+
+  /**
    * Retrieve authoritative server room state snapshot for synchronized client hydration.
+   * Uses Version-Fenced Reads to guarantee consistent snapshot and detects/repairs occupancy drift.
    */
   async getRoomStateSnapshot(
     roomId: string,
@@ -759,15 +872,16 @@ export class RoomService {
     }
 
     const roomObjectId = new Types.ObjectId(roomId);
-    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
 
-    if (!room) {
+    // Initial check for room existence
+    const initialRoom = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
+    if (!initialRoom) {
       return { success: false, error: 'ROOM_NOT_FOUND' };
     }
 
-    const hostOwnerIdStr = (room.ownerId as any)._id
-      ? (room.ownerId as any)._id.toString()
-      : room.ownerId.toString();
+    const hostOwnerIdStr = (initialRoom.ownerId as any)._id
+      ? (initialRoom.ownerId as any)._id.toString()
+      : initialRoom.ownerId.toString();
 
     const isOwner = Boolean(requestingUserId && hostOwnerIdStr === requestingUserId);
 
@@ -784,14 +898,14 @@ export class RoomService {
       if (kickedRecord) {
         isKicked = true;
         // If room is private, kicked members are completely forbidden from viewing snapshot
-        if (room.visibility === 'private') {
+        if (initialRoom.visibility === 'private') {
           return { success: false, error: 'FORBIDDEN_KICKED' };
         }
       }
     }
 
     // Private room authorization check
-    if (room.visibility === 'private' && !isOwner) {
+    if (initialRoom.visibility === 'private' && !isOwner) {
       if (!requestingUserId) {
         return { success: false, error: 'UNAUTHORIZED' };
       }
@@ -804,6 +918,55 @@ export class RoomService {
 
       if (!isMember) {
         return { success: false, error: 'FORBIDDEN_PRIVATE_ROOM' };
+      }
+    }
+
+    // Version-fenced read loop (up to 3 attempts) to ensure consistent snapshot
+    let roomDoc: IRoomDocument = initialRoom;
+    let activeMembersDocs: IRoomMembershipDocument[] = [];
+    let verifiedVersion = initialRoom.stateVersion || 1;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const r1 = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
+      if (!r1) {
+        return { success: false, error: 'ROOM_NOT_FOUND' };
+      }
+      const v1 = r1.stateVersion || 1;
+
+      const membersQuery = await RoomMembershipModel.find({
+        roomId: roomObjectId,
+        status: 'active',
+      })
+        .populate('userId', 'username avatar role')
+        .sort({ joinedAt: 1 })
+        .exec();
+
+      const r2 = await RoomModel.findById(roomObjectId).select('stateVersion currentParticipantsCount status').exec();
+      const v2 = r2?.stateVersion || 1;
+
+      // Check if version and status were stable during reading
+      if (v1 === v2 && r1.status === r2?.status) {
+        // Invariant check: currentParticipantsCount === members.length (unless closed)
+        if (r2.status !== 'closed' && r2.currentParticipantsCount !== membersQuery.length) {
+          logger.warn(
+            { roomId, attempt, stored: r2.currentParticipantsCount, actual: membersQuery.length },
+            '⚠️ Occupancy drift detected during snapshot read; running CAS reconciliation'
+          );
+          await roomReconciliationService.reconcileRoom(roomId);
+          continue; // retry fence after reconciliation
+        }
+
+        roomDoc = r1;
+        activeMembersDocs = membersQuery;
+        verifiedVersion = v1;
+        break;
+      }
+
+      if (attempt === 3) {
+        // Bounded retry ceiling reached; take latest snapshot
+        roomDoc = r1;
+        activeMembersDocs = membersQuery;
+        verifiedVersion = v2;
       }
     }
 
@@ -831,43 +994,34 @@ export class RoomService {
       }
     }
 
-    // Fetch active memberships
-    const activeMembersDocs = await RoomMembershipModel.find({
-      roomId: roomObjectId,
-      status: 'active',
-    })
-      .populate('userId', 'username avatar role')
-      .sort({ joinedAt: 1 })
-      .exec();
-
     const members: RoomMembershipDto[] = activeMembersDocs.map(
       (m) => m.toJSON() as unknown as RoomMembershipDto
     );
 
-    // Fetch active ephemeral presence
+    // Fetch active ephemeral presence (separately sourced)
     const presenceSnapshot = presenceManager.getRoomPresence(roomId);
     const presence = presenceSnapshot.map((p) => p.userId);
 
     const host = {
       id: hostOwnerIdStr,
-      username: (room.ownerId as any).username || 'Host',
-      avatar: (room.ownerId as any).avatar ?? null,
+      username: (roomDoc.ownerId as any).username || 'Host',
+      avatar: (roomDoc.ownerId as any).avatar ?? null,
     };
 
     const roomSnapshot: RoomSnapshotDto = {
-      id: room._id.toString(),
-      name: room.name,
-      description: room.description ?? null,
+      id: roomDoc._id.toString(),
+      name: roomDoc.name,
+      description: roomDoc.description ?? null,
       ownerId: host.id,
-      roomType: room.roomType,
-      visibility: room.visibility,
-      capacity: room.capacity,
-      status: room.status,
-      category: room.category,
-      currentParticipantsCount: room.currentParticipantsCount,
-      isChatEnabled: room.isChatEnabled !== false,
-      currentSongTitle: room.currentSongTitle ?? null,
-      currentSingerName: room.currentSingerName ?? null,
+      roomType: roomDoc.roomType,
+      visibility: roomDoc.visibility,
+      capacity: roomDoc.capacity,
+      status: roomDoc.status,
+      category: roomDoc.category,
+      currentParticipantsCount: roomDoc.currentParticipantsCount,
+      isChatEnabled: roomDoc.isChatEnabled !== false,
+      currentSongTitle: roomDoc.currentSongTitle ?? null,
+      currentSingerName: roomDoc.currentSingerName ?? null,
     };
 
     return {
@@ -882,7 +1036,7 @@ export class RoomService {
           role,
           isKicked,
         },
-        version: room.stateVersion || 1,
+        version: verifiedVersion,
         generatedAt: new Date().toISOString(),
       },
     };
@@ -890,3 +1044,4 @@ export class RoomService {
 }
 
 export const roomService = new RoomService();
+

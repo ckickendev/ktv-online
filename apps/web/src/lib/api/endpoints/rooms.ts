@@ -7,6 +7,7 @@ import {
   RoomMyMembershipDto,
   RoomQueryDto,
   RoomStateSnapshotDto,
+  RoomStateVersionDto,
   UpdateRoomDto,
 } from '@ktv/contracts';
 
@@ -72,5 +73,13 @@ export const roomApi = {
 
   async kickMember(roomId: string, userId: string, reason?: string): Promise<null> {
     return apiClient.post<null>(`/rooms/${roomId}/members/${userId}/kick`, { reason });
+  },
+
+  async reinstateMember(roomId: string, userId: string): Promise<null> {
+    return apiClient.post<null>(`/rooms/${roomId}/members/${userId}/reinstate`, {});
+  },
+
+  async getRoomVersion(roomId: string): Promise<RoomStateVersionDto> {
+    return apiClient.get<RoomStateVersionDto>(`/rooms/${roomId}/version`);
   },
 };

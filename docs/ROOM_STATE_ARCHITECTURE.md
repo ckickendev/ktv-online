@@ -268,3 +268,15 @@ const handleRoomStateEvent = (event: RoomStateEventDto) => {
 | **Monotonic Sequence** | `stateVersion` updates are performed atomically on the `Room` document during domain mutations. |
 | **Safe Client Recovery** | Version gaps or reconnects always converge by replacing local state with the server-authoritative snapshot. |
 | **Clean Channel Separation** | Chat messages and emoji reactions operate on their independent channels without advancing room `stateVersion`. |
+
+---
+
+## 9. Sprint 2.2.1 Hardening & Recovery Enhancements
+
+Sprint 2.2.1 introduced critical hardening layers:
+1. **Durable Outbox (`RoomStateOutbox`):** Every versioned event is persisted to MongoDB with unique `(roomId, version)` before or during broadcast, ensuring process crashes do not erase publication records.
+2. **Version-Fenced Reads:** Snapshot generation performs a bounded 3-way read fence (`V1 === V2`), guaranteeing coherent room metadata and member rosters.
+3. **Event Buffering & In-Flight Coalescing:** Clients buffer incoming websocket events while snapshot synchronization is pending, draining only newer events after snapshot application. Snapshot requests are coalesced to prevent storming.
+4. **Lost Final Event Detection:** Background periodic version checks and window focus / visibility change listeners detect committed mutations even if the final event broadcast was dropped.
+5. **Session Revocation Invalidation:** Socket.IO links to session `familyId`; logout and refresh replay detection immediately disconnect affected sockets.
+

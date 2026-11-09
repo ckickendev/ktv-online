@@ -10,6 +10,7 @@ export interface AuthenticatedSocketData {
     username: string;
     role: UserRole;
     avatar?: string | null;
+    familyId?: string;
   };
 }
 
@@ -67,6 +68,7 @@ export async function socketAuthMiddleware(
       username: user.username,
       role: user.role as UserRole,
       avatar: user.avatar ?? null,
+      familyId: payload.familyId,
     };
 
     next();

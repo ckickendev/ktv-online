@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { RoomModel } from './room.model.js';
 import { RoomMembershipModel } from './membership.model.js';
+import { publishRoomStateEvent } from '../../realtime/room-state.publisher.js';
 import { logger } from '../../utils/logger.js';
 
 export interface RoomReconcileResult {
@@ -89,16 +90,20 @@ export class RoomReconciliationService {
         actionTaken = 'COUNT_REPAIRED';
       } else {
         // CAS (Compare-And-Swap): Only apply repair if count and status have NOT changed concurrently
-        const casResult = await RoomModel.updateOne(
+        const updatedRoom = await RoomModel.findOneAndUpdate(
           {
             _id: roomObjectId,
             status: room.status,
             currentParticipantsCount: storedCount,
           },
-          { $set: { currentParticipantsCount: activeCount } }
+          {
+            $set: { currentParticipantsCount: activeCount },
+            $inc: { stateVersion: 1 },
+          },
+          { new: true }
         ).exec();
 
-        if (casResult.matchedCount === 0) {
+        if (!updatedRoom) {
           // A concurrent join/leave/close modified the room while reconciliation was computing!
           // Do NOT overwrite with stale data! Abort to preserve newer valid state.
           logger.warn(
@@ -118,9 +123,15 @@ export class RoomReconciliationService {
         }
 
         actionTaken = 'COUNT_REPAIRED';
+        publishRoomStateEvent(
+          room.id,
+          'room.settings.updated',
+          { currentParticipantsCount: activeCount },
+          updatedRoom.stateVersion
+        );
         logger.info(
-          { roomId: room.id, storedCount, activeCount, drift },
-          '🛠️ Reconciled room participant count drift'
+          { roomId: room.id, storedCount, activeCount, drift, newVersion: updatedRoom.stateVersion },
+          '🛠️ Reconciled room participant count drift and advanced stateVersion'
         );
       }
     }

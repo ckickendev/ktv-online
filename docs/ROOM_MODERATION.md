@@ -142,3 +142,13 @@ Starting in Sprint 2.2, all moderation actions that alter persistent room state 
 - **Room Settings & Chat Toggle:** Modifying `isChatEnabled` or room capacity atomically updates the database, advances `stateVersion`, and publishes `room:state:event` with type `room.settings.updated`.
 - See [ROOM_STATE_ARCHITECTURE.md](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/docs/ROOM_STATE_ARCHITECTURE.md) for sequence details and gap recovery semantics.
 
+---
+
+## 8. Sprint 2.2.1 Kick Lifecycle Hardening & Reinstatement
+
+Sprint 2.2.1 hardened the kick lifecycle against moderation bypass:
+1. **Join Protection:** In `RoomService.joinRoom`, users with an active kick record (`status: 'left' && kickedAt != null`) are blocked from rejoining (`FORBIDDEN_KICKED`, 403 Forbidden). A kicked user cannot simply click "Join Lounge" on the frontend to clear their kick metadata.
+2. **Explicit Host Reinstatement:** Room hosts can forgive/reinstate previously kicked participants via `POST /api/v1/rooms/:id/members/:userId/reinstate`. This clears `kickedAt` and `kickedBy`, allowing the user to rejoin through the normal membership lifecycle.
+3. **Session Invalidation:** Socket.IO connections are linked to session `familyId`. Session revocation or logout immediately disconnects associated sockets via `disconnectSessionSockets`.
+
+

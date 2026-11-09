@@ -127,6 +127,28 @@ export async function evictKickedMember(
 }
 
 /**
+ * Disconnect all active sockets for a specific authenticated session family (e.g. upon logout or token replay).
+ */
+export async function disconnectSessionSockets(familyId: string): Promise<void> {
+  if (!ioInstance) return;
+
+  const sockets = await ioInstance.fetchSockets();
+  for (const s of sockets) {
+    if (s.data?.user?.familyId === familyId) {
+      logger.info(
+        { socketId: s.id, userId: s.data.user.id, familyId },
+        '🔌 Disconnecting socket due to session revocation'
+      );
+      s.emit(SOCKET_EVENTS.SERVER.CHAT_ERROR, {
+        code: 'SESSION_REVOKED',
+        message: 'Your session has been logged out or revoked',
+      });
+      s.disconnect(true);
+    }
+  }
+}
+
+/**
  * Disconnect all active sockets for a specific user (e.g. upon account suspension or logout).
  */
 export async function disconnectUserSockets(userId: string): Promise<void> {

@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { UserModel } from '../users/user.model.js';
 import { SessionModel } from './session.model.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, hashToken } from '../../utils/jwt.js';
+import { disconnectSessionSockets } from '../../realtime/socket.server.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { AuthResult, RefreshResult } from './auth.types.js';
@@ -39,6 +40,7 @@ export class AuthService {
       sub: payload.sub,
       username: payload.username,
       role: payload.role,
+      familyId,
     });
 
     const refreshToken = signRefreshToken(payload);
@@ -96,6 +98,7 @@ export class AuthService {
             { familyId: revokedSession.familyId },
             { $set: { isRevoked: true } }
           ).exec();
+          await disconnectSessionSockets(revokedSession.familyId);
           return { success: false, error: 'REPLAY_DETECTED' };
         }
         return { success: false, error: 'INVALID_TOKEN' };
@@ -124,6 +127,7 @@ export class AuthService {
         sub: newPayload.sub,
         username: newPayload.username,
         role: newPayload.role,
+        familyId: session.familyId,
       });
 
       const newRefreshToken = signRefreshToken(newPayload);
@@ -159,9 +163,11 @@ export class AuthService {
         return false;
       }
 
-      // Revoke this session and its family
+      // Revoke this session and its family, and disconnect active sockets
       session.isRevoked = true;
       await session.save();
+      await SessionModel.updateMany({ familyId: session.familyId }, { $set: { isRevoked: true } }).exec();
+      await disconnectSessionSockets(session.familyId);
       return true;
     } catch {
       return false;

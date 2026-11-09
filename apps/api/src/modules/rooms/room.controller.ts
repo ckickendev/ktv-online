@@ -133,6 +133,9 @@ export class RoomController {
           case 'PRIVATE_ROOM':
             sendError(res, 'Cannot join private room without direct invitation', 403);
             return;
+          case 'FORBIDDEN_KICKED':
+            sendError(res, 'You were removed from this room by the host and cannot rejoin', 403);
+            return;
           default:
             sendError(res, 'Failed to join room', 400);
             return;
@@ -548,6 +551,63 @@ export class RoomController {
       }
 
       sendSuccess(res, result.snapshot, 'Room state snapshot retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getRoomVersion(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id: roomId } = req.params;
+      if (!roomId) {
+        sendError(res, 'Room ID is required', 400);
+        return;
+      }
+
+      const result = await roomService.getRoomStateVersion(roomId);
+      if (!result.success) {
+        sendError(res, 'Room not found', result.error === 'INVALID_ID' ? 400 : 404);
+        return;
+      }
+
+      sendSuccess(res, result.data, 'Room state version retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async reinstateMember(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Authentication required to reinstate members', 401);
+        return;
+      }
+
+      const { id: roomId, userId: targetUserId } = req.params;
+      if (!roomId || !targetUserId) {
+        sendError(res, 'Room ID and User ID are required', 400);
+        return;
+      }
+
+      const result = await roomService.reinstateMember(roomId, req.user.id, targetUserId);
+      if (!result.success) {
+        switch (result.error) {
+          case 'FORBIDDEN_NOT_HOST':
+            sendError(res, 'Only the lounge host can reinstate members', 403);
+            return;
+          case 'NOT_KICKED':
+            sendError(res, 'User is not marked as kicked in this room', 400);
+            return;
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          default:
+            sendError(res, 'Failed to reinstate member', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, null, 'Member successfully reinstated and may rejoin');
     } catch (error) {
       next(error);
     }

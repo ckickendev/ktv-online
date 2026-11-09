@@ -74,3 +74,12 @@ export const RoomStateRequestPayloadSchema = z.object({
   correlationId: z.string().optional(),
 });
 export type RoomStateRequestPayload = z.infer<typeof RoomStateRequestPayloadSchema>;
+
+// Lightweight room version check response for lost final event detection
+export const RoomStateVersionDtoSchema = z.object({
+  version: z.number().int().positive(),
+  status: RoomStatusSchema.optional(),
+  currentParticipantsCount: z.number().int().nonnegative().optional(),
+});
+export type RoomStateVersionDto = z.infer<typeof RoomStateVersionDtoSchema>;
+
