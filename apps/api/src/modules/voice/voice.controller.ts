@@ -110,6 +110,16 @@ export class VoiceController {
           });
           return;
 
+        case 'FORBIDDEN_SESSION_REVOKED':
+          res.status(403).json({
+            success: false,
+            error: {
+              code: 'FORBIDDEN_SESSION_REVOKED',
+              message: 'Your session has been logged out or revoked',
+            },
+          });
+          return;
+
         default:
           logger.error({ err, roomId: req.params.roomId, userId: req.user?.id }, 'Failed to generate voice token');
           next(err);

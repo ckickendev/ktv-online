@@ -1,4 +1,4 @@
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { GenerateVoiceTokenOptions } from './voice.types.js';
@@ -28,6 +28,7 @@ export class VoiceTokenService {
       roomJoin: true,
       room: options.roomName,
       canPublish: true,
+      canPublishSources: [TrackSource.MICROPHONE],
       canSubscribe: true,
       canPublishData: false,
     });

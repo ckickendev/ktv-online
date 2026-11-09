@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import Image from 'next/image';
 import { Mic, MicOff, Volume2, Radio } from 'lucide-react';
 import { VoiceParticipantInfo } from '../types/voice.types';
@@ -12,7 +12,38 @@ export interface VoiceParticipantsProps {
 }
 
 export function VoiceParticipants({ participants, isConnected, className = '' }: VoiceParticipantsProps) {
-  if (participants.length === 0) {
+  // Group multiple sessions/tabs by authenticated userId
+  const groupedParticipants = useMemo(() => {
+    const groups = new Map<string, VoiceParticipantInfo[]>();
+    for (const p of participants) {
+      const existing = groups.get(p.userId);
+      if (existing) {
+        existing.push(p);
+      } else {
+        groups.set(p.userId, [p]);
+      }
+    }
+
+    return Array.from(groups.values()).map((group) => {
+      const primary = group[0]!;
+      const hasSpeaking = group.some((p) => p.isSpeaking);
+      const isAllMuted = group.every((p) => p.isMuted);
+      const isLocal = group.some((p) => p.isLocal);
+
+      return {
+        userId: primary.userId,
+        displayName: primary.displayName,
+        username: primary.username,
+        avatarUrl: primary.avatarUrl,
+        isSpeaking: hasSpeaking,
+        isMuted: isAllMuted,
+        isLocal,
+        sessionCount: group.length,
+      };
+    });
+  }, [participants]);
+
+  if (groupedParticipants.length === 0) {
     return (
       <div className={`p-4 rounded-xl border border-white/5 bg-black/20 text-center ${className}`}>
         <Radio className="w-5 h-5 text-slate-600 mx-auto mb-1.5" />
@@ -31,15 +62,15 @@ export function VoiceParticipants({ participants, isConnected, className = '' }:
       <div className="flex items-center justify-between px-1 text-xs">
         <span className="font-semibold text-slate-300 flex items-center gap-1.5">
           <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-          <span>In Voice ({participants.length})</span>
+          <span>In Voice ({groupedParticipants.length})</span>
         </span>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2">
-        {participants.map((p) => {
+        {groupedParticipants.map((p) => {
           return (
             <div
-              key={p.identity}
+              key={p.userId}
               data-testid={`voice-participant-${p.userId}`}
               className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 transition-all ${
                 p.isSpeaking
@@ -76,11 +107,16 @@ export function VoiceParticipants({ participants, isConnected, className = '' }:
                   )}
                 </div>
 
-                {/* Name */}
+                {/* Name & Session Details */}
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-slate-200 truncate">
-                    {p.displayName}
-                    {p.isLocal && <span className="text-[10px] text-violet-400 ml-1">(You)</span>}
+                  <p className="text-xs font-medium text-slate-200 truncate flex items-center">
+                    <span className="truncate">{p.displayName}</span>
+                    {p.isLocal && <span className="text-[10px] text-violet-400 ml-1 shrink-0">(You)</span>}
+                    {p.sessionCount > 1 && (
+                      <span className="text-[9px] text-slate-500 bg-white/5 px-1 py-0.2 rounded ml-1 shrink-0">
+                        {p.sessionCount} tabs
+                      </span>
+                    )}
                   </p>
                   <p className="text-[10px] text-slate-500 truncate">
                     {p.isSpeaking ? 'Speaking' : p.isMuted ? 'Muted' : 'Listening'}

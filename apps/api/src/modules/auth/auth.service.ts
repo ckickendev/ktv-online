@@ -4,6 +4,7 @@ import { UserModel } from '../users/user.model.js';
 import { SessionModel } from './session.model.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, hashToken } from '../../utils/jwt.js';
 import { disconnectSessionSockets } from '../../realtime/socket.server.js';
+import { voiceService } from '../voice/voice.service.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { AuthResult, RefreshResult } from './auth.types.js';
@@ -99,6 +100,11 @@ export class AuthService {
             { $set: { isRevoked: true } }
           ).exec();
           await disconnectSessionSockets(revokedSession.familyId);
+          try {
+            await voiceService.evictLiveKitSessionFamily(revokedSession.familyId);
+          } catch {
+            // Non-blocking
+          }
           return { success: false, error: 'REPLAY_DETECTED' };
         }
         return { success: false, error: 'INVALID_TOKEN' };
@@ -168,6 +174,11 @@ export class AuthService {
       await session.save();
       await SessionModel.updateMany({ familyId: session.familyId }, { $set: { isRevoked: true } }).exec();
       await disconnectSessionSockets(session.familyId);
+      try {
+        await voiceService.evictLiveKitSessionFamily(session.familyId);
+      } catch {
+        // Non-blocking
+      }
       return true;
     } catch {
       return false;

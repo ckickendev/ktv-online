@@ -4,6 +4,8 @@ export interface VoiceParticipantMetadata {
   displayName?: string;
   avatarUrl?: string;
   tabId?: string;
+  familyId?: string;
+  issuedAt?: string;
 }
 
 export interface GenerateVoiceTokenOptions {

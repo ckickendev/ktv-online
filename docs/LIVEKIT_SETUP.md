@@ -123,6 +123,21 @@ Select the following events in the LiveKit dashboard:
 ### 6.3 ICE / Network Disconnection
 - **Symptom**: Status switches to `reconnecting` with amber indicator.
 - **Remedy**:
-  - LiveKit client automatically attempts ICE restart and reconnection.
+  - LiveKit client automatically attempts ICE restart and reconnection using `room.engine.token`.
   - If network returns, status transitions back to `connected`.
   - If network is permanently lost, state transitions to `disconnected` after timeout, and audio resources are released.
+
+### 6.4 Provider Eviction Recovery & Queue Monitoring
+- **Symptom**: Kicked participant or revoked session remains temporarily in WebRTC voice due to LiveKit Cloud API timeout.
+- **Architecture**:
+  - Unsuccessful evictions are recorded in the `VoiceEvictionTask` collection.
+  - The tasks retry automatically with exponential backoff up to 5 attempts.
+  - Query pending tasks in MongoDB:
+    ```javascript
+    db.voiceevictiontasks.find({ status: 'pending' })
+    ```
+  - Permanently failed tasks (`status: 'failed'`) produce `error` level structured logs for alerting.
+
+### 6.5 Audio-Only Publication Policy
+- LiveKit access tokens strictly enforce `canPublishSources: [TrackSource.MICROPHONE]`.
+- Video camera publishing and screen sharing are rejected at the WebRTC signaling layer. If a client attempts to publish video tracks, LiveKit server returns `TrackPublishError: not allowed to publish this source`.

@@ -96,11 +96,12 @@ Client (Web)                     Express API                     LiveKit Server
      |<----------------------------------------------------------------|
 ```
 
-### 4.2 Minimum Required Grants
+### 4.2 Minimum Required Grants (Audio-Only Hardening)
 Tokens issued by `VoiceTokenService` contain only the least privileges required:
 - `roomJoin: true`
 - `room: ktv_room_${roomId}`
-- `canPublish: true` (microphone audio)
+- `canPublish: true`
+- `canPublishSources: [TrackSource.MICROPHONE]` (Restricts publishing strictly to microphone audio; video camera and screen sharing are denied at the protocol level)
 - `canSubscribe: true` (remote participant audio)
 - `canPublishData: false` (data messaging routed exclusively via Socket.IO)
 - `roomAdmin: false`, `roomRecord: false`
@@ -108,8 +109,10 @@ Tokens issued by `VoiceTokenService` contain only the least privileges required:
 ### 4.3 Token Renewal Strategy
 - **TTL**: 300 seconds (5 minutes).
 - **Proactive Renewal**: The frontend schedules a refresh timer at 80% of TTL (approximately 4 minutes).
-- **Security Check on Renewal**: Renewal calls `POST /api/v1/rooms/:roomId/voice/token`, repeating all database authorization checks.
-- If the user was kicked, deactivated, or if the room was closed in the interim, renewal fails with HTTP 403, and the client automatically severs voice communication.
+- **Request Coalescing**: Multiple renewal triggers are locked behind `isRenewingRef` to prevent concurrent duplicate token requests.
+- **Engine Token Synchronization**: Renewed tokens update `room.engine.token = freshToken.token` on the LiveKit client engine, ensuring background ICE restarts and signal reconnections succeed after the initial token's TTL.
+- **Security Check on Renewal**: Renewal calls `POST /api/v1/rooms/:roomId/voice/token`, repeating all database authorization checks (membership, room open status, and unrevoked session family status).
+- If the user was kicked, deactivated, or if the session family was revoked, renewal fails with HTTP 403, and the client automatically severs voice communication.
 
 ---
 
@@ -178,24 +181,38 @@ When a host kicks a member (`POST /api/v1/rooms/:id/members/:userId/kick`):
 4. `voiceService.evictLiveKitParticipant(roomId, targetUserId)` enumerates participants in `ktv_room_${roomId}` and calls `roomServiceClient.removeParticipant`.
 5. The kicked user's WebRTC connection is severed on the spot, and subsequent token requests fail with HTTP 403 `FORBIDDEN_KICKED`.
 
-### 6.3 Voluntary Room Leave
-When a member leaves the lounge (`POST /api/v1/rooms/:id/leave`):
-1. Active membership transitions to `'left'`.
-2. `RoomModel.currentParticipantsCount` decrements by 1.
-3. The client disconnects LiveKit voice prior to unmounting.
-4. Backend `voiceService.evictLiveKitParticipant(roomId, userId)` guarantees cleanup if the client disconnected abruptly.
+### 6.4 Session-Family Invalidation & Token Replay
+When a session family is revoked (via explicit logout or refresh token replay detection):
+1. `auth.service.ts` flags `SessionModel.isRevoked = true` and invalidates the family.
+2. `voiceService.evictLiveKitSessionFamily(familyId)` finds all active participants belonging to `familyId` in `voiceSessionRegistry` and disconnects them via `removeParticipant`.
+3. Other concurrent session families of the same user remain unaffected.
+4. Subsequent token requests or renewals bearing the revoked session token are rejected with HTTP 403 `FORBIDDEN_SESSION_REVOKED`.
+
+### 6.5 Durable Provider Eviction Recovery
+1. Persistent database transitions (kick, leave, close, logout) always commit first.
+2. If LiveKit's API is temporarily unavailable or returns an error, the operation is **never** rolled back.
+3. The failed eviction is persisted to MongoDB via `VoiceEvictionTaskModel` with an exponential backoff schedule.
+4. A background sweep worker (`voiceService.retryPendingEvictions()`) retries failed calls up to 5 times.
+5. Expired tasks are automatically garbage collected via MongoDB's 24-hour TTL index.
 
 ---
 
-## 7. Webhook Signature & Idempotency
+## 7. Webhook Signature, Idempotency & Ordering
 
 LiveKit delivers lifecycle webhooks to `POST /api/v1/webhooks/livekit`.
 1. **Raw Body Validation**: Express captures the raw request Buffer in `req.rawBody` prior to JSON parsing.
 2. **Signature Verification**: `WebhookReceiver.receive(rawBodyString, req.headers.authorization)` verifies the JWT signature against `LIVEKIT_API_KEY` and `LIVEKIT_WEBHOOK_SECRET` (or `LIVEKIT_API_SECRET`).
-3. **Idempotency & Isolation**:
-   - `participant_joined` and `participant_left` are logged with correlation IDs.
+3. **Idempotency**:
+   - An in-memory LRU cache stores event IDs for 10 minutes (up to 5,000 entries).
+   - Duplicate deliveries are acknowledged immediately with HTTP 200 without duplicate side-effects.
+4. **Monotonic Sequence Ordering**:
+   - Webhook arrival timestamps are tracked per participant (`${roomName}:${identity}`).
+   - Older events arriving after newer events are dropped to prevent delayed `participant_joined` from resurrecting departed participants.
+5. **Closed Room Guard**:
+   - If a delayed `participant_joined` webhook arrives for a closed room, the participant is immediately evicted.
+6. **Strict Invariant Isolation**:
    - Webhook processing **NEVER** mutates `Room.currentParticipantsCount` or modifies `RoomMembership` status.
-   - Out-of-order or delayed webhooks cannot corrupt persistent room state.
+   - Delayed or replay webhooks cannot corrupt persistent room state or recreate closed rooms.
 
 ---
 
