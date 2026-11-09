@@ -40,7 +40,9 @@ import {
   useLeaveRoom,
 } from '@/hooks/queries/use-room';
 import { useAuth } from '@/hooks/use-auth';
+import { useRoomSocket } from '@/hooks/use-room-socket';
 import { useAppStore } from '@/stores/use-app-store';
+import { cn } from '@/lib/utils';
 
 export default function RoomDetailPage() {
   const params = useParams();
@@ -52,6 +54,13 @@ export default function RoomDetailPage() {
   const {
     data: myMembership,
   } = useMyRoomMembership(roomId, { enabled: isAuthenticated });
+
+  const {
+    status: socketStatus,
+    onlineUserIds,
+    totalOnline,
+    roomClosedNotice,
+  } = useRoomSocket(roomId, { enabled: isAuthenticated });
 
   const joinMutation = useJoinRoom();
   const leaveMutation = useLeaveRoom();
@@ -205,6 +214,32 @@ export default function RoomDetailPage() {
               )}
             </div>
 
+            {/* Realtime Socket Status Pill */}
+            <div
+              data-testid="realtime-status-pill"
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors',
+                socketStatus === 'connected' && 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+                socketStatus === 'connecting' && 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
+                socketStatus === 'reconnecting' && 'bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse',
+                (socketStatus === 'disconnected' || socketStatus === 'error') &&
+                  'bg-white/5 text-slate-400 border-white/5'
+              )}
+              title={`Realtime presence: ${socketStatus}`}
+            >
+              <span
+                className={cn(
+                  'w-2 h-2 rounded-full',
+                  socketStatus === 'connected' && 'bg-emerald-400 shadow-sm shadow-emerald-400/50',
+                  socketStatus === 'connecting' && 'bg-cyan-400 animate-ping',
+                  socketStatus === 'reconnecting' && 'bg-amber-400 animate-bounce',
+                  (socketStatus === 'disconnected' || socketStatus === 'error') && 'bg-slate-500'
+                )}
+              />
+              <span className="hidden sm:inline capitalize">{socketStatus}</span>
+              {socketStatus === 'connected' && <span>({totalOnline})</span>}
+            </div>
+
             {/* Host Controls or Member Leave Button */}
             {isMember ? (
               <div className="flex items-center gap-2">
@@ -258,6 +293,30 @@ export default function RoomDetailPage() {
         </div>
       </div>
 
+      {/* Room Closed Realtime Notification Banner */}
+      {roomClosedNotice && (
+        <div className="max-w-7xl w-full mx-auto px-4 pt-4">
+          <div
+            data-testid="room-closed-alert"
+            className="glass-panel p-4 rounded-xl border border-rose-500/30 bg-rose-950/40 flex items-center justify-between gap-3 text-rose-200 shadow-lg shadow-rose-950/50"
+          >
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+              <div>
+                <h4 className="text-sm font-semibold text-white">Lounge Closed</h4>
+                <p className="text-xs text-rose-300">{roomClosedNotice}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => router.push('/rooms')}
+              className="px-3.5 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-xs font-semibold transition-colors shrink-0"
+            >
+              Back to Lounges
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Lounge Viewport */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 overflow-y-auto">
         {/* Left: Real Member Roster (Col 3) */}
@@ -265,6 +324,7 @@ export default function RoomDetailPage() {
           <RoomMemberList
             roomId={roomId}
             currentUserId={currentUser?.id}
+            onlineUserIds={onlineUserIds}
             className="h-full"
           />
         </div>

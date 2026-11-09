@@ -5,6 +5,7 @@ import { roomReconciliationService } from './room-reconciliation.service.js';
 import { RoomMembershipModel } from './membership.model.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { logger } from '../../utils/logger.js';
+import { broadcastRoomClosed } from '../../realtime/index.js';
 import { CreateRoomDto, RoomQueryDto, UpdateRoomDto } from '@ktv/contracts';
 
 export class RoomController {
@@ -421,6 +422,9 @@ export class RoomController {
         sendError(res, 'Room not found', 404);
         return;
       }
+
+      // Broadcast room closure event to all connected realtime sockets
+      await broadcastRoomClosed(id, 'Room has been closed by host');
 
       sendSuccess(res, closedRoom.toJSON(), 'Room closed successfully');
     } catch (error) {

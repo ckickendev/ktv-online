@@ -5,16 +5,21 @@ import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './database/connection.js';
 
 import { setAppShuttingDown } from './utils/lifecycle.js';
+import { createSocketServer, closeSocketServer } from './realtime/index.js';
 
 async function bootstrap() {
   const app = createApp();
   const server = http.createServer(app);
+
+  // Initialize Socket.IO server bound to HTTP server
+  createSocketServer(server);
 
   // Attempt database connection
   await connectDatabase();
 
   server.listen(env.PORT, () => {
     logger.info(`🚀 KTV Online API server running at http://localhost:${env.PORT}`);
+    logger.info(`⚡ Realtime Socket.IO server initialized`);
     logger.info(`📡 Health endpoint available at http://localhost:${env.PORT}/api/v1/health`);
     logger.info(`🌍 Environment: ${env.NODE_ENV}`);
   });
@@ -31,7 +36,10 @@ async function bootstrap() {
 
     logger.info(`Received ${signal}, initiating graceful shutdown...`);
 
-    // Stop accepting new connections
+    // 1. Close Socket.IO connections first
+    await closeSocketServer();
+
+    // 2. Stop accepting new HTTP connections
     server.close(async () => {
       logger.info('HTTP server closed');
       await disconnectDatabase();

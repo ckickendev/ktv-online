@@ -7,12 +7,14 @@ import { cn } from '@/lib/utils';
 interface RoomMemberListProps {
   roomId: string;
   currentUserId?: string | null;
+  onlineUserIds?: Set<string>;
   className?: string;
 }
 
 export function RoomMemberList({
   roomId,
   currentUserId,
+  onlineUserIds,
   className,
 }: RoomMemberListProps) {
   const {
@@ -52,7 +54,13 @@ export function RoomMemberList({
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-slate-400">Server snapshot</p>
+            {onlineUserIds ? (
+              <p className="text-[10px] text-emerald-400 font-medium">
+                {onlineUserIds.size} connected now
+              </p>
+            ) : (
+              <p className="text-[10px] text-slate-400">Server snapshot</p>
+            )}
           </div>
         </div>
 
@@ -139,6 +147,7 @@ export function RoomMemberList({
             .map((m) => {
               const isCurrentUser = Boolean(currentUserId && m.userId === currentUserId);
               const username = m.user?.username ?? 'Member';
+              const isOnline = onlineUserIds ? onlineUserIds.has(m.userId) : true;
 
               return (
                 <div
@@ -156,7 +165,7 @@ export function RoomMemberList({
                       name={username}
                       avatarUrl={m.user?.avatar}
                       size="sm"
-                      status="online"
+                      status={isOnline ? 'online' : 'offline'}
                     />
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -189,8 +198,13 @@ export function RoomMemberList({
 
                   <div className="flex items-center pl-2 shrink-0">
                     <span
-                      className="w-2 h-2 rounded-full bg-emerald-400"
-                      title="Active member"
+                      className={cn(
+                        'w-2 h-2 rounded-full',
+                        isOnline
+                          ? 'bg-emerald-400 ring-2 ring-emerald-500/20'
+                          : 'bg-slate-500 opacity-60'
+                      )}
+                      title={isOnline ? 'Online in lounge' : 'Offline (seat reserved)'}
                     />
                   </div>
                 </div>
@@ -199,7 +213,7 @@ export function RoomMemberList({
       </div>
 
       <div className="pt-3 border-t border-white/5 mt-3 text-[10px] text-slate-500 text-center">
-        Refreshed snapshot • Non-realtime
+        {onlineUserIds ? 'Live Presence Connected' : 'Refreshed snapshot • Non-realtime'}
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import CreateRoomPage from '../app/(platform)/rooms/create/page';
 import MyRoomsPage from '../app/(platform)/my-rooms/page';
 import RoomManagePage from '../app/(platform)/rooms/[roomId]/manage/page';
 import { roomApi } from '../lib/api/endpoints/rooms';
+import { authApi } from '../lib/api/endpoints/auth';
 import { useAuthStore } from '../stores/use-auth-store';
 import { tokenStore } from '../lib/api/token-store';
 import { queryKeys } from '../hooks/queries/query-keys';
@@ -53,6 +54,7 @@ describe('Room Creation & Management UI (Sprint 1.3)', () => {
     mockReplace.mockClear();
     mockParams = { roomId: 'room-123' };
     vi.clearAllMocks();
+    vi.spyOn(authApi, 'getMe').mockResolvedValue(defaultUser);
   });
 
   afterEach(() => {
@@ -381,6 +383,14 @@ describe('Room Creation & Management UI (Sprint 1.3)', () => {
     });
 
     it('loads existing room values and allows owner to update settings', async () => {
+      useAuthStore.setState({
+        status: 'authenticated',
+        isAuthenticated: true,
+        isInitialized: true,
+        user: defaultUser,
+      });
+      queryClient.setQueryData(queryKeys.auth.currentUser(), defaultUser);
+
       const mockRoom: RoomDto = {
         id: 'room-123',
         name: 'Original Stage Title',
@@ -397,7 +407,7 @@ describe('Room Creation & Management UI (Sprint 1.3)', () => {
       };
 
       global.fetch = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
-        if (url.includes('/users/me')) {
+        if (url.includes('/users/me') || url.includes('/auth/me')) {
           return Promise.resolve({
             ok: true,
             status: 200,

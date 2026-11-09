@@ -100,7 +100,7 @@ describe('Room Participation & Membership Experience', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false, gcTime: 0 },
@@ -108,6 +108,7 @@ describe('Room Participation & Membership Experience', () => {
       },
     });
 
+    vi.spyOn(authApi, 'getMe').mockResolvedValue(mockMemberUser);
     vi.spyOn(roomApi, 'getRoomById').mockResolvedValue(mockRoom);
     vi.spyOn(roomApi, 'getMembers').mockResolvedValue(mockMembersList);
     vi.spyOn(roomApi, 'getMyMembership').mockResolvedValue({ isMember: false });
@@ -144,7 +145,8 @@ describe('Room Participation & Membership Experience', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await queryClient.cancelQueries();
     queryClient.clear();
     useAuthStore.setState({
       status: 'unauthenticated',
@@ -328,7 +330,7 @@ describe('Room Participation & Membership Experience', () => {
       });
       tokenStore.setAccessToken('valid-token');
 
-      vi.spyOn(roomApi, 'getMyMembership').mockResolvedValueOnce({
+      vi.spyOn(roomApi, 'getMyMembership').mockResolvedValue({
         isMember: true,
         role: 'member',
         membership: mockMembersList[1],
@@ -352,6 +354,7 @@ describe('Room Participation & Membership Experience', () => {
 
       await waitFor(() => {
         expect(roomApi.leaveRoom).toHaveBeenCalledWith('room-1');
+        expect(screen.queryByTestId('leave-room-dialog-backdrop')).not.toBeInTheDocument();
       });
     });
 
@@ -363,7 +366,7 @@ describe('Room Participation & Membership Experience', () => {
       });
       tokenStore.setAccessToken('valid-token');
 
-      vi.spyOn(roomApi, 'getMyMembership').mockResolvedValueOnce({
+      vi.spyOn(roomApi, 'getMyMembership').mockResolvedValue({
         isMember: true,
         role: 'host',
         membership: mockMembersList[0],
@@ -388,18 +391,15 @@ describe('Room Participation & Membership Experience', () => {
       });
       tokenStore.setAccessToken('valid-token');
 
-      vi.spyOn(roomApi, 'getMyMembership').mockResolvedValueOnce({ isMember: false });
-      vi.spyOn(roomApi, 'joinRoom').mockRejectedValueOnce(
+      vi.spyOn(roomApi, 'getMyMembership').mockResolvedValue({ isMember: false });
+      vi.spyOn(roomApi, 'joinRoom').mockRejectedValue(
         new Error('This karaoke lounge is private')
       );
 
       renderWithClient(<RoomDetailPage />);
 
-      await waitFor(() => {
-        expect(screen.getByTestId('join-room-button')).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByTestId('join-room-button'));
+      const button = await screen.findByTestId('join-room-button');
+      fireEvent.click(button);
 
       await waitFor(() => {
         expect(screen.getByTestId('join-error-alert')).toBeInTheDocument();
