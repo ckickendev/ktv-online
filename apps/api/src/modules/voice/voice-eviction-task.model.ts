@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export type VoiceEvictionTargetType = 'user' | 'family' | 'room';
@@ -19,6 +20,8 @@ export interface IVoiceEvictionTask {
   claimedBy: string | null;
   claimedAt: Date | null;
   leaseExpiresAt: Date | null;
+  leaseToken: string | null;
+  leaseVersion: number;
   nextAttemptAt: Date;
   lastError: string | null;
   errorCategory?: 'transient' | 'terminal' | 'unknown';
@@ -29,10 +32,23 @@ export interface IVoiceEvictionTask {
 
 export interface IVoiceEvictionTaskDocument extends IVoiceEvictionTask, Document {}
 
+export interface IVoiceEvictionTaskOutcome {
+  status: VoiceEvictionTaskStatus;
+  attemptCount?: number;
+  lastError?: string | null;
+  errorCategory?: 'transient' | 'terminal' | 'unknown';
+  nextAttemptAt?: Date;
+}
+
 export interface IVoiceEvictionTaskModel extends Model<IVoiceEvictionTaskDocument> {
   claimNextTask(
     instanceId: string,
     leaseDurationMs?: number
+  ): Promise<IVoiceEvictionTaskDocument | null>;
+  updateTaskOutcome(
+    taskId: string,
+    leaseToken: string,
+    outcome: IVoiceEvictionTaskOutcome
   ): Promise<IVoiceEvictionTaskDocument | null>;
 }
 
@@ -83,6 +99,15 @@ const VoiceEvictionTaskSchema = new Schema<IVoiceEvictionTaskDocument, IVoiceEvi
       default: null,
       index: true,
     },
+    leaseToken: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    leaseVersion: {
+      type: Number,
+      default: 0,
+    },
     nextAttemptAt: {
       type: Date,
       default: Date.now,
@@ -121,6 +146,7 @@ VoiceEvictionTaskSchema.index(
 
 /**
  * Atomically claims the next eligible task or an abandoned processing task whose lease expired.
+ * Assigns a unique cryptographic leaseToken and increments monotonic leaseVersion.
  */
 VoiceEvictionTaskSchema.statics.claimNextTask = async function (
   instanceId: string,
@@ -128,6 +154,7 @@ VoiceEvictionTaskSchema.statics.claimNextTask = async function (
 ): Promise<IVoiceEvictionTaskDocument | null> {
   const now = new Date();
   const leaseExpiresAt = new Date(now.getTime() + leaseDurationMs);
+  const leaseToken = crypto.randomUUID();
 
   return this.findOneAndUpdate(
     {
@@ -148,10 +175,58 @@ VoiceEvictionTaskSchema.statics.claimNextTask = async function (
         claimedBy: instanceId,
         claimedAt: now,
         leaseExpiresAt,
+        leaseToken,
       },
+      $inc: { leaseVersion: 1 },
     },
     {
       sort: { nextAttemptAt: 1 },
+      new: true,
+    }
+  ).exec();
+};
+
+/**
+ * Atomically updates task outcome enforcing lease fencing:
+ * Requires both the taskId and the active leaseToken.
+ * If the worker's lease expired and the task was reclaimed by another worker,
+ * the query matches 0 documents and returns null, preventing stale overwrites.
+ */
+VoiceEvictionTaskSchema.statics.updateTaskOutcome = async function (
+  taskId: string,
+  leaseToken: string,
+  outcome: IVoiceEvictionTaskOutcome
+): Promise<IVoiceEvictionTaskDocument | null> {
+  const updateFields: Record<string, unknown> = {
+    status: outcome.status,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    claimedBy: null,
+  };
+
+  if (outcome.attemptCount !== undefined) {
+    updateFields.attemptCount = outcome.attemptCount;
+  }
+  if (outcome.lastError !== undefined) {
+    updateFields.lastError = outcome.lastError;
+  }
+  if (outcome.errorCategory !== undefined) {
+    updateFields.errorCategory = outcome.errorCategory;
+  }
+  if (outcome.nextAttemptAt !== undefined) {
+    updateFields.nextAttemptAt = outcome.nextAttemptAt;
+  }
+
+  return this.findOneAndUpdate(
+    {
+      _id: taskId,
+      leaseToken,
+      status: 'processing',
+    },
+    {
+      $set: updateFields,
+    },
+    {
       new: true,
     }
   ).exec();

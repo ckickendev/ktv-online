@@ -126,8 +126,16 @@ LiveKit Cloud                      Express API (Instance A)               MongoD
 ### 4.3 Monotonic Ordering Across Instances (`VoiceParticipantSequenceModel`)
 - **Collection**: `voiceparticipantsequences`.
 - **Unique Index**: `participantKey: 1` (`${roomName}:${participantIdentity}`).
-- **Sequence Field**: `lastEventTimestampMs`.
-- If a delayed `participant_joined` event arrives with a timestamp older than an already-processed `participant_left` event, `assertMonotonicEventOrder` detects the regression atomically and drops the stale event.
+- **Sequence Fields**: `lastEventTimestampMs: Number`, `lastEventPrecedence: Number` (default 0).
+- **Atomic Fencing**:
+  - `assertMonotonicEventOrder` executes a single atomic conditional `findOneAndUpdate`:
+    `{ participantKey, $or: [ { lastEventTimestampMs: { $lt: eventTimestampMs } }, { lastEventTimestampMs: eventTimestampMs, lastEventPrecedence: { $lt: incomingPrecedence } } ] }`.
+  - Zero read-then-write race window across multiple API instances.
+- **Deterministic Equal-Timestamp Tie-Breaking**:
+  - `participant_left`: Precedence 2 (terminal departure takes precedence over arrival).
+  - `participant_joined`: Precedence 1 (arrival takes precedence over generic events).
+  - default/other: Precedence 0.
+- If a delayed `participant_joined` event arrives with a timestamp older than an already-processed `participant_left` event, it is rejected atomically as stale.
 - Prevents out-of-order provider deliveries from resurrecting departed participants.
 
 ---
@@ -142,13 +150,15 @@ LiveKit Cloud                      Express API (Instance A)               MongoD
                       +---------+---------+                       |
                                 |                                 |
                                 | claimNextTask()                 |
+                                | [leaseToken, leaseVersion++]    |
                                 v                                 |
                       +-------------------+                       |
                       |    processing     |                       |
                       +----+---------+----+                       |
                            |         |                            |
           Provider Success |         | Provider Transient Failure |
-                           v         v (attempts < maxAttempts)   |
+          [updateTaskOutcome]        | (attempts < maxAttempts)   |
+                           v         v                            |
              +---------------+     +--------------------+         |
              |   completed   |     |  retry_scheduled   |---------+
              +---------------+     +---------+----------+ (nextAttemptAt)
@@ -163,12 +173,16 @@ LiveKit Cloud                      Express API (Instance A)               MongoD
                                    * Operator Visible Alert
 ```
 
-### 5.2 Atomic Task Leasing & Worker Lifecycle
+### 5.2 Atomic Task Leasing, Worker Lifecycle & Lease Fencing
 - `VoiceEvictionWorker` runs on every API instance, polling every 10 seconds.
-- Uses `VoiceEvictionTaskModel.claimNextTask(instanceId, leaseDurationMs = 30000)`:
-  - Atomically claims ready `pending` or `retry_scheduled` tasks (`nextAttemptAt <= now`).
-  - Automatically reclaims abandoned `processing` tasks whose lease expired (`leaseExpiresAt <= now`).
-- Multiple workers never execute the same eviction concurrently.
+- **Cryptographic Lease Fencing**:
+  - `claimNextTask(instanceId, leaseDurationMs = 30000)`:
+    - Atomically claims ready `pending` or `retry_scheduled` tasks (`nextAttemptAt <= now`).
+    - Automatically reclaims abandoned `processing` tasks whose lease expired (`leaseExpiresAt <= now`).
+    - Generates a unique UUID `leaseToken` and increments `leaseVersion`.
+  - `updateTaskOutcome(taskId, leaseToken, outcome)`:
+    - All task outcome updates validate `{ _id: taskId, leaseToken, status: 'processing' }`.
+    - If a worker's lease expired (>30s) and another worker reclaimed the task, the update matches 0 documents; the stale worker's result is safely discarded.
 - Bounded exponential backoff: 2s, 4s, 8s, 16s... capped at 60s.
 - **Permanent Failure Retention**:
   - Universal TTL was removed.
@@ -177,6 +191,7 @@ LiveKit Cloud                      Express API (Instance A)               MongoD
 - **Graceful Shutdown**:
   - `server.ts` registers `voiceEvictionWorker.stop()` on `SIGTERM` and `SIGINT`.
   - Halts new task polling and awaits in-flight provider calls with a 5-second timeout.
+  - Unfinished tasks remain in `processing` until their lease expires and is reclaimed on reboot.
 
 ### 5.3 Operator Recovery Procedure for `failed_permanent` Tasks
 When a security task reaches `failed_permanent` (e.g. LiveKit API credentials misconfigured during eviction), structured logs alert operators:
@@ -236,19 +251,25 @@ If the synchronous LiveKit API call encounters a network blip during revocation:
 
 ### 7.1 SDK Assessment (`livekit-client` v2.23.0)
 - `livekit-client` v2.23.0 does not offer a public `room.updateToken()` method on the `Room` class.
-- Sprint 2.3.1's direct mutation of `room.engine.token` has been removed.
+- Uses exclusively supported public SDK APIs (`Room`, `room.connect()`, `room.disconnect()`, `RoomEvent.*`). Zero private properties or undocumented internals are accessed.
 
 ### 7.2 Implemented Client Lifecycle
 1. **Proactive Background Authorization**:
-   At 80% of TTL (approx. 4 minutes), `useVoiceClient` calls `voiceApi.getVoiceToken(roomId, { tabId })`.
+   At 80% of TTL (approx. 4 minutes), `useVoiceClient` calls `voiceApi.getVoiceToken(roomId, { tabId })`. Coalesced via `isRenewingRef.current`.
 2. **Token Storage**:
    The refreshed token is stored in `latestTokenRef.current`.
 3. **Reconnection Verification**:
    When LiveKit emits `RoomEvent.Reconnected`, the client immediately re-validates authorization against `POST /api/v1/rooms/:roomId/voice/token`.
    - If authorization succeeded: updates `latestTokenRef.current` and schedules the next renewal timer.
    - If authorization failed (e.g. kicked or session revoked while offline): transitions state to `unauthorized` and invokes `leaveVoice()`.
-4. **Explicit Leave Protection**:
-   `isExplicitLeaveRef.current` tracks intentional leaves. Once a user clicks "Leave Voice", all timers are cleared and no background reconnection can occur.
+4. **Bounded Reconnect on Transport Disconnect**:
+   When LiveKit emits `RoomEvent.Disconnected`:
+   - If `isExplicitLeaveRef.current` is true, no reconnect is scheduled.
+   - If unexpected disconnect, attempts up to 3 bounded reconnects with exponential backoff ($2\text{s}, 4\text{s}, 8\text{s}$, capped at $10\text{s}$).
+   - Every reconnect requires fresh backend authorization (`voiceApi.getVoiceToken`). If authorization fails, reconnect aborts immediately.
+   - If 3 retries exhaust, state transitions to `failed`.
+5. **Explicit Leave Protection**:
+   `isExplicitLeaveRef.current` tracks intentional leaves. Once a user clicks "Leave Voice", all timers are cleared, local audio tracks are stopped (`pub.track.stop()`), remote audio elements are removed from DOM, and no background reconnection can occur.
 
 ---
 
@@ -257,8 +278,9 @@ If the synchronous LiveKit API call encounters a network blip during revocation:
 | Concern | Single-Instance Behavior | Multi-Instance Behavior (Shared MongoDB) |
 | :--- | :--- | :--- |
 | **Webhook Deduplication** | Guaranteed via MongoDB unique index on `eventId` | Guaranteed via MongoDB unique index on `eventId` |
-| **Webhook Ordering** | Guaranteed via `VoiceParticipantSequenceModel` | Guaranteed across all instances via monotonic atomic updates |
-| **Eviction Task Claiming**| Claimed sequentially | Atomically claimed via `findOneAndUpdate` lease; no duplicate runs |
+| **Webhook Ordering** | Guaranteed via `VoiceParticipantSequenceModel` | Guaranteed across all instances via monotonic atomic updates with precedence tie-breaking |
+| **Eviction Task Claiming**| Claimed sequentially | Atomically claimed via `findOneAndUpdate` lease with UUID `leaseToken`; no duplicate runs |
+| **Eviction Worker Fencing**| In-flight lease checked | Expired workers cannot overwrite newer worker's state; updates require matching active `leaseToken` |
 | **Eviction Worker Failover**| Worker restarts on process restart | Healthy instances reclaim tasks if an instance dies during processing |
 | **Session Registry** | In-memory lookup + LiveKit metadata fallback | LiveKit participant query provides ground truth across instances |
 
@@ -267,13 +289,17 @@ If the synchronous LiveKit API call encounters a network blip during revocation:
 ## 9. Verification Summary Checklist
 
 - [x] Webhook processing persisted and deduplicated across restarts via MongoDB.
-- [x] Monotonic event ordering enforced across horizontal API instances.
+- [x] Monotonic event ordering enforced across horizontal API instances via atomic conditional updates.
+- [x] Webhook timestamp precision normalized and equal timestamps deterministically resolved via precedence ranking.
 - [x] Eviction tasks use 5-state machine (`pending`, `processing`, `retry_scheduled`, `completed`, `failed_permanent`).
-- [x] Atomic task claiming with 30s lease expiration and abandoned task recovery.
+- [x] Atomic task claiming with 30s lease expiration, unique UUID `leaseToken`, and abandoned task recovery.
+- [x] Eviction worker updates validate current `leaseToken`, fencing out expired workers.
 - [x] Partial TTL index applied strictly to completed eviction tasks; failed tasks preserved.
 - [x] Background worker starts at API boot and shuts down gracefully on SIGTERM/SIGINT.
 - [x] Public metadata separated from private session family and tab identifiers.
 - [x] Backend derives opaque participant session IDs (`${userId}_vps_${id}`).
 - [x] Direct assignment to `room.engine.token` removed in favor of supported token state management.
+- [x] Bounded reconnection lifecycle with backend re-authorization and explicit leave fencing implemented.
 - [x] All session revocation pathways centralized and wired to socket and voice eviction.
 - [x] Static typecheck and linting pass with 0 errors across monorepo.
+

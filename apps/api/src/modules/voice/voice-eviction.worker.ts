@@ -93,10 +93,11 @@ export class VoiceEvictionWorker {
 
     if (!client) {
       // LiveKit is not configured in this environment (e.g. dev without credentials)
-      task.status = 'failed_permanent';
-      task.lastError = 'LiveKit service is not configured on this server';
-      task.errorCategory = 'terminal';
-      await task.save();
+      await VoiceEvictionTaskModel.updateTaskOutcome(taskId, task.leaseToken || '', {
+        status: 'failed_permanent',
+        lastError: 'LiveKit service is not configured on this server',
+        errorCategory: 'terminal',
+      });
       return;
     }
 
@@ -122,10 +123,18 @@ export class VoiceEvictionWorker {
         await client.removeParticipant(roomName, task.participantIdentity);
       }
 
-      task.status = 'completed';
-      task.lastError = null;
-      task.leaseExpiresAt = null;
-      await task.save();
+      const updated = await VoiceEvictionTaskModel.updateTaskOutcome(taskId, task.leaseToken || '', {
+        status: 'completed',
+        lastError: null,
+      });
+
+      if (!updated) {
+        logger.warn(
+          { taskId, instanceId: this.instanceId, leaseToken: task.leaseToken },
+          '⚠️ Lease fencing violation: lease expired or was preempted by another worker. Stale success outcome discarded.'
+        );
+        return;
+      }
 
       logger.info(
         { taskId, targetType: task.targetType, targetId: task.targetId, roomId: task.roomId },
@@ -138,10 +147,18 @@ export class VoiceEvictionWorker {
 
       // If entity was already destroyed in LiveKit, the security goal is achieved
       if (isRoomNotFound || isParticipantNotFound) {
-        task.status = 'completed';
-        task.lastError = null;
-        task.leaseExpiresAt = null;
-        await task.save();
+        const updated = await VoiceEvictionTaskModel.updateTaskOutcome(taskId, task.leaseToken || '', {
+          status: 'completed',
+          lastError: null,
+        });
+
+        if (!updated) {
+          logger.warn(
+            { taskId, instanceId: this.instanceId, leaseToken: task.leaseToken },
+            '⚠️ Lease fencing violation: lease expired or was preempted by another worker. Stale absent outcome discarded.'
+          );
+          return;
+        }
 
         logger.info(
           { taskId, targetType: task.targetType, targetId: task.targetId, reason: errorMsg },
@@ -150,45 +167,52 @@ export class VoiceEvictionWorker {
         return;
       }
 
-      task.attemptCount += 1;
-      task.lastError = errorMsg;
-      task.leaseExpiresAt = null;
+      const newAttemptCount = task.attemptCount + 1;
 
-      if (task.attemptCount >= task.maxAttempts) {
-        task.status = 'failed_permanent';
-        task.errorCategory = 'terminal';
+      if (newAttemptCount >= task.maxAttempts) {
         logger.error(
           {
             taskId,
             targetType: task.targetType,
             targetId: task.targetId,
             roomId: task.roomId,
-            attempts: task.attemptCount,
+            attempts: newAttemptCount,
             err: errorMsg,
           },
           '🚨 CRITICAL: Exhausted max retries for voice eviction task. Marked failed_permanent for operator intervention'
         );
+
+        await VoiceEvictionTaskModel.updateTaskOutcome(taskId, task.leaseToken || '', {
+          status: 'failed_permanent',
+          attemptCount: newAttemptCount,
+          lastError: errorMsg,
+          errorCategory: 'terminal',
+        });
       } else {
-        task.status = 'retry_scheduled';
-        task.errorCategory = 'transient';
         // Bounded exponential backoff: 2s, 4s, 8s, 16s... capped at 60s
-        const backoffMs = Math.min(60000, 2000 * Math.pow(2, task.attemptCount));
-        task.nextAttemptAt = new Date(Date.now() + backoffMs);
+        const backoffMs = Math.min(60000, 2000 * Math.pow(2, newAttemptCount));
+        const nextAttemptAt = new Date(Date.now() + backoffMs);
 
         logger.warn(
           {
             taskId,
             targetType: task.targetType,
             targetId: task.targetId,
-            attemptCount: task.attemptCount,
-            nextAttemptAt: task.nextAttemptAt.toISOString(),
+            attemptCount: newAttemptCount,
+            nextAttemptAt: nextAttemptAt.toISOString(),
             err: errorMsg,
           },
           'Voice eviction call failed; scheduled retry'
         );
-      }
 
-      await task.save();
+        await VoiceEvictionTaskModel.updateTaskOutcome(taskId, task.leaseToken || '', {
+          status: 'retry_scheduled',
+          attemptCount: newAttemptCount,
+          lastError: errorMsg,
+          errorCategory: 'transient',
+          nextAttemptAt,
+        });
+      }
     }
   }
 }

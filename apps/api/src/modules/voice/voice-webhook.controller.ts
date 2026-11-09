@@ -30,6 +30,7 @@ export class VoiceWebhookController {
 
   /**
    * Generates a deterministic, collision-resistant event ID if LiveKit omits an official event ID.
+   * Discriminates across event type, creation timestamp, room name, participant identity, and track/egress IDs.
    */
   private getDeterministicEventId(event: {
     id?: string;
@@ -37,6 +38,8 @@ export class VoiceWebhookController {
     createdAt?: number | string | bigint;
     room?: { name?: string };
     participant?: { identity?: string };
+    track?: { sid?: string };
+    egressInfo?: { egressId?: string };
   }): string {
     if (event.id && event.id.trim().length > 0) {
       return event.id.trim();
@@ -46,9 +49,10 @@ export class VoiceWebhookController {
       String(event.createdAt || ''),
       event.room?.name || '',
       event.participant?.identity || '',
+      event.track?.sid || event.egressInfo?.egressId || '',
     ].join(':');
 
-    return `wh_${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 24)}`;
+    return `wh_${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32)}`;
   }
 
   public async handleWebhook(req: Request, res: Response, _next: NextFunction): Promise<void> {
@@ -95,7 +99,20 @@ export class VoiceWebhookController {
     const eventId = this.getDeterministicEventId(event);
     const roomName = event.room?.name || '';
     const participantIdentity = event.participant?.identity || '';
-    const eventTimestampMs = Number(event.createdAt) ? Number(event.createdAt) * 1000 : Date.now();
+    // Documented timestamp source and precision:
+    // LiveKit server webhooks provide `createdAt` as a Unix timestamp (seconds or milliseconds).
+    // Standardize to millisecond precision for monotonic sequence tracking.
+    const rawCreatedAt = Number(event.createdAt);
+    let eventTimestampMs: number;
+    if (rawCreatedAt > 1e11) {
+      // Already in milliseconds
+      eventTimestampMs = Math.floor(rawCreatedAt);
+    } else if (rawCreatedAt > 0) {
+      // Seconds -> convert to milliseconds
+      eventTimestampMs = Math.floor(rawCreatedAt * 1000);
+    } else {
+      eventTimestampMs = Date.now();
+    }
 
     // 2. Durable Deduplication & Atomic Claim in MongoDB across all API instances
     const claimResult = await VoiceWebhookEventModel.claimEvent(

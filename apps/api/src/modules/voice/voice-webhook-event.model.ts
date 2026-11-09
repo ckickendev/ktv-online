@@ -111,17 +111,37 @@ VoiceWebhookEventSchema.statics.claimEvent = async function (
     if (existing.status === 'completed') {
       return { claimed: false, isDuplicate: true, eventDoc: existing };
     }
-    // If currently being processed and lease is still valid, treat as concurrent duplicate in flight
+    // If currently being processed and lease is still valid, treat as duplicate in flight
     if (existing.status === 'processing' && existing.leaseExpiresAt > now) {
       return { claimed: false, isDuplicate: true, eventDoc: existing };
     }
-    // If lease expired or previous attempt failed, reclaim atomically
-    existing.status = 'processing';
-    existing.claimedBy = instanceId;
-    existing.claimedAt = now;
-    existing.leaseExpiresAt = leaseExpiresAt;
-    await existing.save();
-    return { claimed: true, isDuplicate: false, eventDoc: existing };
+    // If lease expired or previous attempt failed, reclaim atomically via conditional update
+    const reclaimed = await this.findOneAndUpdate(
+      {
+        eventId,
+        $or: [
+          { status: 'failed' },
+          { status: 'processing', leaseExpiresAt: { $lte: now } },
+        ],
+      },
+      {
+        $set: {
+          status: 'processing',
+          claimedBy: instanceId,
+          claimedAt: now,
+          leaseExpiresAt,
+        },
+      },
+      { new: true }
+    ).exec();
+
+    if (reclaimed) {
+      return { claimed: true, isDuplicate: false, eventDoc: reclaimed };
+    }
+
+    // Another worker concurrently reclaimed or completed the task
+    const current = await this.findOne({ eventId }).exec();
+    return { claimed: false, isDuplicate: true, eventDoc: current || undefined };
   }
 
   // 2. Insert new event claim
@@ -139,7 +159,7 @@ VoiceWebhookEventSchema.statics.claimEvent = async function (
     });
     return { claimed: true, isDuplicate: false, eventDoc: created };
   } catch (err: unknown) {
-    // If duplicate key error raced on create
+    // If duplicate key error raced on create across multiple instances
     if (err && typeof err === 'object' && 'code' in err && (err as { code: number }).code === 11000) {
       const raced = await this.findOne({ eventId }).exec();
       return { claimed: false, isDuplicate: true, eventDoc: raced || undefined };
