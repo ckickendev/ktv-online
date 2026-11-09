@@ -175,6 +175,36 @@ export class RoomPresenceManager {
   }
 
   /**
+   * Remove a user entirely from a room's presence (e.g. kicked or evicted).
+   */
+  removeUserFromRoom(roomId: string, userId: string): { totalOnline: number; username: string } | null {
+    const roomMap = this.roomUsers.get(roomId);
+    if (!roomMap) return null;
+
+    const userSockets = roomMap.get(userId);
+    if (!userSockets) return null;
+
+    let username = 'Anonymous';
+    for (const socketId of userSockets) {
+      const meta = this.socketMeta.get(socketId);
+      if (meta) {
+        username = meta.username;
+        this.socketMeta.delete(socketId);
+      }
+    }
+
+    roomMap.delete(userId);
+    if (roomMap.size === 0) {
+      this.roomUsers.delete(roomId);
+    }
+
+    return {
+      totalOnline: roomMap.size,
+      username,
+    };
+  }
+
+  /**
    * Clear all presence in a room (e.g. room closed).
    */
   clearRoom(roomId: string): void {

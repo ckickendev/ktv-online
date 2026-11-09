@@ -34,6 +34,15 @@ const RoomMembershipSchema = new Schema<IRoomMembershipDocument>(
       type: Date,
       default: null,
     },
+    kickedAt: {
+      type: Date,
+      default: null,
+    },
+    kickedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
   },
   {
     timestamps: true,

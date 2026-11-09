@@ -8,6 +8,8 @@ export interface IRoomMembership {
   status: RoomMembershipStatus;
   joinedAt: Date;
   leftAt?: Date | null;
+  kickedAt?: Date | null;
+  kickedBy?: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }

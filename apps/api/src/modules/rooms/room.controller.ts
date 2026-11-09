@@ -466,6 +466,53 @@ export class RoomController {
       next(error);
     }
   }
+
+  async kickMember(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id: roomId, userId: targetUserId } = req.params;
+      const hostUserId = req.user?.id;
+      const { reason } = req.body || {};
+
+      if (!hostUserId) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      if (!roomId || !targetUserId) {
+        sendError(res, 'Room ID and User ID are required', 400);
+        return;
+      }
+
+      const result = await roomService.kickMember(roomId, hostUserId, targetUserId, reason);
+
+      if (!result.success) {
+        switch (result.error) {
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'ROOM_CLOSED':
+            sendError(res, 'Cannot kick from a closed room', 400);
+            return;
+          case 'FORBIDDEN_NOT_HOST':
+            sendError(res, 'Only the room host can remove members', 403);
+            return;
+          case 'CANNOT_KICK_SELF':
+            sendError(res, 'Host cannot remove themselves from the room', 400);
+            return;
+          case 'NOT_A_MEMBER':
+            sendError(res, 'User is not an active member of this room', 404);
+            return;
+          default:
+            sendError(res, 'Failed to remove member from room', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, null, 'Member was removed from the room');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const roomController = new RoomController();

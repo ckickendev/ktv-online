@@ -32,6 +32,7 @@ export const RoomDtoSchema = z.object({
   status: RoomStatusSchema,
   currentParticipantsCount: z.number().int().nonnegative().default(0),
   category: RoomCategorySchema.default('all'),
+  isChatEnabled: z.boolean().default(true).optional(),
   currentSongTitle: z.string().optional().nullable(),
   currentSingerName: z.string().optional().nullable(),
   createdAt: z.string().datetime(),
@@ -50,6 +51,7 @@ export const CreateRoomSchema = z.object({
   visibility: RoomVisibilitySchema.default('public'),
   capacity: z.coerce.number().int().min(2).max(50).default(10),
   category: RoomCategorySchema.default('all'),
+  isChatEnabled: z.boolean().default(true).optional(),
 });
 
 export type CreateRoomDto = z.infer<typeof CreateRoomSchema>;
@@ -61,6 +63,7 @@ export const UpdateRoomSchema = z.object({
   capacity: z.coerce.number().int().min(2).max(50).optional(),
   status: RoomStatusSchema.optional(),
   category: RoomCategorySchema.optional(),
+  isChatEnabled: z.boolean().optional(),
 });
 
 export type UpdateRoomDto = z.infer<typeof UpdateRoomSchema>;

@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { socketAuthMiddleware, AuthenticatedSocketData } from './socket.auth.js';
 import { registerRoomEvents, getRoomChannel } from './room.events.js';
+import { registerChatEvents } from './chat.events.js';
 import { presenceManager } from './presence.manager.js';
 import { SOCKET_EVENTS } from '@ktv/contracts';
 
@@ -44,8 +45,11 @@ export function createSocketServer(
       '⚡ Socket.IO client connected and authenticated'
     );
 
-    // Register room event handlers
+    // Register room lifecycle and presence event handlers
     registerRoomEvents(io, socket);
+
+    // Register chat, reaction, and moderation event handlers
+    registerChatEvents(io, socket);
   });
 
   ioInstance = io;
@@ -78,6 +82,47 @@ export async function broadcastRoomClosed(roomId: string, reason = 'Room has bee
   const socketsInRoom = await ioInstance.in(channel).fetchSockets();
   for (const s of socketsInRoom) {
     s.leave(channel);
+  }
+}
+
+/**
+ * Evict a member kicked by the host: notify their sockets, remove them from the channel,
+ * clear their presence, and notify the remaining room occupants.
+ */
+export async function evictKickedMember(
+  roomId: string,
+  userId: string,
+  reason = 'You were removed from the room by the host'
+): Promise<void> {
+  if (!ioInstance) return;
+
+  const channel = getRoomChannel(roomId);
+  logger.info({ roomId, userId, reason }, 'Evicting kicked member from room');
+
+  // 1. Notify user's sockets and force leave channel
+  const sockets = await ioInstance.fetchSockets();
+  for (const s of sockets) {
+    if (s.data?.user?.id === userId) {
+      s.emit(SOCKET_EVENTS.SERVER.MEMBER_KICKED, {
+        roomId,
+        userId,
+        reason,
+      });
+      s.leave(channel);
+    }
+  }
+
+  // 2. Remove user from room presence
+  const presenceResult = presenceManager.removeUserFromRoom(roomId, userId);
+
+  // 3. Broadcast member:left to remaining occupants
+  if (presenceResult) {
+    ioInstance.to(channel).emit(SOCKET_EVENTS.SERVER.MEMBER_LEFT, {
+      roomId,
+      userId,
+      username: presenceResult.username,
+      totalOnline: presenceResult.totalOnline,
+    });
   }
 }
 

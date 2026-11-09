@@ -6,3 +6,4 @@ export * from './client';
 export * from './endpoints/auth';
 export * from './endpoints/users';
 export * from './endpoints/rooms';
+export * from './endpoints/chat';

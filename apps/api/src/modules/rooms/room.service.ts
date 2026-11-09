@@ -4,6 +4,8 @@ import { RoomMembershipModel } from './membership.model.js';
 import { IRoomDocument } from './room.types.js';
 import { IRoomMembershipDocument } from './membership.types.js';
 import { CreateRoomDto, RoomQueryDto, UpdateRoomDto } from '@ktv/contracts';
+import { chatService } from '../chat/chat.service.js';
+import { evictKickedMember } from '../../realtime/socket.server.js';
 
 export type JoinRoomResult =
   | { success: true; membership: IRoomMembershipDocument; alreadyJoined: boolean }
@@ -15,6 +17,19 @@ export type JoinRoomResult =
 export type LeaveRoomResult =
   | { success: true }
   | { success: false; error: 'NOT_A_MEMBER' | 'ROOM_NOT_FOUND' | 'HOST_CANNOT_LEAVE' };
+
+export type KickMemberResult =
+  | { success: true }
+  | {
+      success: false;
+      error:
+        | 'ROOM_NOT_FOUND'
+        | 'ROOM_CLOSED'
+        | 'FORBIDDEN_NOT_HOST'
+        | 'CANNOT_KICK_SELF'
+        | 'NOT_A_MEMBER'
+        | 'INVALID_ID';
+    };
 
 export type GetMembersResult =
   | { success: true; members: IRoomMembershipDocument[] }
@@ -517,6 +532,98 @@ export class RoomService {
       .filter((r) => Boolean(r && r._id));
 
     return { items, total };
+  }
+
+  async kickMember(
+    roomId: string,
+    hostUserId: string,
+    targetUserId: string,
+    reason?: string
+  ): Promise<KickMemberResult> {
+    if (
+      !Types.ObjectId.isValid(roomId) ||
+      !Types.ObjectId.isValid(hostUserId) ||
+      !Types.ObjectId.isValid(targetUserId)
+    ) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    if (hostUserId === targetUserId) {
+      return { success: false, error: 'CANNOT_KICK_SELF' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const hostObjectId = new Types.ObjectId(hostUserId);
+    const targetObjectId = new Types.ObjectId(targetUserId);
+
+    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    if (room.status === 'closed') {
+      return { success: false, error: 'ROOM_CLOSED' };
+    }
+
+    const hostOwnerIdStr = (room.ownerId as any)._id
+      ? (room.ownerId as any)._id.toString()
+      : room.ownerId.toString();
+
+    if (hostOwnerIdStr !== hostUserId) {
+      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    }
+
+    // Atomically transition target membership to 'left' with kicked metadata
+    const updatedMembership = await RoomMembershipModel.findOneAndUpdate(
+      {
+        roomId: roomObjectId,
+        userId: targetObjectId,
+        status: 'active',
+      },
+      {
+        $set: {
+          status: 'left',
+          leftAt: new Date(),
+          kickedAt: new Date(),
+          kickedBy: hostObjectId,
+        },
+      },
+      { new: true }
+    )
+      .populate('userId', 'username avatar')
+      .exec();
+
+    if (!updatedMembership) {
+      return { success: false, error: 'NOT_A_MEMBER' };
+    }
+
+    // Safely decrement room participant count
+    await RoomModel.findOneAndUpdate(
+      { _id: roomObjectId, currentParticipantsCount: { $gt: 0 } },
+      { $inc: { currentParticipantsCount: -1 } }
+    ).exec();
+
+    const hostUsername = (room.ownerId as any).username || 'Host';
+    const targetUsername = (updatedMembership.userId as any)?.username || 'Member';
+
+    // Record activity
+    try {
+      await chatService.recordActivity(
+        roomId,
+        'member_kicked',
+        { id: hostUserId, username: hostUsername, role: 'host' },
+        `${targetUsername} was removed from the room by the host`,
+        { id: targetUserId, username: targetUsername },
+        { reason: reason || 'Removed by host' }
+      );
+    } catch {
+      // Non-blocking
+    }
+
+    // Evict socket
+    await evictKickedMember(roomId, targetUserId, reason);
+
+    return { success: true };
   }
 }
 

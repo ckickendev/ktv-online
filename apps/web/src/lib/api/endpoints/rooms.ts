@@ -64,4 +64,8 @@ export const roomApi = {
   async getMembers(roomId: string): Promise<RoomMembershipDto[]> {
     return apiClient.get<RoomMembershipDto[]>(`/rooms/${roomId}/members`);
   },
+
+  async kickMember(roomId: string, userId: string, reason?: string): Promise<null> {
+    return apiClient.post<null>(`/rooms/${roomId}/members/${userId}/kick`, { reason });
+  },
 };

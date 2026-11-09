@@ -1,5 +1,5 @@
 import React from 'react';
-import { Crown, Users, RefreshCw, AlertCircle } from 'lucide-react';
+import { Crown, Users, RefreshCw, AlertCircle, UserX } from 'lucide-react';
 import { UserAvatar } from './user-avatar';
 import { useRoomMembers } from '@/hooks/queries/use-room';
 import { cn } from '@/lib/utils';
@@ -8,6 +8,8 @@ interface RoomMemberListProps {
   roomId: string;
   currentUserId?: string | null;
   onlineUserIds?: Set<string>;
+  isHost?: boolean;
+  onKickMember?: (userId: string, username: string) => void;
   className?: string;
 }
 
@@ -15,6 +17,8 @@ export function RoomMemberList({
   roomId,
   currentUserId,
   onlineUserIds,
+  isHost,
+  onKickMember,
   className,
 }: RoomMemberListProps) {
   const {
@@ -196,7 +200,17 @@ export function RoomMemberList({
                     </div>
                   </div>
 
-                  <div className="flex items-center pl-2 shrink-0">
+                  <div className="flex items-center pl-2 shrink-0 gap-1.5">
+                    {isHost && m.role !== 'host' && onKickMember && (
+                      <button
+                        type="button"
+                        onClick={() => onKickMember(m.userId, username)}
+                        title={`Remove ${username} from room`}
+                        className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      >
+                        <UserX className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <span
                       className={cn(
                         'w-2 h-2 rounded-full',

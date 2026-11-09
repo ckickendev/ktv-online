@@ -57,3 +57,8 @@ roomRoutes.post('/:id/join', requireAuth, (req, res, next) => {
 roomRoutes.post('/:id/leave', requireAuth, (req, res, next) => {
   roomController.leaveRoom(req, res, next);
 });
+
+roomRoutes.post('/:id/members/:userId/kick', requireAuth, (req, res, next) => {
+  roomController.kickMember(req, res, next);
+});
+

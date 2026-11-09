@@ -56,6 +56,10 @@ const RoomSchema = new Schema<IRoomDocument>(
       default: 0,
       min: 0,
     },
+    isChatEnabled: {
+      type: Boolean,
+      default: true,
+    },
     currentSongTitle: {
       type: String,
       default: null,

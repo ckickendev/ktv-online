@@ -101,6 +101,10 @@ export const SOCKET_EVENTS = {
     ROOM_JOIN: 'room:join',
     ROOM_LEAVE: 'room:leave',
     PRESENCE_REQUEST: 'room:presence:request',
+    CHAT_MESSAGE_SEND: 'chat:message:send',
+    CHAT_REACTION_ADD: 'chat:reaction:add',
+    CHAT_REACTION_REMOVE: 'chat:reaction:remove',
+    CHAT_MESSAGE_DELETE: 'chat:message:delete',
   },
   SERVER: {
     PRESENCE_SNAPSHOT: 'room:presence:snapshot',
@@ -108,6 +112,12 @@ export const SOCKET_EVENTS = {
     MEMBER_LEFT: 'room:member:left',
     ROOM_CLOSED: 'room:closed',
     PRESENCE_UPDATED: 'presence:updated',
+    CHAT_MESSAGE_NEW: 'chat:message:new',
+    CHAT_MESSAGE_DELETED: 'chat:message:deleted',
+    CHAT_REACTION_UPDATED: 'chat:reaction:updated',
+    CHAT_ERROR: 'chat:error',
+    ACTIVITY_NEW: 'room:activity:new',
+    MEMBER_KICKED: 'room:member:kicked',
     ERROR: 'error',
   },
 } as const;

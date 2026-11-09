@@ -12,7 +12,6 @@ import {
   Pause,
   SkipForward,
   Plus,
-  Send,
   Users,
   LogOut,
   Crown,
@@ -27,20 +26,26 @@ import {
   Settings,
   Sparkles,
   Lock,
+  Activity,
 } from 'lucide-react';
 import { RoomStatusBadge } from '@/components/shared/room-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LoadingState } from '@/components/shared/loading-state';
 import { RoomMemberList } from '@/components/shared/room-member-list';
 import { LeaveRoomDialog } from '@/components/rooms/leave-room-dialog';
+import { RoomChatPanel } from '@/components/chat/room-chat-panel';
+import { RoomActivityTimeline } from '@/components/chat/room-activity-timeline';
+import { KickMemberDialog } from '@/components/rooms/kick-member-dialog';
 import {
   useRoom,
   useMyRoomMembership,
   useJoinRoom,
   useLeaveRoom,
 } from '@/hooks/queries/use-room';
+import { useKickMember } from '@/hooks/queries/use-chat';
 import { useAuth } from '@/hooks/use-auth';
 import { useRoomSocket } from '@/hooks/use-room-socket';
+import { useRoomChat } from '@/hooks/use-room-chat';
 import { useAppStore } from '@/stores/use-app-store';
 import { cn } from '@/lib/utils';
 
@@ -71,9 +76,24 @@ export default function RoomDetailPage() {
 
   const { isMuted, toggleMute, volume, setVolume } = useAppStore();
   const [isPlaying, setIsPlaying] = useState(true);
-  const [activeTab, setActiveTab] = useState<'queue' | 'chat'>('queue');
-  const [chatMessage, setChatMessage] = useState('');
+  const [activeTab, setActiveTab] = useState<'chat' | 'queue' | 'activities'>('chat');
   const [reverbMode, setReverbMode] = useState<'Studio' | 'Hall' | 'Club' | 'Off'>('Studio');
+
+  const {
+    messages: chatMessages,
+    activities,
+    isLoadingMessages,
+    isSending: isSendingChatMessage,
+    isKicked,
+    kickedReason,
+    sendMessage,
+    deleteMessage,
+    addReaction,
+    removeReaction,
+  } = useRoomChat(roomId, { enabled: isAuthenticated });
+
+  const [kickTarget, setKickTarget] = useState<{ userId: string; username: string } | null>(null);
+  const kickMutation = useKickMember(roomId);
 
   // Simulated queue data for stage experience
   const [queue] = useState([
@@ -81,28 +101,6 @@ export default function RoomDetailPage() {
     { id: '2', title: 'Cruel Summer', artist: 'Taylor Swift', requestedBy: 'Alex Singer', duration: '2:58', isCurrent: false },
     { id: '3', title: 'Bohemian Rhapsody', artist: 'Queen', requestedBy: 'RockLegend99', duration: '5:55', isCurrent: false },
   ]);
-
-  // Simulated chat messages
-  const [messages, setMessages] = useState([
-    { id: 'm1', sender: 'System', text: 'Welcome to Virtual VIP Lounge! Have fun singing!', isSystem: true },
-    { id: 'm2', sender: 'RockLegend99', text: 'Pitch is incredible on this track! 🔥', isSystem: false },
-    { id: 'm3', sender: 'Elena_Pop', text: 'Cheering from the lounge! 👏🎤', isSystem: false },
-  ]);
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `m-${Date.now()}`,
-        sender: currentUser?.username ?? 'Alex Singer',
-        text: chatMessage.trim(),
-        isSystem: false,
-      },
-    ]);
-    setChatMessage('');
-  };
 
   const handleJoin = async () => {
     setJoinErrorMessage(null);
@@ -317,6 +315,24 @@ export default function RoomDetailPage() {
         </div>
       )}
 
+      {/* Kicked by Host Notification Banner */}
+      {isKicked && (
+        <div className="bg-rose-500/20 border-b border-rose-500/40 px-6 py-3 flex items-center justify-between text-xs text-rose-200">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>
+              <strong>Removed by Host:</strong> {kickedReason || 'You have been removed from this room by the host.'}
+            </span>
+          </div>
+          <button
+            onClick={() => router.push('/rooms')}
+            className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-semibold transition-colors"
+          >
+            Return to Lobby
+          </button>
+        </div>
+      )}
+
       {/* Main Lounge Viewport */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 overflow-y-auto">
         {/* Left: Real Member Roster (Col 3) */}
@@ -325,6 +341,8 @@ export default function RoomDetailPage() {
             roomId={roomId}
             currentUserId={currentUser?.id}
             onlineUserIds={onlineUserIds}
+            isHost={isHost}
+            onKickMember={(userId, username) => setKickTarget({ userId, username })}
             className="h-full"
           />
         </div>
@@ -572,9 +590,20 @@ export default function RoomDetailPage() {
         </div>
 
         {/* Right: Song Queue & Live Chat Tabs (Col 3) */}
-        <div className="lg:col-span-3 flex flex-col glass-panel rounded-2xl p-4 border border-white/5 min-h-[400px]">
+        <div className="lg:col-span-3 flex flex-col glass-panel rounded-2xl p-4 border border-white/5 min-h-[440px]">
           {/* Tabs */}
-          <div className="flex items-center gap-2 p-1 rounded-xl bg-black/40 border border-white/5 mb-4">
+          <div className="flex items-center gap-1.5 p-1 rounded-xl bg-black/40 border border-white/5 mb-4">
+            <button
+              onClick={() => setActiveTab('chat')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                activeTab === 'chat'
+                  ? 'bg-violet-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Chat ({chatMessages.length})</span>
+            </button>
             <button
               onClick={() => setActiveTab('queue')}
               className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
@@ -587,17 +616,42 @@ export default function RoomDetailPage() {
               <span>Queue ({queue.length})</span>
             </button>
             <button
-              onClick={() => setActiveTab('chat')}
+              onClick={() => setActiveTab('activities')}
               className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
-                activeTab === 'chat'
+                activeTab === 'activities'
                   ? 'bg-violet-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span>Lounge Chat</span>
+              <Activity className="w-3.5 h-3.5" />
+              <span>Activity</span>
             </button>
           </div>
+
+          {/* Chat Tab Content */}
+          {activeTab === 'chat' && (
+            <div className="flex-1 flex flex-col min-h-[380px]">
+              <RoomChatPanel
+                messages={chatMessages}
+                isLoading={isLoadingMessages}
+                isSending={isSendingChatMessage}
+                isHost={isHost}
+                currentUserId={currentUser?.id}
+                isChatEnabled={room.isChatEnabled !== false}
+                onSendMessage={sendMessage}
+                onDeleteMessage={deleteMessage}
+                onAddReaction={addReaction}
+                onRemoveReaction={removeReaction}
+              />
+            </div>
+          )}
+
+          {/* Activity Feed Tab Content */}
+          {activeTab === 'activities' && (
+            <div className="flex-1 flex flex-col min-h-[380px]">
+              <RoomActivityTimeline activities={activities} />
+            </div>
+          )}
 
           {/* Queue Tab Content */}
           {activeTab === 'queue' && (
@@ -635,46 +689,6 @@ export default function RoomDetailPage() {
               </button>
             </div>
           )}
-
-          {/* Chat Tab Content */}
-          {activeTab === 'chat' && (
-            <div className="flex-1 flex flex-col justify-between">
-              <div className="space-y-2.5 overflow-y-auto max-h-[300px] pr-1">
-                {messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`p-2 rounded-xl text-xs ${
-                      m.isSystem
-                        ? 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-[11px]'
-                        : 'bg-white/5 border border-white/5 text-slate-200'
-                    }`}
-                  >
-                    {!m.isSystem && (
-                      <p className="text-[10px] font-bold text-violet-400 mb-0.5">{m.sender}</p>
-                    )}
-                    <p className="break-words leading-relaxed">{m.text}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Chat Form */}
-              <form onSubmit={handleSendMessage} className="mt-4 flex items-center gap-2">
-                <input
-                  type="text"
-                  value={chatMessage}
-                  onChange={(e) => setChatMessage(e.target.value)}
-                  placeholder="Cheer or chat..."
-                  className="flex-1 px-3 py-2 rounded-xl bg-[#0e121e] border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
-                />
-                <button
-                  type="submit"
-                  className="p-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white transition-colors"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                </button>
-              </form>
-            </div>
-          )}
         </div>
       </div>
 
@@ -685,6 +699,20 @@ export default function RoomDetailPage() {
         roomName={room.name}
         onClose={() => setIsLeaveDialogOpen(false)}
         onConfirm={handleLeaveConfirm}
+      />
+
+      {/* Kick Member Confirmation Dialog */}
+      <KickMemberDialog
+        isOpen={Boolean(kickTarget)}
+        targetUsername={kickTarget?.username || ''}
+        isKicking={kickMutation.isPending}
+        onConfirm={async (reason) => {
+          if (kickTarget) {
+            await kickMutation.mutateAsync({ userId: kickTarget.userId, reason });
+            setKickTarget(null);
+          }
+        }}
+        onCancel={() => setKickTarget(null)}
       />
     </div>
   );
