@@ -17,6 +17,7 @@ import {
   AudioCapturePreferences,
   MicrophonePermissionState,
 } from '../types/voice.types';
+import { KaraokeEqPreset } from '@/features/karaoke';
 import { AudioDeviceSettingsModal } from './audio-device-settings-modal';
 
 export interface VoiceControlsProps {
@@ -47,6 +48,8 @@ export interface VoiceControlsProps {
   onSwitchAudioOutputDevice?: (deviceId: string) => Promise<void>;
   karaokeOutputDeviceId?: string | null;
   onSwitchKaraokeOutputDevice?: (deviceId: string) => Promise<void>;
+  karaokeEqPreset?: KaraokeEqPreset;
+  onSwitchKaraokeEqPreset?: (preset: KaraokeEqPreset) => void;
 }
 
 export function VoiceControls({
@@ -75,6 +78,8 @@ export function VoiceControls({
   onSwitchAudioOutputDevice,
   karaokeOutputDeviceId,
   onSwitchKaraokeOutputDevice,
+  karaokeEqPreset,
+  onSwitchKaraokeEqPreset,
 }: VoiceControlsProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -248,6 +253,8 @@ export function VoiceControls({
         isOutputSelectionSupported={isOutputSelectionSupported}
         activeKaraokeOutputId={karaokeOutputDeviceId}
         onSelectKaraokeOutputDevice={onSwitchKaraokeOutputDevice}
+        karaokeEqPreset={karaokeEqPreset}
+        onSelectKaraokeEqPreset={onSwitchKaraokeEqPreset}
       />
     </div>
   );

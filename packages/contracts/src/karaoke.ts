@@ -44,12 +44,21 @@ export const ResolvedAudioSourceDtoSchema = z.object({
 });
 export type ResolvedAudioSourceDto = z.infer<typeof ResolvedAudioSourceDtoSchema>;
 
+export const TimedLyricWordSchema = z.object({
+  id: z.string().optional(),
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().nonnegative(),
+  text: z.string(),
+});
+export type TimedLyricWord = z.infer<typeof TimedLyricWordSchema>;
+
 export const TimedLyricLineSchema = z.object({
   id: z.string(),
   startMs: z.number().int().nonnegative(),
   endMs: z.number().int().nonnegative().optional(),
   text: z.string(),
   translation: z.string().optional(),
+  words: z.array(TimedLyricWordSchema).optional(),
 });
 export type TimedLyricLine = z.infer<typeof TimedLyricLineSchema>;
 

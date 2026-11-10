@@ -5,6 +5,12 @@ import { PlaybackStateDto } from '@ktv/contracts';
 import { karaokeApi } from '../api/karaoke-api';
 import { clockSyncService } from '../services/clock-sync.service';
 
+import {
+  karaokeEqualizer,
+  KaraokeEqPreset,
+  STORAGE_EQ_PRESET_KEY,
+} from '../services/karaoke-equalizer';
+
 export interface UseKaraokeAudioOptions {
   playback: PlaybackStateDto | undefined;
   currentPositionMs: number;
@@ -40,6 +46,9 @@ export interface UseKaraokeAudioReturn {
   outputDeviceId: string | null;
   isOutputSelectionSupported: boolean;
   setOutputDevice: (deviceId: string) => Promise<void>;
+  eqPreset: KaraokeEqPreset;
+  isEqSupported: boolean;
+  setEqPreset: (preset: KaraokeEqPreset) => void;
 }
 
 const STORAGE_VOLUME_KEY = 'ktv_karaoke_volume';
@@ -95,6 +104,12 @@ export function useKaraokeAudio({
     if (typeof window === 'undefined') return null;
     return localStorage.getItem(STORAGE_OUTPUT_DEVICE_KEY);
   });
+
+  const [eqPreset, setEqPresetState] = useState<KaraokeEqPreset>(() => {
+    if (typeof window === 'undefined') return 'flat';
+    return (localStorage.getItem(STORAGE_EQ_PRESET_KEY) as KaraokeEqPreset) || 'flat';
+  });
+  const isEqSupported = karaokeEqualizer.isAvailable();
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const loadGenerationRef = useRef<number>(0);
@@ -182,6 +197,7 @@ export function useKaraokeAudio({
     if (!audioRef.current) {
       const audio = new Audio();
       audio.preload = 'auto';
+      audio.crossOrigin = 'anonymous';
       audio.volume = volumeRef.current;
       audio.muted = isMutedRef.current;
 
@@ -190,11 +206,20 @@ export function useKaraokeAudio({
         (audio as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(initialSink).catch(() => {});
       }
 
+      const initialEq = typeof window !== 'undefined'
+        ? ((localStorage.getItem(STORAGE_EQ_PRESET_KEY) as KaraokeEqPreset) || 'flat')
+        : 'flat';
+      if (initialEq !== 'flat') {
+        karaokeEqualizer.connect(audio);
+        karaokeEqualizer.applyPreset(initialEq);
+      }
+
       audio.addEventListener('play', () => {
         setIsPlaying(true);
         isPlayingRef.current = true;
         setIsAutoplayBlocked(false);
         setExecutionState('playing');
+        karaokeEqualizer.resumeIfSuspended();
       });
 
       audio.addEventListener('pause', () => {
@@ -272,6 +297,7 @@ export function useKaraokeAudio({
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
       }
+      karaokeEqualizer.dispose();
       if (audioRef.current) {
         audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         audioRef.current.pause();
@@ -641,6 +667,45 @@ export function useKaraokeAudio({
         // Silently handle browser sink errors
       }
     }
+    karaokeEqualizer.setSinkId(deviceId);
+  }, []);
+
+  const setEqPreset = useCallback((preset: KaraokeEqPreset) => {
+    setEqPresetState(preset);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_EQ_PRESET_KEY, preset);
+      window.dispatchEvent(new CustomEvent('ktv_karaoke_eq_changed', { detail: { preset } }));
+    }
+    if (audioRef.current) {
+      if (preset !== 'flat') {
+        karaokeEqualizer.connect(audioRef.current);
+      }
+      karaokeEqualizer.applyPreset(preset);
+    }
+  }, []);
+
+  // Synchronize equalizer changes across components
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleEqChange = (e: Event) => {
+      const customEvent = e as CustomEvent<string | { preset: KaraokeEqPreset }>;
+      const preset = typeof customEvent.detail === 'string'
+        ? (customEvent.detail as KaraokeEqPreset)
+        : customEvent.detail?.preset;
+      if (preset && audioRef.current) {
+        setEqPresetState(preset);
+        if (preset !== 'flat') {
+          karaokeEqualizer.connect(audioRef.current);
+        }
+        karaokeEqualizer.applyPreset(preset);
+      }
+    };
+
+    window.addEventListener('ktv_karaoke_eq_changed', handleEqChange);
+    return () => {
+      window.removeEventListener('ktv_karaoke_eq_changed', handleEqChange);
+    };
   }, []);
 
   return {
@@ -661,5 +726,8 @@ export function useKaraokeAudio({
     outputDeviceId,
     isOutputSelectionSupported,
     setOutputDevice,
+    eqPreset,
+    isEqSupported,
+    setEqPreset,
   };
 }

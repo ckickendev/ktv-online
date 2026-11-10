@@ -199,4 +199,34 @@ KTVOnline maintains two completely independent audio playback pipelines:
 4. **Resilience to Device Removal**:
    - If an external output device is disconnected during playback, the browser automatically cascades back to the default audio output device without dropping audio execution or corrupting sync anchors.
 
+---
+
+## 8. Backing Track Equalizer & Web Audio Processing (Sprint 2.6.4)
+
+The karaoke backing track player incorporates a lightweight, client-side 3-band parametric and shelving equalizer powered by the Web Audio API.
+
+### Signal Flow Architecture
+```
++-----------------------------------------------------------------------------------------+
+| Local Karaoke Audio Engine Processing Flow                                              |
+|                                                                                         |
+| HTMLAudioElement ──> MediaElementSourceNode ──> LowShelf ──> Peaking ──> HighShelf      |
+| (crossOrigin="anonymous")                        (150Hz)     (1.5kHz)     (8kHz)        |
+|                                                                    │                    |
+|                                                                    ▼                    |
+|                                                          AudioContext.destination       |
++-----------------------------------------------------------------------------------------+
+```
+
+### Architectural Guarantees:
+1. **Pipeline Isolation**: The equalizer node graph connects exclusively to `HTMLAudioElement`. LiveKit microphone capture and remote voice streams never route through Web Audio nodes.
+2. **Preset Profiles**:
+   - `flat`: Unity gain ($0\text{ dB}$) across all bands (Bypassed).
+   - `bass_boost`: $+5\text{ dB}$ low-shelf for enhanced rhythm section punch.
+   - `vocal_clarity`: $-2\text{ dB}$ low-shelf, $+4\text{ dB}$ peaking at $1.5\text{ kHz}$ to emphasize vocal presence.
+   - `treble_boost`: $+5\text{ dB}$ high-shelf for crisp highs and acoustic air.
+3. **Clipping & Pop Prevention**: Conservative gains ($\le +5\text{ dB}$) and exponential $20\text{ ms}$ parameter ramping (`setTargetAtTime`) eliminate digital clipping and audible zipper noise during preset switching.
+4. **Resilience & Fallback**: If browser security policies or cross-origin restrictions block Web Audio node connection, the player catches the exception and falls back to direct native HTML media playback without muting audio.
+5. **Autoplay & Sleep Recovery**: `AudioContext` automatically resumes when `play` or `unlockAutoplay` fires, preventing suspended audio states.
+
 

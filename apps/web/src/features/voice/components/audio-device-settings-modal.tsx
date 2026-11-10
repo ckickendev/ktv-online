@@ -18,6 +18,10 @@ import {
   AudioCapturePreferences,
   MicrophonePermissionState,
 } from '../types/voice.types';
+import {
+  KaraokeEqPreset,
+  STORAGE_EQ_PRESET_KEY,
+} from '@/features/karaoke';
 
 export interface AudioDeviceSettingsModalProps {
   isOpen: boolean;
@@ -34,9 +38,11 @@ export interface AudioDeviceSettingsModalProps {
   activeVoiceOutputId: string | null;
   onSelectVoiceOutputDevice: (deviceId: string) => Promise<void>;
   isOutputSelectionSupported: boolean;
-  // Karaoke Backing Track Output
+  // Karaoke Backing Track Output & Equalizer
   activeKaraokeOutputId?: string | null;
   onSelectKaraokeOutputDevice?: (deviceId: string) => Promise<void>;
+  karaokeEqPreset?: KaraokeEqPreset;
+  onSelectKaraokeEqPreset?: (preset: KaraokeEqPreset) => void;
 }
 
 export function AudioDeviceSettingsModal({
@@ -54,10 +60,21 @@ export function AudioDeviceSettingsModal({
   isOutputSelectionSupported,
   activeKaraokeOutputId,
   onSelectKaraokeOutputDevice,
+  karaokeEqPreset,
+  onSelectKaraokeEqPreset,
 }: AudioDeviceSettingsModalProps) {
   const [localKaraokeOutputId, setLocalKaraokeOutputId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return activeKaraokeOutputId || localStorage.getItem('ktv_karaoke_output_device') || null;
+  });
+
+  const [localEqPreset, setLocalEqPreset] = useState<KaraokeEqPreset>(() => {
+    if (typeof window === 'undefined') return 'flat';
+    return (
+      karaokeEqPreset ||
+      (localStorage.getItem(STORAGE_EQ_PRESET_KEY) as KaraokeEqPreset) ||
+      'flat'
+    );
   });
 
   useEffect(() => {
@@ -65,6 +82,12 @@ export function AudioDeviceSettingsModal({
       setLocalKaraokeOutputId(activeKaraokeOutputId);
     }
   }, [activeKaraokeOutputId]);
+
+  useEffect(() => {
+    if (karaokeEqPreset !== undefined) {
+      setLocalEqPreset(karaokeEqPreset);
+    }
+  }, [karaokeEqPreset]);
 
   if (!isOpen) return null;
 
@@ -75,6 +98,16 @@ export function AudioDeviceSettingsModal({
     } else if (typeof window !== 'undefined') {
       localStorage.setItem('ktv_karaoke_output_device', deviceId);
       window.dispatchEvent(new CustomEvent('ktv_karaoke_sink_changed', { detail: deviceId }));
+    }
+  };
+
+  const handleEqPresetChange = (preset: KaraokeEqPreset) => {
+    setLocalEqPreset(preset);
+    if (onSelectKaraokeEqPreset) {
+      onSelectKaraokeEqPreset(preset);
+    } else if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_EQ_PRESET_KEY, preset);
+      window.dispatchEvent(new CustomEvent('ktv_karaoke_eq_changed', { detail: { preset } }));
     }
   };
 
@@ -312,6 +345,70 @@ export function AudioDeviceSettingsModal({
               </span>
             </div>
           )}
+        </div>
+
+        {/* SECTION 4: KARAOKE BACKING TRACK EQUALIZER */}
+        <div className="space-y-3 pt-2 border-t border-white/5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+              <Sliders className="w-4 h-4 text-pink-400" />
+              <span>Backing Track Equalizer</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded font-mono ${
+                  localEqPreset === 'flat'
+                    ? 'text-slate-400 bg-slate-800'
+                    : 'text-pink-400 bg-pink-500/10 border border-pink-500/20'
+                }`}
+              >
+                {localEqPreset === 'flat' ? 'Bypassed (Flat)' : 'Active'}
+              </span>
+              {localEqPreset !== 'flat' && (
+                <button
+                  type="button"
+                  data-testid="reset-eq-button"
+                  onClick={() => handleEqPresetChange('flat')}
+                  className="text-[10px] text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
+                >
+                  Reset to Flat
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {(
+              [
+                { id: 'flat', label: 'Flat (Off)', desc: 'Natural sound' },
+                { id: 'bass_boost', label: 'Bass Boost', desc: '+5 dB low-end punch' },
+                { id: 'vocal_clarity', label: 'Vocal Clarity', desc: '+4 dB vocal presence' },
+                { id: 'treble_boost', label: 'Treble Boost', desc: '+5 dB crisp highs' },
+              ] as const
+            ).map((preset) => {
+              const isSelected = localEqPreset === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  data-testid={`eq-preset-${preset.id}`}
+                  onClick={() => handleEqPresetChange(preset.id)}
+                  className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all ${
+                    isSelected
+                      ? 'bg-pink-500/10 border-pink-500/40 text-pink-300 shadow-md shadow-pink-950/30'
+                      : 'bg-slate-900/60 border-white/5 text-slate-300 hover:bg-white/[0.04] hover:border-white/10'
+                  }`}
+                >
+                  <span className="text-xs font-bold">{preset.label}</span>
+                  <span className="text-[10px] text-slate-400 mt-0.5">{preset.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="text-[10px] text-slate-400">
+            Equalizer applies strictly to the local karaoke music backing track. Your microphone and remote voices are unaffected.
+          </p>
         </div>
 
         {/* Modal Footer */}
