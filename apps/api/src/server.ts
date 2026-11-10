@@ -8,6 +8,7 @@ import { setAppShuttingDown } from './utils/lifecycle.js';
 import { createSocketServer, closeSocketServer } from './realtime/index.js';
 
 import { voiceEvictionWorker } from './modules/voice/voice-eviction.worker.js';
+import { songService } from './modules/karaoke/song.service.js';
 
 async function bootstrap() {
   const app = createApp();
@@ -18,6 +19,14 @@ async function bootstrap() {
 
   // Attempt database connection
   await connectDatabase();
+
+  // Initialize fixture song catalog
+  try {
+    await songService.ensureSeedSongs();
+    logger.info('🎶 Karaoke song catalog initialized');
+  } catch (err) {
+    logger.error({ err }, 'Failed to initialize karaoke song catalog');
+  }
 
   // Start voice eviction background recovery worker
   voiceEvictionWorker.start();

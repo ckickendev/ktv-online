@@ -5,11 +5,9 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Mic,
-  Plus,
   Users,
   LogOut,
   Crown,
-  Disc3,
   MessageSquare,
   ListMusic,
   Share2,
@@ -38,6 +36,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useRoomState } from '@/hooks/use-room-state';
 import { useRoomChat } from '@/hooks/use-room-chat';
 import { useVoiceClient, VoiceControls, VoiceParticipants } from '@/features/voice';
+import { useKaraoke, KaraokePlayer, RoomSongQueue, SongSearchDialog } from '@/features/karaoke';
 import { cn } from '@/lib/utils';
 
 export default function RoomDetailPage() {
@@ -95,12 +94,16 @@ export default function RoomDetailPage() {
   const [kickTarget, setKickTarget] = useState<{ userId: string; username: string } | null>(null);
   const kickMutation = useKickMember(roomId);
 
-  // Simulated queue data for stage experience
-  const [queue] = useState([
-    { id: '1', title: 'Blinding Lights', artist: 'The Weeknd', requestedBy: 'MiaSingz', duration: '3:20', isCurrent: true },
-    { id: '2', title: 'Cruel Summer', artist: 'Taylor Swift', requestedBy: 'Alex Singer', duration: '2:58', isCurrent: false },
-    { id: '3', title: 'Bohemian Rhapsody', artist: 'Queen', requestedBy: 'RockLegend99', duration: '5:55', isCurrent: false },
-  ]);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const isMember = Boolean(viewer?.isMember);
+  const isHost = isMember && viewer?.role === 'host';
+  const karaoke = useKaraoke(roomId, {
+    enabled: Boolean(roomId),
+    currentUserId: currentUser?.id,
+    isHost,
+    isMember,
+    roomStatus: room?.status,
+  });
 
   const handleJoin = async () => {
     setJoinErrorMessage(null);
@@ -158,8 +161,6 @@ export default function RoomDetailPage() {
     );
   }
 
-  const isMember = Boolean(viewer.isMember);
-  const isHost = isMember && viewer.role === 'host';
   const isClosed = room.status === 'closed' || Boolean(roomClosedNotice);
   const isFull = (room.currentParticipantsCount ?? 0) >= room.capacity;
   const isPrivate = room.visibility === 'private';
@@ -479,52 +480,23 @@ export default function RoomDetailPage() {
             </div>
           )}
 
-          {/* Virtual Karaoke Stage Screen */}
-          <div className="relative rounded-2xl bg-[#030408] border border-violet-500/20 overflow-hidden shadow-2xl flex-1 min-h-[340px] flex flex-col justify-between p-6">
-            {/* Screen Top Status */}
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
-                <span className="text-rose-400 font-bold uppercase tracking-wider text-[11px]">
-                  ON AIR
-                </span>
-                <span className="text-slate-400">&bull; Pitch: +0 &bull; Key: C Minor</span>
-              </div>
-              <span className="text-slate-400 text-[11px]">Sync Audio Engine: 44.1 kHz</span>
-            </div>
-
-            {/* Central Lyrics Display Simulation */}
-            <div className="my-auto text-center space-y-4 py-8">
-              <p className="text-xs sm:text-sm font-medium text-slate-400 transition-opacity">
-                I said, ooh, I&apos;m blinded by the lights
-              </p>
-              <div className="inline-block p-3 rounded-2xl bg-gradient-to-r from-violet-600/20 via-cyan-500/20 to-violet-600/20 border border-violet-500/30">
-                <p className="text-lg sm:text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-violet-300 via-white to-cyan-300 tracking-wide">
-                  No, I can&apos;t sleep until I feel your touch
-                </p>
-              </div>
-              <p className="text-xs sm:text-sm font-medium text-slate-400 transition-opacity">
-                I said, ooh, I&apos;m drowning in the night
-              </p>
-            </div>
-
-            {/* Screen Bottom: Track Progress & Audio Bars */}
-            <div>
-              <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-                <div className="flex items-center gap-2">
-                  <Disc3 className="w-4 h-4 text-violet-400 animate-spin" />
-                  <span className="font-semibold text-slate-200">Blinding Lights</span>
-                  <span>- The Weeknd</span>
-                </div>
-                <span>01:42 / 03:20</span>
-              </div>
-
-              {/* Progress bar */}
-              <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
-                <div className="bg-gradient-to-r from-violet-500 to-cyan-400 h-1.5 rounded-full w-[52%]" />
-              </div>
-            </div>
-          </div>
+          {/* Realtime Server-Authoritative Karaoke Stage & Player */}
+          <KaraokePlayer
+            playback={karaoke.playback}
+            currentPositionMs={karaoke.currentPositionMs}
+            isCurrentSinger={karaoke.isCurrentSinger}
+            isNextUpSinger={karaoke.isNextUpSinger}
+            currentSingerName={karaoke.currentSingerName}
+            nextUpItem={karaoke.nextUpItem}
+            canControlPlayback={karaoke.canControlPlayback}
+            isMutating={karaoke.isMutating}
+            onPlay={karaoke.play}
+            onPause={karaoke.pause}
+            onSkip={karaoke.skip}
+            onStop={karaoke.stop}
+            onSeek={karaoke.seek}
+            onOpenSearch={() => setIsSearchOpen(true)}
+          />
 
           {/* LiveKit Realtime Voice Participants */}
           <VoiceParticipants
@@ -574,7 +546,9 @@ export default function RoomDetailPage() {
               }`}
             >
               <ListMusic className="w-3.5 h-3.5" />
-              <span>Queue ({queue.length})</span>
+              <span>
+                Queue ({((karaoke.currentItem ? 1 : 0) + (karaoke.queue?.items?.length || 0))})
+              </span>
             </button>
             <button
               onClick={() => setActiveTab('activities')}
@@ -616,38 +590,18 @@ export default function RoomDetailPage() {
 
           {/* Queue Tab Content */}
           {activeTab === 'queue' && (
-            <div className="flex-1 flex flex-col justify-between">
-              <div className="space-y-2 overflow-y-auto">
-                {queue.map((item, idx) => (
-                  <div
-                    key={item.id}
-                    className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
-                      item.isCurrent
-                        ? 'bg-violet-950/30 border-violet-500/30 text-white'
-                        : 'bg-white/5 border-white/5 text-slate-300'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-bold text-violet-400">#{idx + 1}</span>
-                        <p className="font-semibold truncate max-w-[140px]">{item.title}</p>
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        {item.artist} &bull; by {item.requestedBy}
-                      </p>
-                    </div>
-                    <span className="text-[10px] text-slate-500">{item.duration}</span>
-                  </div>
-                ))}
-              </div>
-
-              <button
-                onClick={() => alert('Search & Song Selection modal scheduled for Sprint 3')}
-                className="mt-4 w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <Plus className="w-4 h-4 text-violet-400" />
-                <span>Add Song to Queue</span>
-              </button>
+            <div className="flex-1 flex flex-col min-h-[380px]">
+              <RoomSongQueue
+                queue={karaoke.queue}
+                currentItem={karaoke.currentItem}
+                currentUserId={currentUser?.id}
+                isHost={Boolean(isHost)}
+                canAddSongs={karaoke.canAddSongs}
+                isMutating={karaoke.isMutating}
+                onRemove={karaoke.removeFromQueue}
+                onReorder={karaoke.reorderQueue}
+                onOpenSearch={() => setIsSearchOpen(true)}
+              />
             </div>
           )}
         </div>
@@ -674,6 +628,14 @@ export default function RoomDetailPage() {
           }
         }}
         onCancel={() => setKickTarget(null)}
+      />
+
+      {/* Song Search & Queue Dialog */}
+      <SongSearchDialog
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onSelectSong={karaoke.addToQueue}
+        isAddingSong={karaoke.isMutating}
       />
     </div>
   );

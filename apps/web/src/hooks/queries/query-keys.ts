@@ -28,4 +28,10 @@ export const queryKeys = {
     messages: (roomId: string) => [...queryKeys.chat.all, 'messages', roomId] as const,
     activities: (roomId: string) => [...queryKeys.chat.all, 'activities', roomId] as const,
   },
+  karaoke: {
+    all: ['karaoke'] as const,
+    queue: (roomId: string) => [...queryKeys.karaoke.all, 'queue', roomId] as const,
+    playback: (roomId: string) => [...queryKeys.karaoke.all, 'playback', roomId] as const,
+    songs: (query?: Record<string, unknown>) => [...queryKeys.karaoke.all, 'songs', query ?? {}] as const,
+  },
 };

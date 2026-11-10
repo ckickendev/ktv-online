@@ -18,6 +18,12 @@ import { publishRoomStateEvent } from '../../realtime/room-state.publisher.js';
 import { presenceManager } from '../../realtime/presence.manager.js';
 import { RoomReconciliationService } from './room-reconciliation.service.js';
 import { voiceService } from '../voice/voice.service.js';
+import { karaokeService } from '../karaoke/karaoke.service.js';
+import { getSocketServer } from '../../realtime/socket.server.js';
+import {
+  broadcastKaraokeQueueUpdated,
+  broadcastKaraokePlaybackUpdated,
+} from '../../realtime/karaoke.events.js';
 import { logger } from '../../utils/logger.js';
 
 const roomReconciliationService = new RoomReconciliationService();
@@ -269,6 +275,13 @@ export class RoomService {
         { reason: 'Room has been closed by host' },
         room.stateVersion
       );
+
+      // 4. Clean up karaoke queue and playback for closed room
+      try {
+        await karaokeService.handleRoomClosed(id);
+      } catch (err) {
+        logger.error({ err, roomId: id }, 'Error cleaning up karaoke for closed room');
+      }
     }
 
     return room;
@@ -564,6 +577,20 @@ export class RoomService {
     // Invalidate/disconnect active LiveKit voice session for leaving user
     try {
       await voiceService.evictLiveKitParticipant(roomId, userId);
+    } catch {
+      // Non-blocking
+    }
+
+    // Clean up queued songs and advance playback if leaving user is current singer
+    try {
+      const departureResult = await karaokeService.handleMemberDeparted(roomId, userId);
+      if (departureResult) {
+        const io = getSocketServer();
+        if (io) {
+          broadcastKaraokeQueueUpdated(io, roomId, departureResult.queue, 'removed');
+          broadcastKaraokePlaybackUpdated(io, roomId, departureResult.playback);
+        }
+      }
     } catch {
       // Non-blocking
     }

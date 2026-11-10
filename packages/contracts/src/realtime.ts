@@ -106,6 +106,11 @@ export const SOCKET_EVENTS = {
     CHAT_REACTION_ADD: 'chat:reaction:add',
     CHAT_REACTION_REMOVE: 'chat:reaction:remove',
     CHAT_MESSAGE_DELETE: 'chat:message:delete',
+    KARAOKE_QUEUE_ADD: 'karaoke:queue:add',
+    KARAOKE_QUEUE_REMOVE: 'karaoke:queue:remove',
+    KARAOKE_QUEUE_REORDER: 'karaoke:queue:reorder',
+    KARAOKE_PLAYBACK_COMMAND: 'karaoke:playback:command',
+    KARAOKE_STATE_REQUEST: 'karaoke:state:request',
   },
   SERVER: {
     PRESENCE_SNAPSHOT: 'room:presence:snapshot',
@@ -121,6 +126,10 @@ export const SOCKET_EVENTS = {
     CHAT_ERROR: 'chat:error',
     ACTIVITY_NEW: 'room:activity:new',
     MEMBER_KICKED: 'room:member:kicked',
+    KARAOKE_QUEUE_UPDATED: 'karaoke:queue:updated',
+    KARAOKE_PLAYBACK_UPDATED: 'karaoke:playback:updated',
+    KARAOKE_SNAPSHOT: 'karaoke:snapshot',
+    KARAOKE_ERROR: 'karaoke:error',
     ERROR: 'error',
   },
 } as const;

@@ -1,0 +1,190 @@
+import { z } from 'zod';
+
+// ==========================================
+// SONG CATALOG CONTRACTS
+// ==========================================
+
+export const SongMediaAvailabilitySchema = z.enum([
+  'available',
+  'restricted',
+  'unavailable',
+  'fixture_mock',
+]);
+export type SongMediaAvailability = z.infer<typeof SongMediaAvailabilitySchema>;
+
+export const SongDtoSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  providerSongId: z.string(),
+  title: z.string().min(1),
+  artist: z.string().min(1),
+  thumbnailUrl: z.string().nullable().optional(),
+  durationMs: z.number().int().positive(),
+  language: z.string().default('en'),
+  genre: z.string().default('pop'),
+  mediaAvailability: SongMediaAvailabilitySchema.default('fixture_mock'),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type SongDto = z.infer<typeof SongDtoSchema>;
+
+export const SongSearchQuerySchema = z.object({
+  q: z.string().optional().default(''),
+  genre: z.string().optional(),
+  language: z.string().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(50).default(20),
+});
+export type SongSearchQuery = z.infer<typeof SongSearchQuerySchema>;
+
+export const SongSearchResponseSchema = z.object({
+  songs: z.array(SongDtoSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  limit: z.number().int().positive(),
+  hasMore: z.boolean(),
+});
+export type SongSearchResponse = z.infer<typeof SongSearchResponseSchema>;
+
+// ==========================================
+// ROOM SONG QUEUE CONTRACTS
+// ==========================================
+
+export const QueueItemStatusSchema = z.enum([
+  'queued',
+  'playing',
+  'completed',
+  'skipped',
+  'removed',
+  'failed',
+]);
+export type QueueItemStatus = z.infer<typeof QueueItemStatusSchema>;
+
+export const RoomQueueRequesterDtoSchema = z.object({
+  id: z.string(),
+  username: z.string(),
+  displayName: z.string().optional(),
+  avatar: z.string().nullable().optional(),
+});
+export type RoomQueueRequesterDto = z.infer<typeof RoomQueueRequesterDtoSchema>;
+
+export const RoomQueueItemDtoSchema = z.object({
+  id: z.string(),
+  roomId: z.string(),
+  songId: z.string(),
+  song: SongDtoSchema,
+  requestedBy: RoomQueueRequesterDtoSchema,
+  position: z.number().int().nonnegative(),
+  status: QueueItemStatusSchema,
+  queueVersion: z.number().int().positive(),
+  addedAt: z.string(),
+  startedAt: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+  removedAt: z.string().nullable().optional(),
+});
+export type RoomQueueItemDto = z.infer<typeof RoomQueueItemDtoSchema>;
+
+export const RoomQueueSnapshotDtoSchema = z.object({
+  roomId: z.string(),
+  items: z.array(RoomQueueItemDtoSchema),
+  queueVersion: z.number().int().positive(),
+  totalCount: z.number().int().nonnegative(),
+  maxQueueSize: z.number().int().positive().default(50),
+});
+export type RoomQueueSnapshotDto = z.infer<typeof RoomQueueSnapshotDtoSchema>;
+
+export const AddQueueItemDtoSchema = z.object({
+  songId: z.string().min(1, 'Song ID is required'),
+});
+export type AddQueueItemDto = z.infer<typeof AddQueueItemDtoSchema>;
+
+export const RemoveQueueItemDtoSchema = z.object({
+  itemId: z.string().min(1, 'Queue item ID is required'),
+});
+export type RemoveQueueItemDto = z.infer<typeof RemoveQueueItemDtoSchema>;
+
+export const ReorderQueueDtoSchema = z.object({
+  itemIds: z.array(z.string().min(1)).min(1, 'Ordered item IDs are required'),
+  expectedQueueVersion: z.number().int().positive().optional(),
+});
+export type ReorderQueueDto = z.infer<typeof ReorderQueueDtoSchema>;
+
+// ==========================================
+// SERVER-AUTHORITATIVE PLAYBACK CONTRACTS
+// ==========================================
+
+export const PlaybackStatusSchema = z.enum([
+  'idle',
+  'loading',
+  'playing',
+  'paused',
+  'ended',
+  'error',
+]);
+export type PlaybackStatus = z.infer<typeof PlaybackStatusSchema>;
+
+export const PlaybackStateDtoSchema = z.object({
+  roomId: z.string(),
+  currentQueueItemId: z.string().nullable(),
+  currentItem: RoomQueueItemDtoSchema.nullable().optional(),
+  status: PlaybackStatusSchema,
+  positionMs: z.number().int().nonnegative(),
+  anchorStartedAt: z.string().nullable().optional(),
+  pausedAt: z.string().nullable().optional(),
+  playbackVersion: z.number().int().positive(),
+  updatedAt: z.string(),
+});
+export type PlaybackStateDto = z.infer<typeof PlaybackStateDtoSchema>;
+
+export const PlaybackCommandTypeSchema = z.enum([
+  'play',
+  'pause',
+  'seek',
+  'skip',
+  'stop',
+]);
+export type PlaybackCommandType = z.infer<typeof PlaybackCommandTypeSchema>;
+
+export const PlaybackCommandDtoSchema = z.object({
+  command: PlaybackCommandTypeSchema,
+  positionMs: z.number().int().nonnegative().optional(),
+  expectedPlaybackVersion: z.number().int().positive().optional(),
+  correlationId: z.string().optional(),
+});
+export type PlaybackCommandDto = z.infer<typeof PlaybackCommandDtoSchema>;
+
+export const KaraokeSnapshotDtoSchema = z.object({
+  roomId: z.string(),
+  playback: PlaybackStateDtoSchema,
+  queue: RoomQueueSnapshotDtoSchema,
+  serverTimestamp: z.string(),
+});
+export type KaraokeSnapshotDto = z.infer<typeof KaraokeSnapshotDtoSchema>;
+
+// ==========================================
+// REALTIME SOCKET.IO EVENT PAYLOADS
+// ==========================================
+
+export const KaraokeQueueUpdatedPayloadSchema = z.object({
+  roomId: z.string(),
+  queue: RoomQueueSnapshotDtoSchema,
+  action: z.enum(['added', 'removed', 'reordered', 'status_changed', 'cleared']),
+  affectedItemId: z.string().optional(),
+  occurredAt: z.string(),
+});
+export type KaraokeQueueUpdatedPayload = z.infer<typeof KaraokeQueueUpdatedPayloadSchema>;
+
+export const KaraokePlaybackUpdatedPayloadSchema = z.object({
+  roomId: z.string(),
+  playback: PlaybackStateDtoSchema,
+  command: PlaybackCommandTypeSchema.optional(),
+  initiatedByUserId: z.string().optional(),
+  occurredAt: z.string(),
+});
+export type KaraokePlaybackUpdatedPayload = z.infer<typeof KaraokePlaybackUpdatedPayloadSchema>;
+
+export const KaraokeStateRequestPayloadSchema = z.object({
+  roomId: z.string().min(1, 'Room ID is required'),
+  correlationId: z.string().optional(),
+});
+export type KaraokeStateRequestPayload = z.infer<typeof KaraokeStateRequestPayloadSchema>;

@@ -5,6 +5,12 @@ import { logger } from '../utils/logger.js';
 import { socketAuthMiddleware, AuthenticatedSocketData } from './socket.auth.js';
 import { registerRoomEvents, getRoomChannel } from './room.events.js';
 import { registerChatEvents } from './chat.events.js';
+import {
+  registerKaraokeEvents,
+  broadcastKaraokeQueueUpdated,
+  broadcastKaraokePlaybackUpdated,
+} from './karaoke.events.js';
+import { karaokeService } from '../modules/karaoke/karaoke.service.js';
 import { presenceManager } from './presence.manager.js';
 import { SOCKET_EVENTS } from '@ktv/contracts';
 
@@ -50,6 +56,9 @@ export function createSocketServer(
 
     // Register chat, reaction, and moderation event handlers
     registerChatEvents(io, socket);
+
+    // Register karaoke queue and playback event handlers
+    registerKaraokeEvents(io, socket);
   });
 
   ioInstance = io;
@@ -75,6 +84,13 @@ export async function broadcastRoomClosed(roomId: string, reason = 'Room has bee
     reason,
   });
 
+  // Clean up karaoke state for closed room
+  try {
+    await karaokeService.handleRoomClosed(roomId);
+  } catch (err) {
+    logger.error({ err, roomId }, 'Error cleaning up karaoke for closed room');
+  }
+
   // Clear presence state for this room
   presenceManager.clearRoom(roomId);
 
@@ -87,7 +103,7 @@ export async function broadcastRoomClosed(roomId: string, reason = 'Room has bee
 
 /**
  * Evict a member kicked by the host: notify their sockets, remove them from the channel,
- * clear their presence, and notify the remaining room occupants.
+ * clear their presence, clean up their queued songs, and notify the remaining room occupants.
  */
 export async function evictKickedMember(
   roomId: string,
@@ -115,7 +131,18 @@ export async function evictKickedMember(
   // 2. Remove user from room presence
   const presenceResult = presenceManager.removeUserFromRoom(roomId, userId);
 
-  // 3. Broadcast member:left to remaining occupants
+  // 3. Clean up user's queued karaoke songs and advance playback if they were singing
+  try {
+    const departureResult = await karaokeService.handleMemberDeparted(roomId, userId);
+    if (departureResult) {
+      broadcastKaraokeQueueUpdated(ioInstance, roomId, departureResult.queue, 'removed');
+      broadcastKaraokePlaybackUpdated(ioInstance, roomId, departureResult.playback);
+    }
+  } catch (err) {
+    logger.error({ err, roomId, userId }, 'Error cleaning up karaoke for kicked member');
+  }
+
+  // 4. Broadcast member:left to remaining occupants
   if (presenceResult) {
     ioInstance.to(channel).emit(SOCKET_EVENTS.SERVER.MEMBER_LEFT, {
       roomId,
