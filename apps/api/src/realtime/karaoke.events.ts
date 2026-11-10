@@ -13,6 +13,7 @@ import {
   SocketAckResponse,
 } from '@ktv/contracts';
 import { karaokeService } from '../modules/karaoke/karaoke.service.js';
+import { UnsupportedTopologyError } from '../database/transaction.js';
 import { getRoomChannel } from './room.events.js';
 import { logger } from '../utils/logger.js';
 import { AuthenticatedSocketData } from './socket.auth.js';
@@ -219,17 +220,22 @@ export function registerKaraokeEvents(
           correlationId: payload.correlationId,
         });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'FAILED_TO_REORDER_QUEUE';
+        let message = err instanceof Error ? err.message : 'FAILED_TO_REORDER_QUEUE';
+        let userMessage = 'Unable to reorder queue';
+        if (err instanceof UnsupportedTopologyError || message.includes('UNSUPPORTED_TOPOLOGY')) {
+          message = 'UNSUPPORTED_TOPOLOGY_FOR_REORDER';
+          userMessage = 'Queue reordering requires MongoDB replica set transactions and is disabled in standalone mode.';
+        }
         logger.warn({ err, userId: user.id }, 'Karaoke queue reorder rejected');
 
         socket.emit(SOCKET_EVENTS.SERVER.KARAOKE_ERROR, {
           code: message,
-          message: 'Unable to reorder queue',
+          message: userMessage,
         });
 
         ack?.({
           success: false,
-          error: { code: message, message: 'Failed to reorder queue' },
+          error: { code: message, message: userMessage },
         });
       }
     }

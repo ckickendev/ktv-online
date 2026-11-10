@@ -216,18 +216,20 @@ $$
 
 ### 6.2 Concurrency, Topology & Monotonicity
 1. **Single Playing Track**: MongoDB partial unique index guarantees that two concurrent requests cannot insert or update two queue items to `playing` status in the same room.
-2. **Production Topology Enforcement**:
-   - Production requires a MongoDB Replica Set (Atlas or multi-node cluster) supporting multi-document ACID transactions.
-   - [checkTransactionSupport](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts) probes database capabilities at startup. If standalone MongoDB is detected in production, the application fails closed immediately with [UnsupportedTopologyError](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts).
-   - In local development (`NODE_ENV === 'development'`), standalone MongoDB is supported via the Recoverable CAS & Reconciliation Protocols, preserving a lightweight single-container developer workflow.
-3. **Queue Reorder Protocol**:
-   - In transaction mode, all queue item reads, bulk updates, and `queueVersion` advancements share the same transaction session.
-   - Enforces full coverage validation (`dto.itemIds.length === queuedItems.length`, unique IDs) and atomic version advancement via CAS/transaction.
-   - Any stale reorder returns a structured `STALE_QUEUE_VERSION` (HTTP 409) conflict.
-4. **Distributed Lease Fencing**:
+2. **Production & Staging Topology Enforcement**:
+   - Production (`production`) and staging (`staging`) strictly require a MongoDB Replica Set supporting multi-document ACID transactions.
+   - [checkTransactionSupport](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts) probes database capabilities at startup with a bounded 5000ms timeout. If standalone MongoDB is detected or transactions are unsupported in production or staging, the application fails closed immediately with [UnsupportedTopologyError](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts).
+   - Ingress readiness (`/api/v1/health/ready`) returns HTTP 503 if transactions are unavailable in production or staging.
+   - In local development (`NODE_ENV === 'development'`), standalone MongoDB is supported for basic workflows under best-effort recovery protocols with explicit startup warnings that standalone mode is NOT ACID-compatible.
+3. **Queue Reorder Protocol (Option A Enforced)**:
+   - Queue reorder requires multi-document atomicity across all queued items and `queueVersion`.
+   - On standalone MongoDB, multi-document reordering is **explicitly disabled** (Option A). Calling `reorderQueue` throws [UnsupportedTopologyError](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts), returning HTTP 501 / `UNSUPPORTED_TOPOLOGY_FOR_REORDER`.
+   - In replica set transaction mode, all queue item reads, bulk updates, and `queueVersion` advancements share the same transaction session, with full coverage validation and structured `STALE_QUEUE_VERSION` (HTTP 409) conflict handling.
+4. **Distributed Lease Fencing & Atomic Release**:
    - Background workers claim overdue playbacks using atomic `findOneAndUpdate` that assigns a cryptographically unique `leaseToken`, `leaseExpiresAt`, and increments `leaseVersion`.
    - Outcome writes commit via [commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) verifying `playbackVersion`, `currentQueueItemId`, `leaseToken`, and `leaseExpiresAt > now`.
-   - If Worker A's lease expires and Worker B acquires the lease, Worker A's outcome write updates zero documents and aborts cleanly.
+   - Lease releases ([releasePlaybackLease](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts)) strictly match `{ roomId, leaseToken }` and increment `leaseVersion` monotonically via `$inc: { leaseVersion: 1 }`. If Worker A's lease expired and Worker B acquired generation 2, Worker A's release matches 0 documents and cannot clear Worker B's lease.
+   - Lease expiry sweeps ([releaseExpiredLeases](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts)) conditionally filter `{ leaseExpiresAt: { $lte: now }, leaseToken: { $ne: null } }` and increment `leaseVersion`.
    - Lease renewal via [renewPlaybackLease](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) requires matching `leaseToken` and `leaseExpiresAt > now`.
 5. **Version Responsibilities & Monotonicity**:
    - `queueVersion`: Co-located on [RoomPlaybackStateModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) as the authoritative room-scoped queue coordinator. Advanced monotonically on enqueues, removals, reorders, position rebalancing, and track advancements.
@@ -235,8 +237,9 @@ $$
    - `stateVersion`: Authoritative coordinator on [RoomModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) for room membership, participation, and lifecycle.
 6. **Room Closure**: Closing a room immediately stops playback, sets state to `idle`, marks all active queue items `removed`, cancels precision timers, and increments versions within an atomic transaction.
 7. **Member Departure**: When a member leaves or is evicted, their queued items are cleanly removed, remaining items are rebalanced, `queueVersion` is incremented, and if their song was playing, playback advances to the next track with current item identity fencing.
-8. **Self-Healing Reconciliation**:
+8. **Self-Healing Reconciliation & Ambiguity Safety**:
    - Startup and periodic sweeps detect and repair orphaned references, closed room state leaks, stray playing items on idle playback, position gaps, and expired worker leases.
+   - **Deterministic Gaps vs Ambiguous Collisions**: Invariant 7 distinguishes clean sequential gaps (compacted deterministically) from duplicate position collisions. When duplicate positions occur, reconciliation logs structured diagnostics, flags `operatorInterventionRequired: true` and `ambiguityDetected: true`, and refuses to invent an ordering or advance `queueVersion`.
    - For `QUEUE_PLAYING_ITEM_WITH_IDLE_PLAYBACK`, reconciliation executes a CAS fence on `RoomPlaybackStateModel` (requiring `status: 'idle'` and matching `playbackVersion`) and targets only the specific orphaned item IDs. If a concurrent play command activated the stage, the CAS fence aborts without modifying items.
    - Realtime publication occurs strictly post-commit.
 

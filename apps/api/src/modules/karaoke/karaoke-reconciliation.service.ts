@@ -26,7 +26,11 @@ export interface KaraokeReconcileResult {
     | 'ORPHANED_PLAYING_ITEM_CLEARED'
     | 'OVERDUE_PLAYBACK_COMPLETED'
     | 'QUEUE_POSITIONS_REBALANCED'
-    | 'EXPIRED_LEASE_CLEARED';
+    | 'EXPIRED_LEASE_CLEARED'
+    | 'AMBIGUOUS_QUEUE_FLAGGED'
+    | 'AMBIGUOUS_QUEUE_BEST_EFFORT_REBALANCED';
+  ambiguityDetected?: boolean;
+  operatorInterventionRequired?: boolean;
 }
 
 export interface KaraokeReconcileSummary {
@@ -347,26 +351,61 @@ export class KaraokeReconciliationService {
 
     // 7. Queue Position Gaps & Ordering Check
     const uniquePositions = new Set(queuedItems.map((i) => i.position));
+    const hasDuplicatePositions = uniquePositions.size !== queuedItems.length;
     const hasPositionGap =
-      uniquePositions.size !== queuedItems.length ||
+      hasDuplicatePositions ||
       queuedItems.some((item, i) => item.position !== i + 1);
 
     if (hasPositionGap) {
-      inconsistencies.push('QUEUE_POSITIONS_NOT_SEQUENTIAL');
+      if (hasDuplicatePositions) {
+        // AMBIGUOUS COLLISION: Two or more queued items share the same position.
+        // Reconciliation cannot infer the original intended order without durable logs.
+        inconsistencies.push('AMBIGUOUS_QUEUE_DUPLICATE_POSITIONS_DETECTED');
+        logger.warn(
+          {
+            roomId,
+            totalQueued: queuedItems.length,
+            uniquePositionsCount: uniquePositions.size,
+            positions: queuedItems.map((item) => ({ id: item._id.toString(), pos: item.position })),
+          },
+          '⚠️ Ambiguous queue position collision detected; cannot infer host intended order. Normalizing order as best-effort fallback.'
+        );
 
-      if (!dryRun) {
-        await karaokeService.rebalanceQueuePositions(roomId);
-        await RoomPlaybackStateModel.findOneAndUpdate(
-          { roomId: roomObjectId },
-          { $inc: { queueVersion: 1 } }
-        ).exec();
+        if (!dryRun) {
+          // Rebalance as best-effort normalization to avoid deadlocks
+          await karaokeService.rebalanceQueuePositions(roomId);
+          await RoomPlaybackStateModel.findOneAndUpdate(
+            { roomId: roomObjectId },
+            { $inc: { queueVersion: 1 } }
+          ).exec();
 
-        if (actionTaken === 'NONE') {
-          actionTaken = 'QUEUE_POSITIONS_REBALANCED';
+          if (actionTaken === 'NONE') {
+            actionTaken = 'AMBIGUOUS_QUEUE_BEST_EFFORT_REBALANCED';
+          }
+        } else {
+          if (actionTaken === 'NONE') {
+            actionTaken = 'AMBIGUOUS_QUEUE_FLAGGED';
+          }
         }
       } else {
-        if (actionTaken === 'NONE') {
-          actionTaken = 'QUEUE_POSITIONS_REBALANCED';
+        // DETERMINISTIC GAP: All items have unique, strictly ordered positions (e.g. [1, 3, 5] after removals).
+        // Relative order is fully preserved when compacted to contiguous [1, 2, 3].
+        inconsistencies.push('QUEUE_POSITIONS_NOT_SEQUENTIAL');
+
+        if (!dryRun) {
+          await karaokeService.rebalanceQueuePositions(roomId);
+          await RoomPlaybackStateModel.findOneAndUpdate(
+            { roomId: roomObjectId },
+            { $inc: { queueVersion: 1 } }
+          ).exec();
+
+          if (actionTaken === 'NONE') {
+            actionTaken = 'QUEUE_POSITIONS_REBALANCED';
+          }
+        } else {
+          if (actionTaken === 'NONE') {
+            actionTaken = 'QUEUE_POSITIONS_REBALANCED';
+          }
         }
       }
     }
@@ -388,6 +427,8 @@ export class KaraokeReconciliationService {
       }
     }
 
+    const isAmbiguous = inconsistencies.includes('AMBIGUOUS_QUEUE_DUPLICATE_POSITIONS_DETECTED');
+
     return {
       roomId,
       roomStatus: room.status,
@@ -395,8 +436,10 @@ export class KaraokeReconciliationService {
       playingItemCount: playingItems.length,
       queuedItemCount: queuedItems.length,
       inconsistenciesDetected: inconsistencies,
-      reconciled: !dryRun && actionTaken !== 'NONE',
+      reconciled: !dryRun && actionTaken !== 'NONE' && !isAmbiguous,
       actionTaken,
+      ambiguityDetected: isAmbiguous,
+      operatorInterventionRequired: isAmbiguous,
     };
   }
 

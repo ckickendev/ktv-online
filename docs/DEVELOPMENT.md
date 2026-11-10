@@ -64,6 +64,17 @@ pnpm docker:down
 
 Alternatively, if you run a native MongoDB instance on `mongodb://127.0.0.1:27017`, the application connects automatically.
 
+### Standalone vs. Replica Set Development Note
+- **Default Standalone Mode**: The default `docker-compose.yml` runs a standalone MongoDB container. Standalone MongoDB **does not support multi-document ACID transactions**. In standalone mode, `reorderQueue` is disabled (Option A) and will return HTTP 501 / `UNSUPPORTED_TOPOLOGY_FOR_REORDER`.
+- **Testing Queue Reordering Locally**: If you need to test multi-document queue reordering locally or match production transaction semantics, run MongoDB with a single-node replica set:
+  ```bash
+  # Start native mongod with replica set rs0
+  mongod --dbpath /data/db --replSet rs0 --bind_ip 127.0.0.1
+  
+  # In another terminal, initiate the replica set (once)
+  mongosh --eval "rs.initiate()"
+  ```
+
 ---
 
 ## 5. Running the Applications

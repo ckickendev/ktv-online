@@ -15,7 +15,11 @@ import { RoomMembershipModel } from '../rooms/membership.model.js';
 import { SongModel } from './song.model.js';
 import { RoomQueueItemModel, IRoomQueueItemDocument } from './room-queue-item.model.js';
 import { RoomPlaybackStateModel, IRoomPlaybackStateDocument } from './room-playback-state.model.js';
-import { runInTransaction } from '../../database/transaction.js';
+import {
+  runInTransaction,
+  isTransactionSupported,
+  UnsupportedTopologyError,
+} from '../../database/transaction.js';
 import { logger } from '../../utils/logger.js';
 
 export interface IPlaybackScheduler {
@@ -574,8 +578,25 @@ export class KaraokeService {
       throw new Error('FORBIDDEN_HOST_ONLY');
     }
 
-    // 3. Execute reorder inside transaction / CAS boundary
+    // 3. Topology Guard (Option A): Standalone MongoDB cannot guarantee multi-document atomicity for reorder
+    if (!isTransactionSupported()) {
+      logger.warn(
+        { roomId, userId, transitionId },
+        'Rejected queue reorder command: MongoDB deployment is standalone. Queue reorder requires replica set multi-document transactions.'
+      );
+      throw new UnsupportedTopologyError(
+        'Queue reordering requires MongoDB replica set transactions and is not supported on standalone MongoDB instances. Configure a MongoDB replica set to enable queue reordering.'
+      );
+    }
+
+    // 4. Execute reorder inside transaction boundary
     return runInTransaction(async (session: ClientSession | null) => {
+      if (!session) {
+        throw new UnsupportedTopologyError(
+          'Queue reordering requires an active transaction session. Standalone mode cannot execute atomic multi-document reorder.'
+        );
+      }
+
       const playbackState = await RoomPlaybackStateModel.findOne({ roomId: roomObjectId })
         .session(session || null)
         .exec();

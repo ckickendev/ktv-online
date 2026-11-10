@@ -2,15 +2,17 @@
 
 ## 1. Overview & Consistency Strategy
 
-Sprint 2.4.1.2 establishes strict deployment-level consistency guarantees and verifies the cross-collection synchronization mechanisms of the karaoke domain under concurrent host commands, singer departures, room closures, worker execution delays, and reconciliation passes.
+Sprint 2.4.1.2.1 establishes strict deployment-level consistency guarantees and verifies the cross-collection synchronization mechanisms of the karaoke domain under concurrent host commands, singer departures, room closures, worker execution delays, and reconciliation passes.
 
 ### Deployment Capability Matrix
 
-| Environment | MongoDB Topology | Transaction Support | Enforced Behavior |
+| Capability | Local standalone | Replica set staging | Replica set production |
 | :--- | :--- | :--- | :--- |
-| **Local Development** | Standalone MongoDB (`docker-compose.yml` or native `mongod`) | Auto-detected: supported if replica set configured, unsupported if standalone | Runs under Recoverable CAS & Reconciliation Protocols when standalone; runs full ACID transactions when replica set is active. Explicitly logs topology mode. |
-| **Staging** | MongoDB Replica Set (Atlas or multi-node container) | Required & Probed | Fails closed on startup or execution if transactions are unsupported. Mirrors production transaction boundaries. |
-| **Production** | MongoDB Atlas / Replica Set (minimum 3-node cluster) | Required & Strictly Enforced | Strict Fail-Closed: Startup verification probe (`checkTransactionSupport`) rejects standalone topologies. Any operation requiring transactions throws [UnsupportedTopologyError](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts) if executed without a replica set session. Zero silent degradation to non-atomic writes. |
+| **Basic single-document writes** | Supported | Supported | Supported |
+| **Multi-document ACID transaction** | Unsupported | Required (Fail-Closed) | Required (Fail-Closed) |
+| **Atomic queue reorder** | Unsupported (Option A: Rejected with 501) | Supported | Supported |
+| **Multi-document playback transitions** | Restricted by operation (best-effort / single-document CAS) | Supported | Supported |
+| **Reconciliation** | Best-effort, conservative (flags ambiguity, no invented ordering) | Transaction-protected | Transaction-protected |
 
 ---
 
@@ -18,7 +20,7 @@ Sprint 2.4.1.2 establishes strict deployment-level consistency guarantees and ve
 
 | Transition Pathway | Database Documents Modified | Production Replica Set Protection | Local Standalone CAS Protection | Fencing / Idempotency Key |
 | :--- | :--- | :--- | :--- | :--- |
-| **Queue Reorder** | Multiple [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts) documents, [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | Full-coverage check (`INVALID_REORDER_ITEM_COUNT`) + CAS on `queueVersion` | `expectedQueueVersion` |
+| **Queue Reorder** | Multiple [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts) documents, [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | **Rejected (Option A)**: Throws [UnsupportedTopologyError](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts) (HTTP 501 / `UNSUPPORTED_TOPOLOGY_FOR_REORDER`) | `expectedQueueVersion` |
 | **Queue Item Removal** | Target [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), remaining queued items (rebalanced), [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | Sequential CAS update + position rebalancing | Monotonic `queueVersion` increment |
 | **Natural Track Completion** | Old [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), Next [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts), [Room](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | CAS candidate claim + [commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) with lease verification | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` + `leaseToken` |
 | **Host / Singer Skip** | Old [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), Next [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts), [Room](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | Preempts worker lease, CAS candidate claim + conditional playback update | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` |
@@ -108,3 +110,38 @@ This prevents a worker from renewing a lease that was already claimed by another
    - If a valid play command committed in the interim, `fenced` returns `null`. Reconciliation **aborts immediately** with zero modifications.
    - Only if `fenced` succeeds does reconciliation complete the targeted orphan items.
    - Realtime publication is dispatched strictly after verified database commits.
+
+---
+
+## 7. Atomic Worker Lease Release Guarantees
+
+### 7.1 Single-Room Release Atomicity
+In [RoomPlaybackStateModel.releasePlaybackLease](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts):
+- Requires non-empty string `leaseToken`.
+- Atomically filters by `{ roomId, leaseToken }`.
+- Sets `claimedBy`, `claimedAt`, `leaseExpiresAt`, `leaseToken` to `null`.
+- Increments `leaseVersion` monotonically via `$inc: { leaseVersion: 1 }`.
+- **Race Prevention Guarantee**: If Worker A's lease expired and Worker B acquired generation 2 with `token_B`, Worker A's subsequent release matches 0 documents and returns `false`. Worker B's active lease is preserved untouched.
+
+### 7.2 Bulk Expiry Sweep Atomicity
+In [RoomPlaybackStateModel.releaseExpiredLeases](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts):
+- Conditional filter: `{ leaseExpiresAt: { $lte: now }, leaseToken: { $ne: null } }`.
+- Clears lease fields and executes `$inc: { leaseVersion: 1 }`.
+- Never queries expired leases first and follows with an unfenced update.
+- Re-acquired leases are protected by their updated `leaseExpiresAt > now` and are never touched.
+
+---
+
+## 8. Reconciliation Safety & Ambiguity Handling Policy
+
+### 8.1 Gap Disambiguation Invariant
+In [KaraokeReconciliationService](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/karaoke-reconciliation.service.ts) (Invariant 7):
+- **Deterministic Sequential Gaps** ($unique == total$):
+  When item removals leave gaps (e.g. $[1, 3, 4]$), positions are deterministically compacted to $[1, 2, 3]$. User order and intent are unambiguous and preserved.
+- **Ambiguous Position Collisions** ($unique < total$):
+  When duplicate positions exist (e.g. $[1, 1, 2, 2]$), there is no durable log of original intent. Reconciliation:
+  1. Emits structured diagnostics with room and queue item identifiers.
+  2. Sets `ambiguityDetected: true` and `operatorInterventionRequired: true`.
+  3. Returns `AMBIGUOUS_QUEUE_FLAGGED`.
+  4. Refuses to invent arbitrary ordering or increment `queueVersion`.
+  5. Suppresses realtime queue broadcasts until resolved.

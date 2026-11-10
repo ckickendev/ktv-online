@@ -187,11 +187,16 @@ RoomPlaybackStateSchema.statics.claimDuePlayback = async function (
 
 /**
  * Releases a worker lease after execution.
+ * Fenced strictly by matching roomId and leaseToken to prevent clearing a newer worker's lease.
  */
 RoomPlaybackStateSchema.statics.releasePlaybackLease = async function (
   roomId: Types.ObjectId | string,
   leaseToken: string
 ): Promise<boolean> {
+  if (!leaseToken || typeof leaseToken !== 'string') {
+    return false;
+  }
+
   const roomObjectId = typeof roomId === 'string' ? new Types.ObjectId(roomId) : roomId;
   const result = await this.updateOne(
     { roomId: roomObjectId, leaseToken },
@@ -202,6 +207,7 @@ RoomPlaybackStateSchema.statics.releasePlaybackLease = async function (
         leaseExpiresAt: null,
         leaseToken: null,
       },
+      $inc: { leaseVersion: 1 },
     }
   ).exec();
 
@@ -240,6 +246,7 @@ RoomPlaybackStateSchema.statics.renewPlaybackLease = async function (
 
 /**
  * Sweeps and clears expired worker leases across all rooms.
+ * Atomic conditional update matches only truly expired, claimed leases and advances leaseVersion.
  */
 RoomPlaybackStateSchema.statics.releaseExpiredLeases = async function (): Promise<number> {
   const now = new Date();
@@ -255,6 +262,7 @@ RoomPlaybackStateSchema.statics.releaseExpiredLeases = async function (): Promis
         leaseExpiresAt: null,
         leaseToken: null,
       },
+      $inc: { leaseVersion: 1 },
     }
   ).exec();
 

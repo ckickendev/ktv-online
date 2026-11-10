@@ -8,7 +8,7 @@ const DEV_DEFAULT_REFRESH_SECRET = 'ktv_online_jwt_refresh_secret_development_ke
 
 export const EnvSchema = z
   .object({
-    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    NODE_ENV: z.enum(['development', 'production', 'test', 'staging']).default('development'),
     PORT: z.coerce.number().int().positive().default(5001),
     MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/ktv_online'),
     JWT_ACCESS_SECRET: z.string().min(16).default(DEV_DEFAULT_ACCESS_SECRET),
@@ -38,7 +38,7 @@ export const EnvSchema = z
     LIVEKIT_WEBHOOK_SECRET: z.string().optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.NODE_ENV === 'production') {
+    if (data.NODE_ENV === 'production' || data.NODE_ENV === 'staging') {
       if (!data.LIVEKIT_URL) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

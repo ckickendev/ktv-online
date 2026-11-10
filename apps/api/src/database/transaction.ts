@@ -3,7 +3,7 @@ import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
 export class UnsupportedTopologyError extends Error {
-  constructor(message = 'MongoDB replica set transactions are required in production but the current topology does not support them.') {
+  constructor(message = 'MongoDB replica set transactions are required in production and staging but the current topology does not support them.') {
     super(message);
     this.name = 'UnsupportedTopologyError';
   }
@@ -22,9 +22,17 @@ let transactionSupportKnown = false;
 let transactionSupported = false;
 
 /**
+ * Returns whether the application is running in an environment requiring strict ACID transactions.
+ */
+export function isProductionOrStaging(): boolean {
+  return env.NODE_ENV === 'production' || env.NODE_ENV === 'staging';
+}
+
+/**
  * Checks whether the current MongoDB deployment supports multi-document transactions.
  * Multi-document transactions require a replica set or sharded cluster.
- * In production (NODE_ENV === 'production'), unsupported topology triggers a fail-closed error.
+ * In production and staging, unsupported topology triggers a fail-closed error.
+ * Probe execution is bounded by a 5-second timeout to prevent startup hangs.
  */
 export async function checkTransactionSupport(): Promise<boolean> {
   if (transactionSupportKnown) {
@@ -35,54 +43,70 @@ export async function checkTransactionSupport(): Promise<boolean> {
     return false;
   }
 
+  const PROBE_TIMEOUT_MS = 5000;
+
   try {
-    const session = await mongoose.startSession();
-    try {
-      await session.withTransaction(async () => {
-        // No-op transaction test to detect replica set capability
-      });
-      transactionSupported = true;
-      logger.info('📦 MongoDB deployment verified: Multi-document transactions supported (Replica Set)');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (
-        msg.includes('replica set') ||
-        msg.includes('Transaction numbers are only allowed') ||
-        msg.includes('Transactions are not supported')
-      ) {
-        transactionSupported = false;
-        if (env.NODE_ENV === 'production') {
-          logger.fatal(
-            '❌ FATAL: Production environment requires a MongoDB replica set supporting multi-document transactions. Standalone MongoDB detected.'
+    const probePromise = (async () => {
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          // No-op transaction probe: commits zero mutations while proving replica set capability
+        });
+        transactionSupported = true;
+        logger.info('📦 MongoDB deployment verified: Multi-document transactions supported (Replica Set)');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          msg.includes('replica set') ||
+          msg.includes('Transaction numbers are only allowed') ||
+          msg.includes('Transactions are not supported')
+        ) {
+          transactionSupported = false;
+          if (isProductionOrStaging()) {
+            logger.fatal(
+              '❌ FATAL: Production and staging environments require a MongoDB replica set supporting multi-document ACID transactions. Standalone MongoDB detected.'
+            );
+            throw new UnsupportedTopologyError(
+              'Production and staging require a MongoDB replica set supporting multi-document ACID transactions. Standalone MongoDB detected.'
+            );
+          }
+          logger.warn(
+            '⚠️ STANDALONE MONGODB DETECTED: Running in development standalone mode. ' +
+            'Multi-document ACID transactions are NOT supported. ' +
+            'Atomic queue reordering is disabled on this topology. ' +
+            'Background reconciliation recovery operates in best-effort mode.'
           );
-          throw new UnsupportedTopologyError(
-            'Production requires a MongoDB replica set supporting multi-document ACID transactions. Standalone MongoDB detected.'
-          );
+        } else {
+          transactionSupported = false;
+          if (isProductionOrStaging()) {
+            logger.fatal({ err }, '❌ FATAL: MongoDB transaction capability probe failed in production/staging');
+            throw new UnsupportedTopologyError(`MongoDB transaction probe failed in production/staging: ${msg}`);
+          }
+          logger.warn({ err }, '⚠️ MongoDB transaction probe failed; defaulting to standalone best-effort mode');
         }
-        logger.info(
-          '📦 MongoDB deployment verified: Standalone mode detected; using explicit Recoverable CAS & Reconciliation Protocols'
-        );
-      } else {
-        transactionSupported = false;
-        if (env.NODE_ENV === 'production') {
-          logger.fatal({ err }, '❌ FATAL: MongoDB transaction probe failed in production');
-          throw new UnsupportedTopologyError(`MongoDB transaction probe failed in production: ${msg}`);
-        }
-        logger.warn({ err }, '⚠️ MongoDB transaction probe failed; defaulting to Recoverable CAS Protocol');
+      } finally {
+        await session.endSession();
       }
-    } finally {
-      await session.endSession();
-    }
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Transaction probe timed out after ${PROBE_TIMEOUT_MS}ms`));
+      }, PROBE_TIMEOUT_MS);
+      timer.unref();
+    });
+
+    await Promise.race([probePromise, timeoutPromise]);
   } catch (err) {
     if (err instanceof UnsupportedTopologyError) {
       throw err;
     }
     transactionSupported = false;
-    if (env.NODE_ENV === 'production') {
-      logger.fatal({ err }, '❌ FATAL: Could not start MongoDB session in production');
-      throw new UnsupportedTopologyError('Could not start MongoDB session in production');
+    if (isProductionOrStaging()) {
+      logger.fatal({ err }, '❌ FATAL: Could not verify MongoDB transaction capability in production/staging');
+      throw new UnsupportedTopologyError('Could not verify MongoDB transaction capability in production/staging');
     }
-    logger.warn({ err }, '⚠️ Could not start MongoDB session; defaulting to Recoverable CAS Protocol');
+    logger.warn({ err }, '⚠️ Could not execute MongoDB transaction probe; defaulting to standalone best-effort mode');
   }
 
   transactionSupportKnown = true;
@@ -127,7 +151,7 @@ export function setTransactionSupported(supported: boolean): void {
  * Executes a function inside a MongoDB transaction if the deployment supports it,
  * or runs with null session under the Recoverable CAS & State Machine Protocol.
  *
- * In production, this strictly rejects unsupported topologies to prevent silent non-atomic degradation.
+ * In production and staging, this strictly rejects unsupported topologies to prevent silent non-atomic degradation.
  *
  * @param fn Callback that accepts a ClientSession (or null if transactions are unsupported in dev)
  */
@@ -139,9 +163,9 @@ export async function runInTransaction<T>(
   }
 
   if (!transactionSupported) {
-    if (env.NODE_ENV === 'production') {
+    if (isProductionOrStaging()) {
       throw new UnsupportedTopologyError(
-        'Transaction execution failed: Multi-document ACID transactions are mandatory in production but current MongoDB topology does not support them.'
+        'Transaction execution failed: Multi-document ACID transactions are mandatory in production and staging but current MongoDB topology does not support them.'
       );
     }
     // Standalone deployment (development/test only): execute under Recoverable CAS & Fencing Protocol
@@ -165,12 +189,12 @@ export async function runInTransaction<T>(
     ) {
       transactionSupported = false;
       transactionSupportKnown = true;
-      if (env.NODE_ENV === 'production') {
+      if (isProductionOrStaging()) {
         throw new UnsupportedTopologyError(
-          'MongoDB transactions failed due to unsupported topology in production.'
+          'MongoDB transactions failed due to unsupported topology in production/staging.'
         );
       }
-      logger.warn('⚠️ MongoDB runtime reported transactions unsupported; falling back to Recoverable CAS Protocol');
+      logger.warn('⚠️ MongoDB runtime reported transactions unsupported; falling back to standalone best-effort mode');
       return fn(null);
     }
     throw err;

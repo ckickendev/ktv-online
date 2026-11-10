@@ -13,6 +13,7 @@ import {
   broadcastKaraokeQueueUpdated,
 } from '../../realtime/karaoke.events.js';
 import { sendError } from '../../utils/response.js';
+import { UnsupportedTopologyError } from '../../database/transaction.js';
 
 export class KaraokeController {
   /**
@@ -188,7 +189,15 @@ export class KaraokeController {
 
       res.status(200).json(updatedQueue);
     } catch (err: unknown) {
+      if (err instanceof UnsupportedTopologyError) {
+        sendError(res, err.message, 501);
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('UNSUPPORTED_TOPOLOGY')) {
+        sendError(res, msg, 501);
+        return;
+      }
       if (msg === 'FORBIDDEN_HOST_ONLY') {
         sendError(res, 'Only the room host can reorder the song queue', 403);
         return;
