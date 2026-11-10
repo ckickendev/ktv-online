@@ -26,8 +26,11 @@ karaokeRoutes.get('/songs/:songId/audio/resolve', optionalAuth, (req, res, next)
   karaokeController.resolveAudioSource(req, res, next);
 });
 
-// Stream audio content for a song
+// Stream audio content for a song (supports GET and HEAD for Range probes)
 karaokeRoutes.get('/songs/:songId/audio/stream', (req, res, next) => {
+  karaokeController.streamAudio(req, res, next);
+});
+karaokeRoutes.head('/songs/:songId/audio/stream', (req, res, next) => {
   karaokeController.streamAudio(req, res, next);
 });
 

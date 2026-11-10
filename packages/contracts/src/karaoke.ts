@@ -36,6 +36,9 @@ export const ResolvedAudioSourceDtoSchema = z.object({
   mimeType: z.string().default('audio/mpeg'),
   availability: AudioAvailabilitySchema,
   licenseClassification: AudioLicenseClassificationSchema,
+  supportsByteRange: z.boolean().default(true),
+  isPlayable: z.boolean().default(true),
+  durationMs: z.number().int().positive().optional(),
   expiresAt: z.string().nullable().optional(),
   attribution: z.string().nullable().optional(),
 });

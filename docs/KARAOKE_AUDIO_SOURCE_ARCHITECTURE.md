@@ -50,6 +50,10 @@ export interface ResolvedAudioSourceDto {
   expiresAt?: string;
   licenseClassification: AudioLicenseClassification;
   provider: string;
+  attribution?: string;
+  supportsByteRange: boolean;
+  isPlayable: boolean;
+  durationMs?: number;
 }
 ```
 
@@ -132,3 +136,32 @@ To guarantee zero dependency on external copyrighted media, KTVOnline implements
 - **Structure**: 44-byte canonical RIFF WAV header followed by synthesized audio buffers.
 - **Audio Synthesis**: Multi-frequency harmonic chords with ADSR envelopes and gentle stereo panning.
 - **Streaming Support**: Full HTTP 206 Partial Content range requests allowing browser native seek and buffering.
+
+---
+
+## 6. Audio Resolution Network Failure & Recovery Strategy
+
+### 6.1 Failure Classification
+
+| Category | Typical Causes | Classification | Handling Strategy |
+| :--- | :--- | :--- | :--- |
+| **Non-Retryable Domain Error** | Song is metadata-only, not found, or catalog unavailable | Permanent | Fail immediately (`executionState: 'failed'`). Pause audio and clear media pipelines. |
+| **Transient Network Interruption** | Network drop, temporary gateway 502/503/504, DNS hiccup | Transient | Exponential backoff retry with jitter up to 3 attempts (`executionState: 'reconnecting'`). |
+| **Track Preemption** | Host advances or skips song while request in-flight | Preempted | Stale generation discarded via generation fencing (`loadGenerationRef.current`). Cancel retry timers. |
+| **Autoplay Blocked** | Browser policy prohibits unmuted programmatic audio playback | User Interaction Required | Enter `waiting_for_user_interaction`. Prompt user to unlock audio without failing track. |
+
+### 6.2 Retry Backoff Schedule
+
+```typescript
+export const AUDIO_RETRY_CONFIG = {
+  MAX_ATTEMPTS: 3,
+  INITIAL_DELAY_MS: 500,
+  BACKOFF_FACTOR: 2,
+  JITTER_MS: 150,
+} as const;
+```
+1. **Attempt 1**: Immediate fetch.
+2. **Attempt 2**: $500\text{ms} + \text{jitter}$ (500–650 ms).
+3. **Attempt 3**: $1000\text{ms} + \text{jitter}$ (1000–1150 ms).
+4. **Final Failure**: If all 3 attempts fail, transition to `failed` state and offer manual "Retry Audio" control.
+

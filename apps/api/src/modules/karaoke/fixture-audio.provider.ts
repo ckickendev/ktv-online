@@ -26,6 +26,9 @@ export class FixtureAudioSourceProvider implements IKaraokeAudioSourceProvider {
       availability: 'audio_available',
       licenseClassification: song.licenseClassification || 'public_domain',
       attribution: 'Public Domain / Royalty-Free Development Fixture Audio',
+      supportsByteRange: true,
+      isPlayable: true,
+      durationMs: song.durationMs,
     };
   }
 

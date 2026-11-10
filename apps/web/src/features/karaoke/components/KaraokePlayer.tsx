@@ -59,6 +59,7 @@ export function KaraokePlayer({
 
   // Authoritative Audio Engine Hook
   const {
+    executionState,
     isBuffering,
     isAutoplayBlocked,
     audioError,
@@ -134,6 +135,17 @@ export function KaraokePlayer({
         </div>
       )}
 
+      {/* Audio Reconnecting Banner */}
+      {executionState === 'reconnecting' && (
+        <div
+          data-testid="audio-reconnecting-banner"
+          className="flex items-center gap-2 p-3 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 text-xs shadow-lg animate-in fade-in"
+        >
+          <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
+          <span>Reconnecting audio stream... Attempting automatic recovery.</span>
+        </div>
+      )}
+
       {/* Audio Loading Error Banner */}
       {audioError && isAudioAvailable && (
         <div
@@ -181,12 +193,17 @@ export function KaraokePlayer({
               </span>
             )}
 
-            {isBuffering && isPlaying && (
+            {executionState === 'reconnecting' ? (
+              <span className="flex items-center gap-1 text-[11px] text-cyan-300 font-medium">
+                <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
+                Reconnecting...
+              </span>
+            ) : isBuffering && isPlaying ? (
               <span className="flex items-center gap-1 text-[11px] text-amber-300 font-medium">
                 <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
                 Buffering...
               </span>
-            )}
+            ) : null}
 
             <span className="hidden sm:inline text-slate-500 text-[11px]">
               &bull; Server Version: v{playback?.playbackVersion ?? 1}

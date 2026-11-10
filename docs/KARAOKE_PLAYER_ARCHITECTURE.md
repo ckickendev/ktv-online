@@ -121,6 +121,47 @@ A critical failure mode in social karaoke applications is audio feedback loops, 
    - Karaoke backing audio slider operates strictly on `HTMLAudioElement.volume`.
    - Microphone mute toggles `LiveKitRoom.localParticipant.setMicrophoneEnabled(false)`.
    - Changing backing track volume has zero impact on microphone capture levels.
-3. **Lifecycle Teardown**:
-   - Exiting the room immediately pauses and empties `audioRef.current.src = ''`.
-   - Destroys event listeners, preventing ghost audio or duplicate audio instances after reconnect.
+3. **Lifecycle Teardown & Media Pipeline Reset**:
+   - Exiting the room or switching tracks immediately cancels pending retry timers.
+   - Resets playback rate to normal ($1.0\times$).
+   - Calls `audio.pause()`, clears `audio.src = ''`, and executes `audio.load()`. Calling `audio.load()` explicitly flushes browser hardware media decoders and cached buffer memory.
+   - Single backing `HTMLAudioElement` instance owned strictly by `useKaraokeAudio`. Prevents ghost audio or duplicate audio instances after room reconnects.
+
+---
+
+## 6. Audio Execution State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> resolving_source: Track Selected / Enters Queue
+    resolving_source --> loading: Source Resolved
+    resolving_source --> reconnecting: Transient Fetch Error (Attempt < 3)
+    reconnecting --> resolving_source: Backoff Timer Expired
+    reconnecting --> failed: Exhausted 3 Retries
+    resolving_source --> failed: Permanent Error (Unavailable / 404)
+    loading --> buffering: Waiting for Audio Data
+    loading --> playing: Can Play & Server Playing
+    loading --> paused: Can Play & Server Paused
+    buffering --> playing: Data Ready (canplay/playing)
+    buffering --> paused: Server Paused while Buffering
+    playing --> buffering: Buffer Starvation (waiting/stalled)
+    playing --> paused: Server Pause Commanded
+    paused --> playing: Server Resume Commanded
+    playing --> waiting_for_user_interaction: Play Promise Rejected (NotAllowedError)
+    waiting_for_user_interaction --> playing: User Clicks "Listen to Backing Track"
+    playing --> idle: Track Reaches End / Queue Empty
+    playing --> failed: Fatal Audio Decode Error
+    failed --> resolving_source: User Clicks "Retry Audio"
+```
+
+### Playback Promise Handling & AbortError Guard
+
+Calling `HTMLMediaElement.play()` returns a Promise. When track transitions or pause commands occur rapidly, the browser interrupts pending play promises with:
+```
+AbortError: The play() request was interrupted by a call to pause().
+```
+KTVOnline explicitly traps `AbortError` and silences it without marking playback as failed:
+- Prevents spurious error flashes during rapid skipping or pausing.
+- Distinguishes autoplay policy blocks (`NotAllowedError`) from media decoding failures.
+

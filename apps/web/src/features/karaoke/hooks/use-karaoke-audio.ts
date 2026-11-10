@@ -19,6 +19,7 @@ export type AudioExecutionState =
   | 'buffering'
   | 'playing'
   | 'paused'
+  | 'reconnecting'
   | 'failed';
 
 export interface UseKaraokeAudioReturn {
@@ -40,6 +41,13 @@ export interface UseKaraokeAudioReturn {
 
 const STORAGE_VOLUME_KEY = 'ktv_karaoke_volume';
 const STORAGE_MUTED_KEY = 'ktv_karaoke_muted';
+
+export const AUDIO_RETRY_CONFIG = {
+  MAX_ATTEMPTS: 3,
+  INITIAL_DELAY_MS: 500,
+  BACKOFF_FACTOR: 2,
+  JITTER_MS: 150,
+} as const;
 
 export const PLAYBACK_SYNC_CONFIG = {
   DRIFT_TOLERANCE_MS: 250,
@@ -80,6 +88,7 @@ export function useKaraokeAudio({
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const loadGenerationRef = useRef<number>(0);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const currentSongIdRef = useRef<string | null>(null);
   const isPlayingRef = useRef<boolean>(false);
   const isBufferingRef = useRef<boolean>(false);
@@ -244,10 +253,15 @@ export function useKaraokeAudio({
     }
 
     return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
       if (audioRef.current) {
         audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         audioRef.current.pause();
         audioRef.current.src = '';
+        audioRef.current.load();
         audioRef.current = null;
       }
     };
@@ -278,62 +292,109 @@ export function useKaraokeAudio({
     });
   }, []);
 
-  // Audio source resolution with generation fencing
-  const resolveAudioForCurrentItem = useCallback(async (songId: string, generation: number) => {
-    try {
-      setAudioError(null);
-      setIsBuffering(true);
-      isBufferingRef.current = true;
-      setExecutionState('resolving_source');
+  // Audio source resolution with generation fencing and exponential backoff retry
+  const resolveAudioForCurrentItem = useCallback(
+    async (songId: string, generation: number, attempt: number = 1) => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
 
-      const resolved = await karaokeApi.resolveAudioSource(songId);
-
-      // Discard if generation changed during async fetch
       if (loadGenerationRef.current !== generation) {
         return;
       }
 
-      if (!resolved || resolved.availability !== 'audio_available' || !resolved.url) {
-        setIsAudioAvailable(false);
-        setAudioError('SONG_AUDIO_UNAVAILABLE');
-        setIsBuffering(false);
-        isBufferingRef.current = false;
-        setExecutionState('failed');
+      try {
+        setAudioError(null);
+        setIsBuffering(true);
+        isBufferingRef.current = true;
+        if (attempt === 1) {
+          setExecutionState('resolving_source');
+        } else {
+          setExecutionState('reconnecting');
+        }
+
+        const resolved = await karaokeApi.resolveAudioSource(songId);
+
+        // Discard if generation changed during async fetch
+        if (loadGenerationRef.current !== generation) {
+          return;
+        }
+
+        if (!resolved || resolved.availability !== 'audio_available' || !resolved.url) {
+          setIsAudioAvailable(false);
+          setAudioError('SONG_AUDIO_UNAVAILABLE');
+          setIsBuffering(false);
+          isBufferingRef.current = false;
+          setExecutionState('failed');
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.src = '';
+            audioRef.current.load();
+          }
+          return;
+        }
+
+        setIsAudioAvailable(true);
+        setExecutionState('loading');
         if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.src = '';
+          // Only re-set src if changed to avoid redundant network fetch
+          if (audioRef.current.src !== resolved.url) {
+            audioRef.current.src = resolved.url;
+            audioRef.current.load();
+          }
         }
-        return;
-      }
+      } catch (err: unknown) {
+        if (loadGenerationRef.current !== generation) return;
 
-      setIsAudioAvailable(true);
-      setExecutionState('loading');
-      if (audioRef.current) {
-        // Only re-set src if changed to avoid redundant network fetch
-        if (audioRef.current.src !== resolved.url) {
-          audioRef.current.src = resolved.url;
-          audioRef.current.load();
+        const msg = err instanceof Error ? err.message : String(err);
+        const isPermanent =
+          msg.includes('SONG_AUDIO_UNAVAILABLE') ||
+          msg.includes('SONG_NOT_FOUND') ||
+          msg.includes('400') ||
+          msg.includes('404');
+
+        if (isPermanent) {
+          setIsAudioAvailable(!msg.includes('SONG_AUDIO_UNAVAILABLE'));
+          setAudioError(msg.includes('SONG_AUDIO_UNAVAILABLE') ? 'SONG_AUDIO_UNAVAILABLE' : 'SONG_NOT_FOUND');
+          setIsBuffering(false);
+          isBufferingRef.current = false;
+          setExecutionState('failed');
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.src = '';
+            audioRef.current.load();
+          }
+          return;
+        }
+
+        // Transient failure: retry with exponential backoff & jitter
+        if (attempt < AUDIO_RETRY_CONFIG.MAX_ATTEMPTS) {
+          setExecutionState('reconnecting');
+          const delay =
+            AUDIO_RETRY_CONFIG.INITIAL_DELAY_MS * Math.pow(AUDIO_RETRY_CONFIG.BACKOFF_FACTOR, attempt - 1) +
+            Math.random() * AUDIO_RETRY_CONFIG.JITTER_MS;
+
+          retryTimeoutRef.current = setTimeout(() => {
+            if (loadGenerationRef.current === generation) {
+              resolveAudioForCurrentItem(songId, generation, attempt + 1);
+            }
+          }, delay);
+        } else {
+          setAudioError('SONG_AUDIO_RESOLUTION_FAILED');
+          setIsBuffering(false);
+          isBufferingRef.current = false;
+          setExecutionState('failed');
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.src = '';
+            audioRef.current.load();
+          }
         }
       }
-    } catch (err: unknown) {
-      if (loadGenerationRef.current !== generation) return;
-
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('SONG_AUDIO_UNAVAILABLE')) {
-        setIsAudioAvailable(false);
-        setAudioError('SONG_AUDIO_UNAVAILABLE');
-      } else {
-        setAudioError('SONG_AUDIO_RESOLUTION_FAILED');
-      }
-      setIsBuffering(false);
-      isBufferingRef.current = false;
-      setExecutionState('failed');
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-      }
-    }
-  }, []);
+    },
+    []
+  );
 
   // Song switching effect: detect when currentQueueItemId or songId changes
   useEffect(() => {
@@ -341,10 +402,15 @@ export function useKaraokeAudio({
 
     if (!currentSongId || playbackStatus === 'idle' || playbackStatus === 'ended') {
       currentSongIdRef.current = null;
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
       if (audioRef.current) {
         audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         audioRef.current.pause();
         audioRef.current.src = '';
+        audioRef.current.load();
       }
       setIsPlaying(false);
       setIsBuffering(false);
@@ -357,9 +423,13 @@ export function useKaraokeAudio({
 
     if (currentSongIdRef.current !== currentSongId) {
       currentSongIdRef.current = currentSongId;
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
       loadGenerationRef.current += 1;
       const gen = loadGenerationRef.current;
-      resolveAudioForCurrentItem(currentSongId, gen);
+      resolveAudioForCurrentItem(currentSongId, gen, 1);
     }
   }, [enabled, currentSongId, playbackStatus, resolveAudioForCurrentItem]);
 
@@ -411,6 +481,10 @@ export function useKaraokeAudio({
         const playPromise = audio.play();
         if (playPromise !== undefined) {
           playPromise.catch((err: Error) => {
+            if (err.name === 'AbortError') {
+              // Benign abort caused by track change or pause while play promise was settling
+              return;
+            }
             if (err.name === 'NotAllowedError') {
               setIsAutoplayBlocked(true);
               setExecutionState('waiting_for_user_interaction');
@@ -498,7 +572,9 @@ export function useKaraokeAudio({
       await audio.play();
       setIsAutoplayBlocked(false);
       setExecutionState('playing');
-    } catch {
+    } catch (err: unknown) {
+      const error = err as Error;
+      if (error?.name === 'AbortError') return;
       setIsAutoplayBlocked(true);
       setExecutionState('waiting_for_user_interaction');
     }
@@ -507,8 +583,12 @@ export function useKaraokeAudio({
   // Retry loading current track audio
   const retryAudioLoad = useCallback(() => {
     if (currentSongIdRef.current) {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
       loadGenerationRef.current += 1;
-      resolveAudioForCurrentItem(currentSongIdRef.current, loadGenerationRef.current);
+      resolveAudioForCurrentItem(currentSongIdRef.current, loadGenerationRef.current, 1);
     }
   }, [resolveAudioForCurrentItem]);
 
