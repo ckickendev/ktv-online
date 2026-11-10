@@ -165,3 +165,38 @@ KTVOnline explicitly traps `AbortError` and silences it without marking playback
 - Prevents spurious error flashes during rapid skipping or pausing.
 - Distinguishes autoplay policy blocks (`NotAllowedError`) from media decoding failures.
 
+---
+
+## 7. Audio Output Device Selection & Dual Pipeline Routing (Sprint 2.6.3)
+
+KTVOnline maintains two completely independent audio playback pipelines:
+1. **LiveKit Remote Voice Stream**: Voice communications received over WebRTC from remote singers and audience members.
+2. **Karaoke Backing Track**: High-fidelity stereo instrumental backing tracks decoded by `HTMLAudioElement`.
+
+### Dual-Pipeline Sink Management
+
+```
++-----------------------------------------------------------------------------------------+
+| Browser Audio Pipeline Routing                                                          |
+|                                                                                         |
+| [LiveKit Remote Voice] ----> Remote <audio> Elements ----> Voice Output Sink (setSinkId)|
+|                                                            (e.g., Headset / Earphones)  |
+|                                                                                         |
+| [Karaoke Backing Audio] ---> Karaoke HTMLAudioElement ---> Backing Output Sink(setSinkId)|
+|                                                            (e.g., Room PA / Soundbar)   |
++-----------------------------------------------------------------------------------------+
+```
+
+### Key Architectural Properties:
+1. **Independent Sinks**: Users can route backing track music through external room speakers while routing chat or monitor voices through headphones, avoiding acoustic feedback.
+2. **Feature Detection & Graceful Degradation**:
+   - Audio sink routing relies on `HTMLMediaElement.prototype.setSinkId`.
+   - Supported natively in Chromium-based browsers (Chrome, Edge, Brave, Opera) and Safari 17+.
+   - When unsupported (e.g., Firefox), the application surfaces an informational badge (*"Default system output only"*), and both streams play via the operating system's default audio output device without playback interruption.
+3. **Cross-Component Sink Synchronization**:
+   - Backing audio sink preference is persisted in `localStorage` under `ktv_karaoke_audio_sink_id`.
+   - When modified inside the audio device settings modal, a custom `ktv_karaoke_sink_changed` event dispatches globally to update the active `HTMLAudioElement` without requiring a page refresh.
+4. **Resilience to Device Removal**:
+   - If an external output device is disconnected during playback, the browser automatically cascades back to the default audio output device without dropping audio execution or corrupting sync anchors.
+
+

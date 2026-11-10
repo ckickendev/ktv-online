@@ -3,3 +3,4 @@ export * from './api/voice-api';
 export * from './hooks/use-voice-client';
 export * from './components/voice-controls';
 export * from './components/voice-participants';
+export * from './components/audio-device-settings-modal';

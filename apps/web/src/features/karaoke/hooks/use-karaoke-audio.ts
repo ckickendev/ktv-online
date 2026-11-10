@@ -37,10 +37,14 @@ export interface UseKaraokeAudioReturn {
   setVolume: (volume: number) => void;
   toggleMute: () => void;
   retryAudioLoad: () => void;
+  outputDeviceId: string | null;
+  isOutputSelectionSupported: boolean;
+  setOutputDevice: (deviceId: string) => Promise<void>;
 }
 
 const STORAGE_VOLUME_KEY = 'ktv_karaoke_volume';
 const STORAGE_MUTED_KEY = 'ktv_karaoke_muted';
+const STORAGE_OUTPUT_DEVICE_KEY = 'ktv_karaoke_output_device';
 
 export const AUDIO_RETRY_CONFIG = {
   MAX_ATTEMPTS: 3,
@@ -84,6 +88,12 @@ export function useKaraokeAudio({
   const [isMuted, setIsMutedState] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(STORAGE_MUTED_KEY) === 'true';
+  });
+
+  const isOutputSelectionSupported = typeof window !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
+  const [outputDeviceId, setOutputDeviceId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(STORAGE_OUTPUT_DEVICE_KEY);
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -174,6 +184,11 @@ export function useKaraokeAudio({
       audio.preload = 'auto';
       audio.volume = volumeRef.current;
       audio.muted = isMutedRef.current;
+
+      const initialSink = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_OUTPUT_DEVICE_KEY) : null;
+      if (initialSink && 'setSinkId' in HTMLMediaElement.prototype) {
+        (audio as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(initialSink).catch(() => {});
+      }
 
       audio.addEventListener('play', () => {
         setIsPlaying(true);
@@ -592,6 +607,42 @@ export function useKaraokeAudio({
     }
   }, [resolveAudioForCurrentItem]);
 
+  // Synchronize backing track output device changes across components
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleSinkChange = (e: Event) => {
+      const customEvent = e as CustomEvent<string | { deviceId: string }>;
+      const devId = typeof customEvent.detail === 'string' ? customEvent.detail : customEvent.detail?.deviceId;
+      if (devId && audioRef.current && 'setSinkId' in HTMLMediaElement.prototype) {
+        setOutputDeviceId(devId);
+        (audioRef.current as unknown as { setSinkId: (id: string) => Promise<void> })
+          .setSinkId(devId)
+          .catch(() => {});
+      }
+    };
+
+    window.addEventListener('ktv_karaoke_sink_changed', handleSinkChange);
+    return () => {
+      window.removeEventListener('ktv_karaoke_sink_changed', handleSinkChange);
+    };
+  }, []);
+
+  const setOutputDevice = useCallback(async (deviceId: string) => {
+    setOutputDeviceId(deviceId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_OUTPUT_DEVICE_KEY, deviceId);
+      window.dispatchEvent(new CustomEvent('ktv_karaoke_sink_changed', { detail: deviceId }));
+    }
+    if (audioRef.current && 'setSinkId' in HTMLMediaElement.prototype) {
+      try {
+        await (audioRef.current as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId);
+      } catch {
+        // Silently handle browser sink errors
+      }
+    }
+  }, []);
+
   return {
     audioElement: audioRef.current,
     executionState,
@@ -607,5 +658,8 @@ export function useKaraokeAudio({
     setVolume,
     toggleMute,
     retryAudioLoad,
+    outputDeviceId,
+    isOutputSelectionSupported,
+    setOutputDevice,
   };
 }

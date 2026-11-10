@@ -22,6 +22,14 @@ export interface VoiceDevice {
   label: string;
 }
 
+export interface AudioCapturePreferences {
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+}
+
+export type MicrophonePermissionState = 'prompt' | 'granted' | 'denied' | 'unknown';
+
 export interface UseVoiceClientReturn {
   connectionState: VoiceConnectionState;
   isConnected: boolean;
@@ -30,10 +38,29 @@ export interface UseVoiceClientReturn {
   isSpeaking: boolean;
   errorMessage: string | null;
   participants: VoiceParticipantInfo[];
-  audioDevices: VoiceDevice[];
-  activeDeviceId: string | null;
+
+  // Microphone (Audio Input) Devices
+  audioInputDevices: VoiceDevice[];
+  activeAudioInputId: string | null;
+  permissionState: MicrophonePermissionState;
+  capturePreferences: AudioCapturePreferences;
+
+  // Speaker/Headphones (Audio Output) Devices
+  audioOutputDevices: VoiceDevice[];
+  activeAudioOutputId: string | null;
+  isOutputSelectionSupported: boolean;
+
+  // Actions
   joinVoice: () => Promise<void>;
   leaveVoice: () => Promise<void>;
   toggleMute: () => Promise<void>;
+  switchAudioInputDevice: (deviceId: string) => Promise<void>;
+  switchAudioOutputDevice: (deviceId: string) => Promise<void>;
+  updateCapturePreferences: (prefs: Partial<AudioCapturePreferences>) => Promise<void>;
+  refreshDevices: () => Promise<void>;
+
+  // Backwards compatibility aliases
+  audioDevices: VoiceDevice[];
+  activeDeviceId: string | null;
   switchDevice: (deviceId: string) => Promise<void>;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Mic,
   MicOff,
@@ -12,7 +12,12 @@ import {
   Settings2,
 } from 'lucide-react';
 import { VoiceConnectionState } from '@ktv/contracts';
-import { VoiceDevice } from '../types/voice.types';
+import {
+  VoiceDevice,
+  AudioCapturePreferences,
+  MicrophonePermissionState,
+} from '../types/voice.types';
+import { AudioDeviceSettingsModal } from './audio-device-settings-modal';
 
 export interface VoiceControlsProps {
   connectionState: VoiceConnectionState;
@@ -21,13 +26,27 @@ export interface VoiceControlsProps {
   isMuted: boolean;
   isSpeaking: boolean;
   errorMessage: string | null;
-  audioDevices: VoiceDevice[];
-  activeDeviceId: string | null;
+  audioDevices?: VoiceDevice[];
+  activeDeviceId?: string | null;
   isRoomMember: boolean;
   onJoinVoice: () => Promise<void>;
   onLeaveVoice: () => Promise<void>;
   onToggleMute: () => Promise<void>;
-  onSwitchDevice: (deviceId: string) => Promise<void>;
+  onSwitchDevice?: (deviceId: string) => Promise<void>;
+
+  // Sprint 2.6.3 additions:
+  audioInputDevices?: VoiceDevice[];
+  activeAudioInputId?: string | null;
+  permissionState?: MicrophonePermissionState;
+  capturePreferences?: AudioCapturePreferences;
+  onUpdateCapturePreferences?: (prefs: Partial<AudioCapturePreferences>) => Promise<void>;
+  audioOutputDevices?: VoiceDevice[];
+  activeAudioOutputId?: string | null;
+  isOutputSelectionSupported?: boolean;
+  onSwitchAudioInputDevice?: (deviceId: string) => Promise<void>;
+  onSwitchAudioOutputDevice?: (deviceId: string) => Promise<void>;
+  karaokeOutputDeviceId?: string | null;
+  onSwitchKaraokeOutputDevice?: (deviceId: string) => Promise<void>;
 }
 
 export function VoiceControls({
@@ -37,14 +56,32 @@ export function VoiceControls({
   isMuted,
   isSpeaking,
   errorMessage,
-  audioDevices,
-  activeDeviceId,
+  audioDevices = [],
+  activeDeviceId = null,
   isRoomMember,
   onJoinVoice,
   onLeaveVoice,
   onToggleMute,
   onSwitchDevice,
+  audioInputDevices,
+  activeAudioInputId,
+  permissionState = 'unknown',
+  capturePreferences = { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  onUpdateCapturePreferences,
+  audioOutputDevices = [],
+  activeAudioOutputId = null,
+  isOutputSelectionSupported = false,
+  onSwitchAudioInputDevice,
+  onSwitchAudioOutputDevice,
+  karaokeOutputDeviceId,
+  onSwitchKaraokeOutputDevice,
 }: VoiceControlsProps) {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  const effectiveInputs = audioInputDevices || audioDevices;
+  const effectiveActiveInput = activeAudioInputId || activeDeviceId;
+  const handleSwitchInput = onSwitchAudioInputDevice || onSwitchDevice;
+
   return (
     <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-3">
       {errorMessage && (
@@ -160,24 +197,59 @@ export function VoiceControls({
           </div>
         </div>
 
-        {/* Right: Audio Input Device Selector */}
-        {isConnected && audioDevices.length > 0 && (
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <Settings2 className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-            <select
-              value={activeDeviceId || ''}
-              onChange={(e) => onSwitchDevice(e.target.value)}
-              className="bg-black/40 border border-white/10 rounded-lg px-2.5 py-1 text-slate-300 text-xs focus:outline-none focus:border-violet-500 cursor-pointer max-w-[180px] truncate"
-            >
-              {audioDevices.map((d) => (
-                <option key={d.deviceId} value={d.deviceId} className="bg-slate-900 text-slate-200">
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Right: Quick Mic Selector & Audio Settings Dialog Trigger */}
+        <div className="flex items-center gap-2">
+          {isConnected && effectiveInputs.length > 0 && handleSwitchInput && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <Mic className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+              <select
+                data-testid="voice-quick-input-select"
+                value={effectiveActiveInput || ''}
+                onChange={(e) => handleSwitchInput(e.target.value)}
+                className="bg-black/40 border border-white/10 rounded-lg px-2.5 py-1 text-slate-300 text-xs focus:outline-none focus:border-violet-500 cursor-pointer max-w-[150px] sm:max-w-[180px] truncate"
+                title="Select active microphone"
+              >
+                {effectiveInputs.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId} className="bg-slate-900 text-slate-200">
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Audio Settings Button */}
+          <button
+            type="button"
+            data-testid="audio-device-settings-button"
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-medium transition-colors"
+            title="Open Audio & Device Settings"
+          >
+            <Settings2 className="w-3.5 h-3.5 text-violet-400" />
+            <span className="hidden md:inline">Settings</span>
+          </button>
+        </div>
       </div>
+
+      {/* Audio Device Settings Modal */}
+      <AudioDeviceSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        audioInputDevices={effectiveInputs}
+        activeAudioInputId={effectiveActiveInput}
+        onSelectInputDevice={handleSwitchInput || (async () => {})}
+        permissionState={permissionState}
+        capturePreferences={capturePreferences}
+        onUpdateCapturePreferences={onUpdateCapturePreferences || (async () => {})}
+        audioOutputDevices={audioOutputDevices}
+        activeVoiceOutputId={activeAudioOutputId}
+        onSelectVoiceOutputDevice={onSwitchAudioOutputDevice || (async () => {})}
+        isOutputSelectionSupported={isOutputSelectionSupported}
+        activeKaraokeOutputId={karaokeOutputDeviceId}
+        onSelectKaraokeOutputDevice={onSwitchKaraokeOutputDevice}
+      />
     </div>
   );
 }
+

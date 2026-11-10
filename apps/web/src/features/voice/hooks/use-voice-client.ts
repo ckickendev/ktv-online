@@ -16,9 +16,42 @@ import {
   UseVoiceClientReturn,
   VoiceParticipantInfo,
   VoiceDevice,
+  AudioCapturePreferences,
+  MicrophonePermissionState,
 } from '../types/voice.types';
 
 const MAX_RECONNECT_ATTEMPTS = 3;
+const STORAGE_MIC_KEY = 'ktv_preferred_mic_id';
+const STORAGE_VOICE_OUTPUT_KEY = 'ktv_preferred_voice_output_id';
+const STORAGE_CAPTURE_PREFS_KEY = 'ktv_audio_capture_prefs';
+
+const DEFAULT_CAPTURE_PREFS: AudioCapturePreferences = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+
+function classifyDeviceError(err: unknown): string {
+  const name = (err as { name?: string })?.name || '';
+  const msg = err instanceof Error ? err.message : String(err);
+
+  if (name === 'NotAllowedError' || msg.includes('Permission denied') || msg.includes('not allowed')) {
+    return 'Microphone permission was denied. Please allow microphone permissions in your browser settings and try again.';
+  }
+  if (name === 'NotFoundError' || msg.includes('not found') || msg.includes('DevicesNotFoundError')) {
+    return 'Selected audio device was not found or has been disconnected.';
+  }
+  if (name === 'NotReadableError' || msg.includes('Could not start') || msg.includes('TrackStartError')) {
+    return 'Microphone is currently unavailable. It may be in use by another application or operating system process.';
+  }
+  if (name === 'OverconstrainedError' || msg.includes('OverconstrainedError')) {
+    return 'Audio device constraints (sample rate or channels) could not be satisfied by your hardware.';
+  }
+  if (name === 'SecurityError') {
+    return 'Audio device selection requires a secure HTTPS context.';
+  }
+  return msg || 'An unexpected audio device error occurred.';
+}
 
 export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions): UseVoiceClientReturn {
   const [connectionState, setConnectionState] = useState<VoiceConnectionState>('idle');
@@ -26,8 +59,34 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [participants, setParticipants] = useState<VoiceParticipantInfo[]>([]);
-  const [audioDevices, setAudioDevices] = useState<VoiceDevice[]>([]);
-  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
+
+  // Audio Input Devices (Microphone)
+  const [audioInputDevices, setAudioInputDevices] = useState<VoiceDevice[]>([]);
+  const [activeAudioInputId, setActiveAudioInputId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(STORAGE_MIC_KEY);
+  });
+  const [permissionState, setPermissionState] = useState<MicrophonePermissionState>('unknown');
+
+  // Audio Output Devices (Voice Speaker)
+  const [audioOutputDevices, setAudioOutputDevices] = useState<VoiceDevice[]>([]);
+  const [activeAudioOutputId, setActiveAudioOutputId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(STORAGE_VOICE_OUTPUT_KEY);
+  });
+
+  const isOutputSelectionSupported = typeof window !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
+
+  // Capture Quality Preferences (AEC, Noise Suppression, AGC)
+  const [capturePreferences, setCapturePreferences] = useState<AudioCapturePreferences>(() => {
+    if (typeof window === 'undefined') return DEFAULT_CAPTURE_PREFS;
+    try {
+      const saved = localStorage.getItem(STORAGE_CAPTURE_PREFS_KEY);
+      return saved ? { ...DEFAULT_CAPTURE_PREFS, ...JSON.parse(saved) } : DEFAULT_CAPTURE_PREFS;
+    } catch {
+      return DEFAULT_CAPTURE_PREFS;
+    }
+  });
 
   const roomRef = useRef<Room | null>(null);
   const renewalTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -39,6 +98,22 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
   const isExplicitLeaveRef = useRef<boolean>(false);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef<number>(0);
+
+  const activeAudioOutputIdRef = useRef<string | null>(activeAudioOutputId);
+  const activeAudioInputIdRef = useRef<string | null>(activeAudioInputId);
+  const capturePreferencesRef = useRef<AudioCapturePreferences>(capturePreferences);
+
+  useEffect(() => {
+    activeAudioOutputIdRef.current = activeAudioOutputId;
+  }, [activeAudioOutputId]);
+
+  useEffect(() => {
+    activeAudioInputIdRef.current = activeAudioInputId;
+  }, [activeAudioInputId]);
+
+  useEffect(() => {
+    capturePreferencesRef.current = capturePreferences;
+  }, [capturePreferences]);
 
   // Initialize unique session tab ID once
   useEffect(() => {
@@ -207,226 +282,314 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
     }, refreshDelay);
   }, [roomId, leaveVoice]);
 
-  const attemptReconnectRef = useRef<((currentSessionGen: number) => void) | null>(null);
-
-  // Bind Room event listeners with generation fencing and bounded reconnect
-  const bindRoomListeners = useCallback((room: Room, currentSessionGen: number, expiresAtStr: string) => {
-    room.on(RoomEvent.Connected, async () => {
-      if (sessionGenRef.current !== currentSessionGen) return;
-      setConnectionState('connected');
-      reconnectAttemptsRef.current = 0;
-      syncParticipants(room);
-
-      try {
-        const devices = await Room.getLocalDevices('audioinput');
-        if (sessionGenRef.current === currentSessionGen) {
-          setAudioDevices(
-            devices.map((d) => ({
-              deviceId: d.deviceId,
-              label: d.label || `Microphone (${d.deviceId.slice(0, 5)})`,
-            }))
-          );
-        }
-      } catch {
-        // ignore device enum errors
-      }
-
-      scheduleTokenRenewal(expiresAtStr);
-    });
-
-    room.on(RoomEvent.Reconnecting, () => {
-      if (sessionGenRef.current !== currentSessionGen) return;
-      setConnectionState('reconnecting');
-    });
-
-    room.on(RoomEvent.Reconnected, async () => {
-      if (sessionGenRef.current !== currentSessionGen) return;
-      setConnectionState('connected');
-      reconnectAttemptsRef.current = 0;
-      syncParticipants(room);
-
-      // Re-verify authorization upon reconnect to prevent bypass if kicked while offline
-      try {
-        const reauth = await voiceApi.getVoiceToken(roomId, { tabId: tabIdRef.current });
-        if (sessionGenRef.current === currentSessionGen && roomRef.current) {
-          latestTokenRef.current = reauth.token;
-          scheduleTokenRenewal(reauth.expiresAt);
-        }
-      } catch {
-        if (sessionGenRef.current === currentSessionGen) {
-          setConnectionState('unauthorized');
-          setErrorMessage('Voice authorization expired or was revoked.');
-          await leaveVoice();
-        }
-      }
-    });
-
-    room.on(RoomEvent.Disconnected, () => {
-      if (sessionGenRef.current !== currentSessionGen) return;
-      cleanupAudioElements();
-      setParticipants([]);
-
-      if (isExplicitLeaveRef.current) {
-        setConnectionState('idle');
-        return;
-      }
-
-      // Schedule bounded reconnect attempt with backend re-authorization
-      if (attemptReconnectRef.current) {
-        attemptReconnectRef.current(currentSessionGen);
-      }
-    });
-
-    room.on(RoomEvent.ParticipantConnected, () => {
-      if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
-    });
-
-    room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
-      if (sessionGenRef.current !== currentSessionGen) return;
-      const el = audioElementsRef.current.get(participant.identity);
-      if (el) {
-        el.pause();
-        el.srcObject = null;
-        el.remove();
-        audioElementsRef.current.delete(participant.identity);
-      }
-      syncParticipants(room);
-    });
-
-    room.on(RoomEvent.ActiveSpeakersChanged, () => {
-      if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
-    });
-
-    room.on(RoomEvent.TrackMuted, () => {
-      if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
-    });
-
-    room.on(RoomEvent.TrackUnmuted, () => {
-      if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
-    });
-
-    // Handle remote audio playback
-    room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, participant: RemoteParticipant) => {
-      if (sessionGenRef.current !== currentSessionGen) return;
-      if (track.kind === Track.Kind.Audio) {
-        let audioEl = audioElementsRef.current.get(participant.identity);
-        if (!audioEl) {
-          audioEl = document.createElement('audio');
-          audioEl.autoplay = true;
-          audioEl.setAttribute('data-participant-identity', participant.identity);
-          document.body.appendChild(audioEl);
-          audioElementsRef.current.set(participant.identity, audioEl);
-        }
-        track.attach(audioEl);
-        audioEl.play().catch(() => {
-          // Browser autoplay restrictions may require explicit user interaction
-        });
-      }
-    });
-
-    room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, _pub, participant: RemoteParticipant) => {
-      if (sessionGenRef.current !== currentSessionGen) return;
-      const audioEl = audioElementsRef.current.get(participant.identity);
-      if (audioEl) {
-        track.detach(audioEl);
-      }
-    });
-  }, [roomId, syncParticipants, scheduleTokenRenewal, cleanupAudioElements, leaveVoice]);
-
-  // Bounded reconnect attempt with exponential backoff and backend authorization
-  const attemptReconnect = useCallback((currentSessionGen: number) => {
-    if (isExplicitLeaveRef.current) return;
-
-    if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
-      setConnectionState('failed');
-      setErrorMessage('Voice connection lost after multiple retry attempts. Please rejoin manually.');
-      leaveVoice();
+  // Enumerate input and output devices and track permission status
+  const refreshDevices = useCallback(async () => {
+    if (typeof window === 'undefined' || !navigator?.mediaDevices) {
       return;
     }
 
-    reconnectAttemptsRef.current += 1;
-    setConnectionState('reconnecting');
-
-    const backoffMs = Math.min(10000, 1000 * Math.pow(2, reconnectAttemptsRef.current));
-
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
-    }
-
-    reconnectTimerRef.current = setTimeout(async () => {
-      if (sessionGenRef.current !== currentSessionGen || isExplicitLeaveRef.current) return;
-
-      try {
-        // Mandatory backend re-authorization before reconnecting
-        const tokenData = await voiceApi.getVoiceToken(roomId, { tabId: tabIdRef.current });
-        if (sessionGenRef.current !== currentSessionGen || isExplicitLeaveRef.current) return;
-
-        latestTokenRef.current = tokenData.token;
-
-        // Cleanup old room if present
-        if (roomRef.current) {
-          try {
-            if (roomRef.current.localParticipant) {
-              roomRef.current.localParticipant.audioTrackPublications.forEach((pub) => {
-                if (pub.track) pub.track.stop();
-              });
-            }
-            await roomRef.current.disconnect();
-          } catch {
-            // ignore
-          }
-          roomRef.current = null;
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const perm = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          setPermissionState(perm.state as MicrophonePermissionState);
+          perm.onchange = () => {
+            setPermissionState(perm.state as MicrophonePermissionState);
+          };
+        } catch {
+          // Unsupported query permission in some browsers
         }
+      }
 
+      const rawDevices = await navigator.mediaDevices.enumerateDevices();
+
+      const inputs: VoiceDevice[] = rawDevices
+        .filter((d) => d.kind === 'audioinput')
+        .map((d, index) => ({
+          deviceId: d.deviceId,
+          label: d.label || `Microphone ${index + 1}`,
+        }));
+
+      const outputs: VoiceDevice[] = rawDevices
+        .filter((d) => d.kind === 'audiooutput')
+        .map((d, index) => ({
+          deviceId: d.deviceId,
+          label: d.label || `Speaker/Headphones ${index + 1}`,
+        }));
+
+      setAudioInputDevices(inputs);
+      setAudioOutputDevices(outputs);
+
+      // Verify if current active input was removed
+      setActiveAudioInputId((current) => {
+        if (current && inputs.some((d) => d.deviceId === current)) {
+          return current;
+        }
+        const fallback = inputs[0]?.deviceId || null;
+        if (current && fallback && current !== fallback && roomRef.current) {
+          roomRef.current.switchActiveDevice('audioinput', fallback).catch(() => {});
+          setErrorMessage('Active microphone was disconnected. Switched to available microphone.');
+        }
+        return fallback;
+      });
+
+      // Verify if current active output was removed
+      setActiveAudioOutputId((current) => {
+        if (current && outputs.some((d) => d.deviceId === current)) {
+          return current;
+        }
+        return outputs[0]?.deviceId || null;
+      });
+    } catch {
+      // ignore enumeration errors
+    }
+  }, []);
+
+  // Monitor device changes (plug/unplug)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !navigator?.mediaDevices) return;
+
+    refreshDevices();
+
+    const handleDeviceChange = () => {
+      refreshDevices();
+    };
+
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+    };
+  }, [refreshDevices]);
+
+  const attemptReconnectRef = useRef<((currentSessionGen: number) => void) | null>(null);
+
+  // Bind Room event listeners with generation fencing and bounded reconnect
+  const bindRoomListeners = useCallback(
+    (room: Room, currentSessionGen: number, expiresAtStr: string) => {
+      room.on(RoomEvent.Connected, async () => {
+        if (sessionGenRef.current !== currentSessionGen) return;
+        setConnectionState('connected');
+        reconnectAttemptsRef.current = 0;
+        syncParticipants(room);
+
+        // Refresh devices after connecting to ensure device labels are visible
+        refreshDevices();
+        scheduleTokenRenewal(expiresAtStr);
+      });
+
+      room.on(RoomEvent.Reconnecting, () => {
+        if (sessionGenRef.current !== currentSessionGen) return;
+        setConnectionState('reconnecting');
+      });
+
+      room.on(RoomEvent.Reconnected, async () => {
+        if (sessionGenRef.current !== currentSessionGen) return;
+        setConnectionState('connected');
+        reconnectAttemptsRef.current = 0;
+        syncParticipants(room);
+
+        // Re-verify authorization upon reconnect to prevent bypass if kicked while offline
+        try {
+          const reauth = await voiceApi.getVoiceToken(roomId, { tabId: tabIdRef.current });
+          if (sessionGenRef.current === currentSessionGen && roomRef.current) {
+            latestTokenRef.current = reauth.token;
+            scheduleTokenRenewal(reauth.expiresAt);
+          }
+        } catch {
+          if (sessionGenRef.current === currentSessionGen) {
+            setConnectionState('unauthorized');
+            setErrorMessage('Voice authorization expired or was revoked.');
+            await leaveVoice();
+          }
+        }
+      });
+
+      room.on(RoomEvent.Disconnected, () => {
+        if (sessionGenRef.current !== currentSessionGen) return;
         cleanupAudioElements();
+        setParticipants([]);
 
-        const room = new Room({
-          adaptiveStream: true,
-          dynacast: true,
-          audioCaptureDefaults: {
-            autoGainControl: true,
-            echoCancellation: true,
-            noiseSuppression: true,
-          },
-        });
-
-        roomRef.current = room;
-        bindRoomListeners(room, currentSessionGen, tokenData.expiresAt);
-
-        await room.connect(tokenData.serverUrl, tokenData.token);
-        if (sessionGenRef.current !== currentSessionGen || isExplicitLeaveRef.current) {
-          room.disconnect().catch(() => {});
+        if (isExplicitLeaveRef.current) {
+          setConnectionState('idle');
           return;
         }
 
-        await room.localParticipant.setMicrophoneEnabled(!isMuted);
-        reconnectAttemptsRef.current = 0;
-        setConnectionState('connected');
+        // Schedule bounded reconnect attempt with backend re-authorization
+        if (attemptReconnectRef.current) {
+          attemptReconnectRef.current(currentSessionGen);
+        }
+      });
+
+      room.on(RoomEvent.ParticipantConnected, () => {
+        if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
+      });
+
+      room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+        if (sessionGenRef.current !== currentSessionGen) return;
+        const el = audioElementsRef.current.get(participant.identity);
+        if (el) {
+          el.pause();
+          el.srcObject = null;
+          el.remove();
+          audioElementsRef.current.delete(participant.identity);
+        }
         syncParticipants(room);
-      } catch (err: unknown) {
+      });
+
+      room.on(RoomEvent.ActiveSpeakersChanged, () => {
+        if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
+      });
+
+      room.on(RoomEvent.TrackMuted, () => {
+        if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
+      });
+
+      room.on(RoomEvent.TrackUnmuted, () => {
+        if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
+      });
+
+      // Handle remote audio playback
+      room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, participant: RemoteParticipant) => {
+        if (sessionGenRef.current !== currentSessionGen) return;
+        if (track.kind === Track.Kind.Audio) {
+          let audioEl = audioElementsRef.current.get(participant.identity);
+          if (!audioEl) {
+            audioEl = document.createElement('audio');
+            audioEl.autoplay = true;
+            audioEl.setAttribute('data-participant-identity', participant.identity);
+            document.body.appendChild(audioEl);
+            audioElementsRef.current.set(participant.identity, audioEl);
+          }
+
+          // Apply active voice output sinkId if supported
+          if (isOutputSelectionSupported && activeAudioOutputIdRef.current && 'setSinkId' in HTMLMediaElement.prototype) {
+            (audioEl as unknown as { setSinkId: (id: string) => Promise<void> })
+              .setSinkId(activeAudioOutputIdRef.current)
+              .catch(() => {});
+          }
+
+          track.attach(audioEl);
+          audioEl.play().catch(() => {
+            // Browser autoplay restrictions may require explicit user interaction
+          });
+        }
+      });
+
+      room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, _pub, participant: RemoteParticipant) => {
+        if (sessionGenRef.current !== currentSessionGen) return;
+        const audioEl = audioElementsRef.current.get(participant.identity);
+        if (audioEl) {
+          track.detach(audioEl);
+        }
+      });
+    },
+    [roomId, syncParticipants, scheduleTokenRenewal, cleanupAudioElements, leaveVoice, refreshDevices, isOutputSelectionSupported]
+  );
+
+  // Bounded reconnect attempt with exponential backoff and backend authorization
+  const attemptReconnect = useCallback(
+    (currentSessionGen: number) => {
+      if (isExplicitLeaveRef.current) return;
+
+      if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        setConnectionState('failed');
+        setErrorMessage('Voice connection lost after multiple retry attempts. Please rejoin manually.');
+        leaveVoice();
+        return;
+      }
+
+      reconnectAttemptsRef.current += 1;
+      setConnectionState('reconnecting');
+
+      const backoffMs = Math.min(10000, 1000 * Math.pow(2, reconnectAttemptsRef.current));
+
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+
+      reconnectTimerRef.current = setTimeout(async () => {
         if (sessionGenRef.current !== currentSessionGen || isExplicitLeaveRef.current) return;
 
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        if (
-          errorMsg.includes('403') ||
-          errorMsg.includes('401') ||
-          errorMsg.includes('KICKED') ||
-          errorMsg.includes('REVOKED') ||
-          errorMsg.includes('FORBIDDEN')
-        ) {
-          setConnectionState('unauthorized');
-          setErrorMessage('Voice authorization expired or was revoked.');
-          await leaveVoice();
-        } else if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
-          setConnectionState('failed');
-          setErrorMessage('Voice connection lost after multiple retry attempts. Please rejoin manually.');
-          await leaveVoice();
-        } else {
-          attemptReconnect(currentSessionGen);
+        try {
+          // Mandatory backend re-authorization before reconnecting
+          const tokenData = await voiceApi.getVoiceToken(roomId, { tabId: tabIdRef.current });
+          if (sessionGenRef.current !== currentSessionGen || isExplicitLeaveRef.current) return;
+
+          latestTokenRef.current = tokenData.token;
+
+          // Cleanup old room if present
+          if (roomRef.current) {
+            try {
+              if (roomRef.current.localParticipant) {
+                roomRef.current.localParticipant.audioTrackPublications.forEach((pub) => {
+                  if (pub.track) pub.track.stop();
+                });
+              }
+              await roomRef.current.disconnect();
+            } catch {
+              // ignore
+            }
+            roomRef.current = null;
+          }
+
+          cleanupAudioElements();
+
+          const room = new Room({
+            adaptiveStream: true,
+            dynacast: true,
+            audioCaptureDefaults: {
+              autoGainControl: capturePreferencesRef.current.autoGainControl,
+              echoCancellation: capturePreferencesRef.current.echoCancellation,
+              noiseSuppression: capturePreferencesRef.current.noiseSuppression,
+              deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
+            },
+            audioOutput: activeAudioOutputIdRef.current ? { deviceId: activeAudioOutputIdRef.current } : undefined,
+          });
+
+          roomRef.current = room;
+          bindRoomListeners(room, currentSessionGen, tokenData.expiresAt);
+
+          await room.connect(tokenData.serverUrl, tokenData.token);
+          if (sessionGenRef.current !== currentSessionGen || isExplicitLeaveRef.current) {
+            room.disconnect().catch(() => {});
+            return;
+          }
+
+          await room.localParticipant.setMicrophoneEnabled(!isMuted, {
+            autoGainControl: capturePreferencesRef.current.autoGainControl,
+            echoCancellation: capturePreferencesRef.current.echoCancellation,
+            noiseSuppression: capturePreferencesRef.current.noiseSuppression,
+            deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
+          });
+          reconnectAttemptsRef.current = 0;
+          setConnectionState('connected');
+          syncParticipants(room);
+        } catch (err: unknown) {
+          if (sessionGenRef.current !== currentSessionGen || isExplicitLeaveRef.current) return;
+
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          if (
+            errorMsg.includes('403') ||
+            errorMsg.includes('401') ||
+            errorMsg.includes('KICKED') ||
+            errorMsg.includes('REVOKED') ||
+            errorMsg.includes('FORBIDDEN')
+          ) {
+            setConnectionState('unauthorized');
+            setErrorMessage('Voice authorization expired or was revoked.');
+            await leaveVoice();
+          } else if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+            setConnectionState('failed');
+            setErrorMessage('Voice connection lost after multiple retry attempts. Please rejoin manually.');
+            await leaveVoice();
+          } else {
+            attemptReconnect(currentSessionGen);
+          }
         }
-      }
-    }, backoffMs);
-  }, [roomId, isMuted, leaveVoice, cleanupAudioElements, syncParticipants, bindRoomListeners]);
+      }, backoffMs);
+    },
+    [roomId, isMuted, leaveVoice, cleanupAudioElements, syncParticipants, bindRoomListeners]
+  );
 
   attemptReconnectRef.current = attemptReconnect;
 
@@ -456,15 +619,17 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
 
       setConnectionState('connecting');
 
-      // 2. Instantiate LiveKit Room
+      // 2. Instantiate LiveKit Room with dynamic capture preferences and output device
       const room = new Room({
         adaptiveStream: true,
         dynacast: true,
         audioCaptureDefaults: {
-          autoGainControl: true,
-          echoCancellation: true,
-          noiseSuppression: true,
+          autoGainControl: capturePreferencesRef.current.autoGainControl,
+          echoCancellation: capturePreferencesRef.current.echoCancellation,
+          noiseSuppression: capturePreferencesRef.current.noiseSuppression,
+          deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
         },
+        audioOutput: activeAudioOutputIdRef.current ? { deviceId: activeAudioOutputIdRef.current } : undefined,
       });
 
       roomRef.current = room;
@@ -478,8 +643,13 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
         return;
       }
 
-      // 4. Enable local microphone audio track
-      await room.localParticipant.setMicrophoneEnabled(true);
+      // 4. Enable local microphone audio track with active capture options
+      await room.localParticipant.setMicrophoneEnabled(true, {
+        autoGainControl: capturePreferencesRef.current.autoGainControl,
+        echoCancellation: capturePreferencesRef.current.echoCancellation,
+        noiseSuppression: capturePreferencesRef.current.noiseSuppression,
+        deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
+      });
       setIsMuted(false);
       syncParticipants(room);
     } catch (err: unknown) {
@@ -487,10 +657,7 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
 
       const errorMsg = err instanceof Error ? err.message : String(err);
 
-      if (errorMsg.includes('NotAllowedError') || errorMsg.includes('Permission denied')) {
-        setConnectionState('failed');
-        setErrorMessage('Microphone access was denied. Please allow microphone permissions in your browser and try again.');
-      } else if (errorMsg.includes('VOICE_SERVICE_NOT_CONFIGURED')) {
+      if (errorMsg.includes('VOICE_SERVICE_NOT_CONFIGURED')) {
         setConnectionState('failed');
         setErrorMessage('Voice communication is not currently configured on this server.');
       } else if (errorMsg.includes('FORBIDDEN_KICKED') || errorMsg.includes('removed from this room')) {
@@ -504,7 +671,7 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
         setErrorMessage('You must join the room stage before entering voice.');
       } else {
         setConnectionState('failed');
-        setErrorMessage(errorMsg || 'Failed to connect to voice lounge.');
+        setErrorMessage(classifyDeviceError(err));
       }
 
       await leaveVoice();
@@ -521,21 +688,76 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
       setIsMuted(targetState);
       syncParticipants(roomRef.current);
     } catch (err: unknown) {
-      setErrorMessage(err instanceof Error ? err.message : 'Failed to toggle microphone');
+      setErrorMessage(classifyDeviceError(err));
     }
   }, [isMuted, syncParticipants]);
 
   // Switch microphone input device
-  const switchDevice = useCallback(async (deviceId: string) => {
-    if (!roomRef.current) return;
-
+  const switchAudioInputDevice = useCallback(async (deviceId: string) => {
     try {
-      await roomRef.current.switchActiveDevice('audioinput', deviceId);
-      setActiveDeviceId(deviceId);
+      setErrorMessage(null);
+      setActiveAudioInputId(deviceId);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_MIC_KEY, deviceId);
+      }
+      if (roomRef.current) {
+        await roomRef.current.switchActiveDevice('audioinput', deviceId);
+      }
     } catch (err: unknown) {
-      setErrorMessage(err instanceof Error ? err.message : 'Failed to switch audio input device');
+      setErrorMessage(classifyDeviceError(err));
     }
   }, []);
+
+  // Switch voice speaker output device
+  const switchAudioOutputDevice = useCallback(
+    async (deviceId: string) => {
+      try {
+        setErrorMessage(null);
+        setActiveAudioOutputId(deviceId);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_VOICE_OUTPUT_KEY, deviceId);
+        }
+        if (isOutputSelectionSupported) {
+          if (roomRef.current) {
+            await roomRef.current.switchActiveDevice('audiooutput', deviceId).catch(() => {});
+          }
+          audioElementsRef.current.forEach((el) => {
+            if ('setSinkId' in HTMLMediaElement.prototype) {
+              (el as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId).catch(() => {});
+            }
+          });
+        }
+      } catch (err: unknown) {
+        setErrorMessage(classifyDeviceError(err));
+      }
+    },
+    [isOutputSelectionSupported]
+  );
+
+  // Update capture quality preferences dynamically
+  const updateCapturePreferences = useCallback(
+    async (partial: Partial<AudioCapturePreferences>) => {
+      setCapturePreferences((prev) => {
+        const updated = { ...prev, ...partial };
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_CAPTURE_PREFS_KEY, JSON.stringify(updated));
+        }
+        if (roomRef.current?.localParticipant && !isMuted) {
+          const captureOptions = {
+            autoGainControl: updated.autoGainControl,
+            echoCancellation: updated.echoCancellation,
+            noiseSuppression: updated.noiseSuppression,
+            deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
+          };
+          roomRef.current.localParticipant
+            .setMicrophoneEnabled(true, captureOptions)
+            .catch(() => {});
+        }
+        return updated;
+      });
+    },
+    [isMuted]
+  );
 
   // Cleanup on unmount or when room ID changes / disabled
   useEffect(() => {
@@ -571,11 +793,30 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
     isSpeaking,
     errorMessage,
     participants,
-    audioDevices,
-    activeDeviceId,
+
+    // Microphone (Audio Input) Devices
+    audioInputDevices,
+    activeAudioInputId,
+    permissionState,
+    capturePreferences,
+
+    // Speaker/Headphones (Audio Output) Devices
+    audioOutputDevices,
+    activeAudioOutputId,
+    isOutputSelectionSupported,
+
+    // Actions
     joinVoice,
     leaveVoice,
     toggleMute,
-    switchDevice,
+    switchAudioInputDevice,
+    switchAudioOutputDevice,
+    updateCapturePreferences,
+    refreshDevices,
+
+    // Backwards compatibility aliases
+    audioDevices: audioInputDevices,
+    activeDeviceId: activeAudioInputId,
+    switchDevice: switchAudioInputDevice,
   };
 }

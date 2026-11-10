@@ -519,6 +519,16 @@ export default function RoomDetailPage() {
             onLeaveVoice={voice.leaveVoice}
             onToggleMute={voice.toggleMute}
             onSwitchDevice={voice.switchDevice}
+            audioInputDevices={voice.audioInputDevices}
+            activeAudioInputId={voice.activeAudioInputId}
+            permissionState={voice.permissionState}
+            capturePreferences={voice.capturePreferences}
+            onUpdateCapturePreferences={voice.updateCapturePreferences}
+            audioOutputDevices={voice.audioOutputDevices}
+            activeAudioOutputId={voice.activeAudioOutputId}
+            isOutputSelectionSupported={voice.isOutputSelectionSupported}
+            onSwitchAudioInputDevice={voice.switchAudioInputDevice}
+            onSwitchAudioOutputDevice={voice.switchAudioOutputDevice}
           />
         </div>
 
