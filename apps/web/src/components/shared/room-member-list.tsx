@@ -1,10 +1,10 @@
 import React from 'react';
-import { Crown, Users, RefreshCw, AlertCircle, UserX } from 'lucide-react';
+import { Crown, Users, RefreshCw, AlertCircle, UserX, Mic, MicOff, Mic2 } from 'lucide-react';
 import { UserAvatar } from './user-avatar';
 import { useRoomMembers } from '@/hooks/queries/use-room';
 import { cn } from '@/lib/utils';
-
 import { RoomMembershipDto } from '@ktv/contracts';
+import { VoiceParticipantInfo } from '@/features/voice/types/voice.types';
 
 interface RoomMemberListProps {
   roomId: string;
@@ -15,6 +15,9 @@ interface RoomMemberListProps {
   className?: string;
   members?: RoomMembershipDto[];
   onRefresh?: () => void;
+  voiceParticipants?: VoiceParticipantInfo[];
+  currentSingerName?: string | null;
+  currentSingerUserId?: string | null;
 }
 
 export function RoomMemberList({
@@ -26,6 +29,9 @@ export function RoomMemberList({
   className,
   members: propMembers,
   onRefresh: propOnRefresh,
+  voiceParticipants,
+  currentSingerName,
+  currentSingerUserId,
 }: RoomMemberListProps) {
   const queryResult = useRoomMembers(roomId, { enabled: !propMembers });
   const members = propMembers ?? queryResult.data;
@@ -164,6 +170,18 @@ export function RoomMemberList({
               const isCurrentUser = Boolean(currentUserId && m.userId === currentUserId);
               const username = m.user?.username ?? 'Member';
               const isOnline = onlineUserIds ? onlineUserIds.has(m.userId) : true;
+              const userSessions = voiceParticipants
+                ? voiceParticipants.filter((p) => p.userId === m.userId)
+                : [];
+              const isInVoice = userSessions.length > 0;
+              const isSpeaking = userSessions.some((p) => p.isSpeaking);
+              const isMuted = isInVoice && userSessions.every((p) => p.isMuted);
+              const sessionCount = userSessions.length;
+
+              const isSinger = Boolean(
+                (currentSingerUserId && m.userId === currentSingerUserId) ||
+                (currentSingerName && username === currentSingerName)
+              );
 
               return (
                 <div
@@ -171,20 +189,30 @@ export function RoomMemberList({
                   data-testid={`member-item-${m.userId}`}
                   className={cn(
                     'p-2.5 rounded-xl border flex items-center justify-between transition-colors',
-                    isCurrentUser
+                    isSinger
+                      ? 'bg-fuchsia-950/30 border-fuchsia-500/40 shadow-sm shadow-fuchsia-950/40'
+                      : isCurrentUser
                       ? 'bg-violet-950/30 border-violet-500/30 shadow-sm'
                       : 'bg-white/5 border-white/5 hover:bg-white/[0.07]'
                   )}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <UserAvatar
-                      name={username}
-                      avatarUrl={m.user?.avatar}
-                      size="sm"
-                      status={isOnline ? 'online' : 'offline'}
-                    />
+                    <div className="relative shrink-0">
+                      <UserAvatar
+                        name={username}
+                        avatarUrl={m.user?.avatar}
+                        size="sm"
+                        status={isOnline ? 'online' : 'offline'}
+                        className={cn(
+                          isSpeaking && 'ring-2 ring-emerald-400 animate-pulse'
+                        )}
+                      />
+                      {isSpeaking && (
+                        <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-black animate-pulse" />
+                      )}
+                    </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs font-semibold text-slate-200 truncate">
                           {username}
                         </span>
@@ -201,18 +229,49 @@ export function RoomMemberList({
                             Host
                           </span>
                         )}
+                        {isSinger && (
+                          <span
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30 shrink-0"
+                            title="Currently singing on stage"
+                          >
+                            <Mic2 className="w-2.5 h-2.5" />
+                            Singing
+                          </span>
+                        )}
                       </div>
-                      <span className="text-[10px] text-slate-400 block truncate">
-                        Joined{' '}
-                        {new Date(m.joinedAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 truncate">
+                        <span>
+                          Joined{' '}
+                          {new Date(m.joinedAt).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                        {isInVoice && (
+                          <span className="text-emerald-400/90 font-medium flex items-center gap-0.5">
+                            &bull; In Voice
+                            {sessionCount > 1 && ` (${sessionCount} tabs)`}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   <div className="flex items-center pl-2 shrink-0 gap-1.5">
+                    {/* Voice indicator for member */}
+                    {isInVoice && (
+                      <span
+                        title={isMuted ? 'Muted in voice lounge' : isSpeaking ? 'Speaking in voice' : 'Listening in voice'}
+                        className="p-1 rounded-md bg-white/5"
+                      >
+                        {isMuted ? (
+                          <MicOff className="w-3 h-3 text-rose-400" />
+                        ) : (
+                          <Mic className={cn('w-3 h-3', isSpeaking ? 'text-emerald-400 animate-pulse' : 'text-slate-400')} />
+                        )}
+                      </span>
+                    )}
+
                     {isHost && m.role !== 'host' && onKickMember && (
                       <button
                         type="button"

@@ -18,6 +18,7 @@ import { PlaybackControls } from './PlaybackControls';
 import { SingerTurnIndicator } from './SingerTurnIndicator';
 import { LyricsStage } from './LyricsStage';
 import { useKaraokeAudio } from '../hooks/use-karaoke-audio';
+import { KaraokeEqPreset } from '../services/karaoke-equalizer';
 
 interface KaraokePlayerProps {
   playback: PlaybackStateDto | undefined;
@@ -34,6 +35,8 @@ interface KaraokePlayerProps {
   onStop: () => void;
   onSeek: (positionMs: number) => void;
   onOpenSearch?: () => void;
+  onOpenEqSettings?: () => void;
+  currentEqPreset?: KaraokeEqPreset;
   className?: string;
 }
 
@@ -52,6 +55,8 @@ export function KaraokePlayer({
   onStop,
   onSeek,
   onOpenSearch,
+  onOpenEqSettings,
+  currentEqPreset,
   className,
 }: KaraokePlayerProps) {
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -400,7 +405,7 @@ export function KaraokePlayer({
       {/* Current Song Details Panel */}
       <CurrentSongPanel item={currentItem} isPlaying={isPlaying} />
 
-      {/* Authoritative Playback Controls with Independent Backing Audio Controls */}
+      {/* Authoritative Playback Controls with Independent Backing Audio Controls & EQ trigger */}
       <PlaybackControls
         status={status}
         currentPositionMs={currentPositionMs}
@@ -416,6 +421,8 @@ export function KaraokePlayer({
         onSkip={onSkip}
         onStop={onStop}
         onSeek={onSeek}
+        onOpenEqSettings={onOpenEqSettings}
+        currentEqPreset={currentEqPreset}
       />
     </div>
   );

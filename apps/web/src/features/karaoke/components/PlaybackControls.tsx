@@ -11,9 +11,11 @@ import {
   Lock,
   Volume2,
   VolumeX,
+  Sliders,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PlaybackStatus } from '@ktv/contracts';
+import { KaraokeEqPreset } from '../services/karaoke-equalizer';
 
 interface PlaybackControlsProps {
   status: PlaybackStatus;
@@ -30,6 +32,8 @@ interface PlaybackControlsProps {
   onSkip: () => void;
   onStop: () => void;
   onSeek: (positionMs: number) => void;
+  onOpenEqSettings?: () => void;
+  currentEqPreset?: KaraokeEqPreset;
   className?: string;
 }
 
@@ -48,6 +52,8 @@ export function PlaybackControls({
   onSkip,
   onStop,
   onSeek,
+  onOpenEqSettings,
+  currentEqPreset,
   className,
 }: PlaybackControlsProps) {
   const isPlaying = status === 'playing';
@@ -166,8 +172,23 @@ export function PlaybackControls({
         </button>
       </div>
 
-      {/* Right: Backing Track Volume Slider & Status Badge */}
-      <div className="flex items-center gap-3">
+      {/* Right: Backing Track Volume Slider, EQ Button & Status Badge */}
+      <div className="flex items-center gap-2.5">
+        {/* Backing Track EQ Button */}
+        {onOpenEqSettings && (
+          <button
+            type="button"
+            onClick={onOpenEqSettings}
+            title={currentEqPreset ? `Equalizer (${currentEqPreset.replace('_', ' ')})` : 'Equalizer Settings'}
+            className="flex items-center gap-1 px-2 py-1 rounded-xl bg-white/5 hover:bg-white/10 active:scale-95 text-slate-300 hover:text-cyan-300 border border-white/5 transition-all text-xs"
+          >
+            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden lg:inline text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              {currentEqPreset ? currentEqPreset.replace('_', ' ') : 'EQ'}
+            </span>
+          </button>
+        )}
+
         {/* Independent Karaoke Backing Track Volume */}
         <div className="flex items-center gap-1.5 bg-white/5 px-2.5 py-1 rounded-xl border border-white/5">
           <button

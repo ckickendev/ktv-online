@@ -50,6 +50,8 @@ export interface VoiceControlsProps {
   onSwitchKaraokeOutputDevice?: (deviceId: string) => Promise<void>;
   karaokeEqPreset?: KaraokeEqPreset;
   onSwitchKaraokeEqPreset?: (preset: KaraokeEqPreset) => void;
+  variant?: 'card' | 'bar';
+  className?: string;
 }
 
 export function VoiceControls({
@@ -80,15 +82,140 @@ export function VoiceControls({
   onSwitchKaraokeOutputDevice,
   karaokeEqPreset,
   onSwitchKaraokeEqPreset,
+  variant = 'card',
+  className = '',
 }: VoiceControlsProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  React.useEffect(() => {
+    const handleOpen = () => setIsSettingsOpen(true);
+    window.addEventListener('ktv_open_audio_settings', handleOpen);
+    return () => window.removeEventListener('ktv_open_audio_settings', handleOpen);
+  }, []);
 
   const effectiveInputs = audioInputDevices || audioDevices;
   const effectiveActiveInput = activeAudioInputId || activeDeviceId;
   const handleSwitchInput = onSwitchAudioInputDevice || onSwitchDevice;
 
+  if (variant === 'bar') {
+    return (
+      <div className={`flex items-center gap-2 ${className}`}>
+        {errorMessage && (
+          <div
+            data-testid="voice-error-banner"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs"
+            title={errorMessage}
+          >
+            <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+            <span className="truncate max-w-[140px]">{errorMessage}</span>
+          </div>
+        )}
+
+        {!isConnected ? (
+          <button
+            type="button"
+            data-testid="join-voice-button"
+            onClick={onJoinVoice}
+            disabled={isConnecting || !isRoomMember}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-semibold shadow-md shadow-emerald-950/30 transition-all disabled:opacity-50"
+          >
+            {isConnecting ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="hidden sm:inline">
+                  {connectionState === 'requesting_permission'
+                    ? 'Requesting Mic...'
+                    : 'Connecting...'}
+                </span>
+              </>
+            ) : (
+              <>
+                <PhoneCall className="w-3.5 h-3.5" />
+                <span>Join Voice</span>
+              </>
+            )}
+          </button>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            {/* Mic Toggle Button */}
+            <button
+              type="button"
+              data-testid="voice-mute-toggle"
+              onClick={onToggleMute}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-sm ${
+                isMuted
+                  ? 'bg-rose-600/90 hover:bg-rose-500 text-white shadow-rose-900/30'
+                  : isSpeaking
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-white ring-2 ring-emerald-400/50 shadow-emerald-900/40'
+                  : 'bg-emerald-600/90 hover:bg-emerald-500 text-white'
+              }`}
+              title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+            >
+              {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">
+                {isMuted ? 'Muted' : isSpeaking ? 'Speaking...' : 'Mic Active'}
+              </span>
+            </button>
+
+            {/* Voice Live status badge */}
+            <span
+              data-testid="voice-status-connected"
+              className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live
+            </span>
+
+            {/* Audio Settings Dialog Trigger */}
+            <button
+              type="button"
+              data-testid="audio-device-settings-button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs transition-colors"
+              title="Voice & Equalizer Settings"
+            >
+              <Settings2 className="w-3.5 h-3.5 text-violet-400" />
+            </button>
+
+            {/* Leave Voice Button */}
+            <button
+              type="button"
+              data-testid="leave-voice-button"
+              onClick={onLeaveVoice}
+              className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 border border-white/10 hover:border-rose-500/30 text-xs transition-colors"
+              title="Disconnect from voice lounge"
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">Leave Voice</span>
+            </button>
+          </div>
+        )}
+
+        {/* Audio Device Settings Modal */}
+        <AudioDeviceSettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          audioInputDevices={effectiveInputs}
+          activeAudioInputId={effectiveActiveInput}
+          onSelectInputDevice={handleSwitchInput || (async () => {})}
+          permissionState={permissionState}
+          capturePreferences={capturePreferences}
+          onUpdateCapturePreferences={onUpdateCapturePreferences || (async () => {})}
+          audioOutputDevices={audioOutputDevices}
+          activeVoiceOutputId={activeAudioOutputId}
+          onSelectVoiceOutputDevice={onSwitchAudioOutputDevice || (async () => {})}
+          isOutputSelectionSupported={isOutputSelectionSupported}
+          activeKaraokeOutputId={karaokeOutputDeviceId}
+          onSelectKaraokeOutputDevice={onSwitchKaraokeOutputDevice}
+          karaokeEqPreset={karaokeEqPreset}
+          onSelectKaraokeEqPreset={onSwitchKaraokeEqPreset}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-3">
+    <div className={`glass-panel p-4 rounded-2xl border border-white/5 space-y-3 ${className}`}>
       {errorMessage && (
         <div
           data-testid="voice-error-banner"

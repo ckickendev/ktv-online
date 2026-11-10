@@ -81,34 +81,48 @@ export function RoomSongQueue({
       </div>
 
       {/* Queue Items List */}
-      <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[460px]">
+      <div className="flex-1 overflow-y-auto space-y-3 pr-1 max-h-[460px]">
         {/* Currently playing item if present */}
         {currentItem && (
-          <QueueItem
-            item={currentItem}
-            index={0}
-            currentUserId={currentUserId}
-            isHost={isHost}
-            onRemove={onRemove}
-          />
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-fuchsia-400 px-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-ping" />
+              <span>Now Singing</span>
+            </div>
+            <QueueItem
+              item={currentItem}
+              index={0}
+              currentUserId={currentUserId}
+              isHost={isHost}
+              onRemove={onRemove}
+            />
+          </div>
         )}
 
         {/* Queued upcoming items */}
-        {queuedItems.map((item, idx) => (
-          <QueueItem
-            key={item.id}
-            item={item}
-            index={idx}
-            currentUserId={currentUserId}
-            isHost={isHost}
-            canMoveUp={isHost && idx > 0}
-            canMoveDown={isHost && idx < queuedItems.length - 1}
-            isRemoving={isMutating}
-            onRemove={onRemove}
-            onMoveUp={handleMoveUp}
-            onMoveDown={handleMoveDown}
-          />
-        ))}
+        {queuedItems.length > 0 && (
+          <div className="space-y-1.5 pt-1">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 flex items-center justify-between">
+              <span>Up Next</span>
+              <span className="text-slate-500 font-mono text-[9px]">{queuedItems.length} in line</span>
+            </div>
+            {queuedItems.map((item, idx) => (
+              <QueueItem
+                key={item.id}
+                item={item}
+                index={idx}
+                currentUserId={currentUserId}
+                isHost={isHost}
+                canMoveUp={isHost && idx > 0}
+                canMoveDown={isHost && idx < queuedItems.length - 1}
+                isRemoving={isMutating}
+                onRemove={onRemove}
+                onMoveUp={handleMoveUp}
+                onMoveDown={handleMoveDown}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Empty state */}
         {!currentItem && queuedItems.length === 0 && (
