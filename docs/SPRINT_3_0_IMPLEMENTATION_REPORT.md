@@ -151,7 +151,8 @@ Under the code-only constraint, runtime verification in real browser environment
 
 ---
 
-## 11. Git Baseline Reference
+## 11. Git Baseline Reference & Commit Hash
 
 - Baseline Commit: `fce831c`
+- Sprint 3.0 Implementation Commit: `24e3141`
 
