@@ -2,118 +2,109 @@
 
 ## 1. Overview & Consistency Strategy
 
-Sprint 2.4.1.1 hardens the consistency protocols of the karaoke domain to ensure verified, truthful guarantees under concurrent host commands, singer departures, room closures, worker execution delays, and server crashes.
+Sprint 2.4.1.2 establishes strict deployment-level consistency guarantees and verifies the cross-collection synchronization mechanisms of the karaoke domain under concurrent host commands, singer departures, room closures, worker execution delays, and reconciliation passes.
 
-### Dual-Mode Execution Strategy
-MongoDB multi-document ACID transactions (`session.withTransaction`) require a replica set or sharded cluster. In standalone MongoDB deployments (often encountered in local development or single-container CI), transactions are unavailable.
+### Deployment Capability Matrix
 
-To guarantee correctness in all environments without making false atomicity claims:
-1. **Replica Set Deployments (ACID Transactions)**:
-   All multi-document operations (`reorderQueue`, `advanceToNextTrack`, `handleMemberDeparted`) execute inside a MongoDB transaction session via `runInTransaction(async (session) => { ... })`. If any write or version check fails, the entire transaction is rolled back by the database engine.
-2. **Standalone Deployments (Recoverable CAS Protocol)**:
-   Operations execute using single-document atomic Compare-And-Swap (CAS) filters (`findOneAndUpdate` matching status and version), unique database partial indexes, transition UUIDs, and automated rollback/reconciliation protocols.
+| Environment | MongoDB Topology | Transaction Support | Enforced Behavior |
+| :--- | :--- | :--- | :--- |
+| **Local Development** | Standalone MongoDB (`docker-compose.yml` or native `mongod`) | Auto-detected: supported if replica set configured, unsupported if standalone | Runs under Recoverable CAS & Reconciliation Protocols when standalone; runs full ACID transactions when replica set is active. Explicitly logs topology mode. |
+| **Staging** | MongoDB Replica Set (Atlas or multi-node container) | Required & Probed | Fails closed on startup or execution if transactions are unsupported. Mirrors production transaction boundaries. |
+| **Production** | MongoDB Atlas / Replica Set (minimum 3-node cluster) | Required & Strictly Enforced | Strict Fail-Closed: Startup verification probe (`checkTransactionSupport`) rejects standalone topologies. Any operation requiring transactions throws [UnsupportedTopologyError](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts) if executed without a replica set session. Zero silent degradation to non-atomic writes. |
 
 ---
 
 ## 2. Transition Protection Matrix
 
-| Transition Pathway | Database Documents Modified | Replica Set Protection | Standalone CAS Protection | Fencing / Idempotency Key |
+| Transition Pathway | Database Documents Modified | Production Replica Set Protection | Local Standalone CAS Protection | Fencing / Idempotency Key |
 | :--- | :--- | :--- | :--- | :--- |
-| **Queue Reorder** | Multiple `RoomQueueItem` documents, `RoomPlaybackState` | Multi-document ACID Transaction (`runInTransaction`) | Full-coverage check (`INVALID_REORDER_ITEM_COUNT`) + CAS on `queueVersion` | `expectedQueueVersion` |
-| **Natural Track Completion** | Old `RoomQueueItem`, Next `RoomQueueItem`, `RoomPlaybackState`, `Room` | Multi-document ACID Transaction (`runInTransaction`) | CAS candidate claim + `commitConditionalPlaybackTransition` with lease verification | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` + `leaseToken` |
-| **Host / Singer Skip** | Old `RoomQueueItem`, Next `RoomQueueItem`, `RoomPlaybackState`, `Room` | Multi-document ACID Transaction (`runInTransaction`) | Preempts worker lease, CAS candidate claim + conditional playback update | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` |
-| **Play / Pause / Seek / Stop** | `RoomPlaybackState` (+ `RoomQueueItem` if stopped) | Conditional CAS Update | `commitConditionalPlaybackTransition` matching `playbackVersion` | `expectedPlaybackVersion` |
-| **Member Departure / Kick** | Departed user's `RoomQueueItem` documents, `RoomPlaybackState` (if active singer) | Multi-document ACID Transaction (`runInTransaction`) | Atomic `updateMany` for queued items, CAS next track advance for active singer | `expectedCurrentQueueItemId` |
-| **Room Closure** | `RoomPlaybackState`, all active `RoomQueueItem` documents, `Room` | Atomic sequential purge | `Room.status = 'closed'` check blocks all future mutations; CAS purge to idle | `room.status !== 'closed'` |
+| **Queue Reorder** | Multiple [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts) documents, [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | Full-coverage check (`INVALID_REORDER_ITEM_COUNT`) + CAS on `queueVersion` | `expectedQueueVersion` |
+| **Queue Item Removal** | Target [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), remaining queued items (rebalanced), [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | Sequential CAS update + position rebalancing | Monotonic `queueVersion` increment |
+| **Natural Track Completion** | Old [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), Next [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts), [Room](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | CAS candidate claim + [commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) with lease verification | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` + `leaseToken` |
+| **Host / Singer Skip** | Old [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), Next [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts), [Room](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | Preempts worker lease, CAS candidate claim + conditional playback update | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` |
+| **Play / Pause / Seek** | [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Conditional CAS Update | [commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) matching `playbackVersion` | `expectedPlaybackVersion` |
+| **Stop** | Current [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts), [Room](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | CAS playback reset + mark item skipped | `expectedPlaybackVersion` |
+| **Member Departure / Kick** | Departed user's [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts) documents, rebalanced queued items, [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) (advance if active singer) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | Atomic `updateMany` for queued items, CAS next track advance for active singer | `expectedCurrentQueueItemId` |
+| **Room Closure** | [RoomPlaybackState](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts), all active [RoomQueueItem](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts) documents, [Room](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) | Multi-document ACID Transaction ([runInTransaction](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts)) | `Room.status = 'closed'` terminal check blocks all future mutations; CAS purge to idle | `room.status !== 'closed'` |
 
 ---
 
-## 3. Queue Reorder Multi-Document Atomicity
+## 3. Queue Reorder Protocol
 
 ### The Multi-Document Problem
-MongoDB `bulkWrite()` alone executes operations sequentially on the server. Without an active transaction session, a crash or concurrent command between bulk write steps can leave duplicate or missing positions.
+In MongoDB, `bulkWrite()` across multiple documents does not execute atomically unless wrapped inside a multi-document transaction session. In standalone MongoDB deployments:
+1. **Crash Window**: If the node or database crashes midway through `bulkWrite()`, partial position modifications are persisted.
+2. **Concurrency Window**: In standalone mode, if `bulkWrite()` succeeds on queue items but the subsequent CAS advancement on `RoomPlaybackState.queueVersion` fails (due to a concurrent reorder), queue positions have been updated without advancing the room's canonical `queueVersion`.
 
-### The Sprint 2.4.1.1 Hardened Protocol
-1. **Host Role & Room Status Verification**: Checked before entering mutation boundaries.
-2. **Transaction Session Propagation**: In `reorderQueue`, `RoomQueueItemModel.find(...)`, `RoomQueueItemModel.bulkWrite(...)`, and `RoomPlaybackStateModel.findOneAndUpdate(...)` all receive the transaction `session`.
-3. **Full Coverage Enforcement**:
-   - Compares `dto.itemIds.length` against `queuedItems.length`.
-   - Validates that `new Set(dto.itemIds).size === dto.itemIds.length`.
-   - Verifies every item ID exists in the active queued set.
-   - Any omission or duplicate throws `INVALID_REORDER_ITEM_COUNT` (HTTP 400), preventing incomplete reorders from creating duplicate positions.
-4. **CAS Version Fencing**:
-   `RoomPlaybackStateModel.findOneAndUpdate({ roomId, queueVersion: expectedVersion }, { $set: { queueVersion: nextVersion } })`.
-   If a concurrent operation modified `queueVersion`, the query matches 0 documents and throws `STALE_QUEUE_VERSION` (HTTP 409), triggering an automatic transaction abort and rollback.
-
----
-
-## 4. Distributed Worker Lease Fencing
-
-### The Stale Worker Hazard
-If a distributed worker claims an overdue playback lease but experiences a GC pause or network delay exceeding the lease duration (15 seconds), a second worker or a host command could process the room. When the delayed worker resumes, an unfenced outcome write would corrupt playback state by double-advancing the track.
-
-### The Conditional Outcome Write Solution
-1. **Atomic Lease Acquisition**:
-   `RoomPlaybackStateModel.claimDuePlayback(instanceId, 15000)` claims overdue playbacks with a cryptographically random `leaseToken`, `leaseExpiresAt`, and increments `leaseVersion`.
-2. **Conditional Outcome Write ([commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts))**:
-   Every worker transition commits via an atomic `findOneAndUpdate` filter requiring:
-   - `playbackVersion: expectedPlaybackVersion`
-   - `currentQueueItemId: expectedCurrentQueueItemId`
-   - `leaseToken: workerLeaseToken`
-   - `leaseExpiresAt: { $gt: new Date() }`
-3. **Immediate Invalidation on Expiry**:
-   If the lease expired, was released, or was preempted by a host command, the update matches zero documents and returns `null`. The worker aborts with zero side effects.
-4. **Idempotent Cleanup**:
-   Worker's `finally` block calls `releasePlaybackLease(roomId, leaseToken)`, which only clears lease fields if `leaseToken` still matches.
+### Production Protection (ACID Transactions)
+In production, multi-document transactions are mandatory:
+1. **All Reads Use Session**: [RoomPlaybackStateModel.findOne](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) and [RoomQueueItemModel.find](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts) receive `session`.
+2. **BulkWrite Bound to Session**: `RoomQueueItemModel.bulkWrite(bulkOps, { session })` ensures writes remain uncommitted until the transaction succeeds.
+3. **QueueVersion Bound to Session**: `RoomPlaybackStateModel.findOneAndUpdate({ queueVersion }, ..., { session })` participates in the same ACID boundary.
+4. **Structured Conflict on Stale Version**: If `expectedQueueVersion !== playbackState.queueVersion`, throws `STALE_QUEUE_VERSION` (HTTP 409).
+5. **Abort Leaves Zero Partial State**: If any write or version check fails, MongoDB aborts the entire transaction; no partial queue reorders are visible.
+6. **Post-Commit Publication**: Realtime events (`broadcastKaraokeQueueUpdated`) are dispatched strictly after the transaction commits.
 
 ---
 
-## 5. Playback Completion & Automatic Advancement
+## 4. Version Semantics & Ownership
 
-### Dual-Layer Completion Engine
-1. **Precision In-Memory Timers**:
-   - Anchored to the exact completion millisecond ($\text{delayMs} = \text{durationMs} - \text{positionMs}$).
-   - Supplies `expectedPlaybackVersion` and `expectedCurrentQueueItemId`.
-   - If the track was paused, skipped, or stopped, the timer fires harmlessly and aborts without mutating state.
-2. **Distributed Polling Worker (`KaraokePlaybackWorker`)**:
-   - Polls MongoDB every 2000ms.
-   - Recovers any playbacks where the precision timer was missed due to a process crash or restart.
-   - Acts as a fault-tolerant safety net.
+| Version Attribute | Model Location | Authoritative Responsibility | Mutation Triggers |
+| :--- | :--- | :--- | :--- |
+| `queueVersion` | [RoomPlaybackStateModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Canonical coordinator for room song queue ordering and membership | Enqueue song, remove song, reorder queue, rebalance positions, member departure purge, track completion |
+| `playbackVersion` | [RoomPlaybackStateModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) | Authoritative coordinator for playback state machine and player lifecycle | Play, pause, seek, stop, skip, natural track completion |
+| `stateVersion` | [RoomModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) | Authoritative coordinator for room membership, participation, and lifecycle | Join room, leave room, kick member, close room, update room metadata |
 
-### Automatic Next-Track Selection & Requester Eligibility
-- Selects the earliest valid item: `status: 'queued'`, ordered by `position: 1, addedAt: 1`.
-- **Dynamic Membership Verification**: Verifies `RoomMembershipModel`. If the requester is no longer active in the room (departed or kicked), their item is marked `removed` (`reason: 'requester_departed'`), and the loop evaluates the next candidate.
-- If queue is empty, playback transitions to `idle` and room song metadata is cleared.
+### Why `queueVersion` is Stored in `RoomPlaybackStateModel`
+Because active queue items are stored as independent individual documents in [RoomQueueItemModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-queue-item.model.ts), there is no single "RoomQueue" document. [RoomPlaybackStateModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) maintains a strict 1-to-1 relationship with the Room via a unique index (`{ roomId: 1 }`). Storing `queueVersion` in `RoomPlaybackStateModel` avoids introducing an extraneous single-field collection while providing an atomic CAS target for all queue mutations.
 
 ---
 
-## 6. Race-Safe Lifecycle Cleanups
+## 5. Distributed Worker Lease Fencing
 
-1. **Member Departure & Kick**:
-   - `leaveRoom` and `kickMember` both invoke `handleMemberDeparted(roomId, userId)`.
-   - All pending requests are transitioned to `removed`, and remaining queue positions are rebalanced.
-   - If the departed user was the active singer, playback advances to the next track using `expectedCurrentQueueItemId: currentItem._id.toString()`.
-   - If a skip or natural completion raced and already advanced the track, the fencing check aborts safely, preventing a double track advancement.
-2. **Room Closure**:
-   - `closeRoom` invokes `handleRoomClosed(roomId)`.
-   - Precision timers are canceled.
-   - Playback is reset to `idle`, all queue items are marked `removed`, and cleared state snapshots are broadcast to connected clients before disconnection.
-   - All playback and queue mutations reject closed rooms immediately with `FORBIDDEN_ROOM_CLOSED`.
+### Stale Worker Race Prevention
+Consider the race condition:
+1. **Worker A** claims lease generation 1 on room $R$ (`leaseToken_A`, `leaseExpiresAt: t + 15s`).
+2. Worker A experiences an execution pause (GC or network delay) exceeding 15 seconds.
+3. The lease expires (`leaseExpiresAt <= now`).
+4. **Worker B** claims lease generation 2 on room $R$ (`leaseToken_B`, `leaseExpiresAt: now + 15s`, `leaseVersion: 2`).
+5. Worker A wakes up and attempts to commit its outcome write via [commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts):
+   ```ts
+   filter: {
+     roomId: roomObjectId,
+     playbackVersion: expectedPlaybackVersion,
+     leaseToken: 'leaseToken_A',
+     leaseExpiresAt: { $gt: now },
+   }
+   ```
+6. In the database:
+   - `leaseToken` is now `'leaseToken_B'`.
+   - `leaseExpiresAt_A` is in the past.
+7. MongoDB updates **zero documents** and returns `null`. Worker A safely aborts without mutating state.
+8. Worker B remains the sole, valid owner.
+
+### Lease Renewal Protection
+The [renewPlaybackLease](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) method requires:
+- `leaseToken: callerToken`
+- `leaseExpiresAt: { $gt: now }`
+This prevents a worker from renewing a lease that was already claimed by another worker.
 
 ---
 
-## 7. Self-Healing Reconciliation Correctness
+## 6. Reconciliation Concurrency Hardening
 
-[KaraokeReconciliationService](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/karaoke-reconciliation.service.ts) runs on server startup and periodic maintenance cycles:
-
-1. **Closed Room with Active State**: Purges active items to `removed` and resets playback to `idle`.
-2. **Multiple Playing Items**: Deduplicates to at most 1 playing item, marking extras `skipped`.
-3. **Queue Playing Item with Idle Playback**: Transitions stray playing items to `completed`.
-4. **Playback Playing without Playing Item**: Advances to next track or resets playback to `idle`.
-5. **Playback References Missing or Foreign Item**: Resets playback to `idle`.
-6. **Playback References Terminal Item**: Advances to next track.
-7. **Overdue Playback**: Advances to next track using version and current item fencing.
-8. **Position Gaps or Duplicates**: Rebalances queue positions to a contiguous $1 \dots N$ sequence.
-9. **Expired Worker Leases**: Clears dangling leases database-wide via `releaseExpiredLeases()`.
-10. **Repairs Use CAS**: All reconciliation updates use conditional CAS filters to ensure they never overwrite valid concurrent mutations.
-11. **Post-Commit Publication**: Realtime updates are broadcast to Socket.IO only after reconciliation writes have successfully committed.
+### The `QUEUE_PLAYING_ITEM_WITH_IDLE_PLAYBACK` Race
+1. **The Hazard**: Reconciliation detects a queue item in `playing` status while `RoomPlaybackState.status === 'idle'`. If a user enqueues or starts playing a new track immediately after the read snapshot, a naive `updateMany({ roomId, status: 'playing' }, { $set: { status: 'completed' } })` would complete the newly started track!
+2. **The Hardened CAS Solution**:
+   - Reconciliation targets **only** the specific item IDs identified during the initial read: `_id: { $in: orphanIds }`.
+   - Before modifying any queue item, reconciliation executes a CAS fence on [RoomPlaybackStateModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts):
+     ```ts
+     const fenced = await RoomPlaybackStateModel.findOneAndUpdate(
+       { roomId, playbackVersion: snapshot.playbackVersion, status: 'idle' },
+       { $inc: { queueVersion: 1 }, $set: { lastTransitionId: uuid } },
+       { new: true }
+     );
+     ```
+   - If a valid play command committed in the interim, `fenced` returns `null`. Reconciliation **aborts immediately** with zero modifications.
+   - Only if `fenced` succeeds does reconciliation complete the targeted orphan items.
+   - Realtime publication is dispatched strictly after verified database commits.

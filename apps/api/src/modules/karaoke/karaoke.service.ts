@@ -53,19 +53,28 @@ export class KaraokeService {
     const roomObjectId = new Types.ObjectId(roomId);
     let state = await RoomPlaybackStateModel.findOne({ roomId: roomObjectId }).exec();
     if (!state) {
-      state = await RoomPlaybackStateModel.create({
-        roomId: roomObjectId,
-        currentQueueItemId: null,
-        status: 'idle',
-        positionMs: 0,
-        anchorStartedAt: null,
-        pausedAt: null,
-        playbackExpiresAt: null,
-        playbackVersion: 1,
-        queueVersion: 1,
-      });
+      try {
+        state = await RoomPlaybackStateModel.create({
+          roomId: roomObjectId,
+          currentQueueItemId: null,
+          status: 'idle',
+          positionMs: 0,
+          anchorStartedAt: null,
+          pausedAt: null,
+          playbackExpiresAt: null,
+          playbackVersion: 1,
+          queueVersion: 1,
+        });
+      } catch (err: unknown) {
+        const mongoErr = err as { code?: number };
+        if (mongoErr?.code === 11000) {
+          state = await RoomPlaybackStateModel.findOne({ roomId: roomObjectId }).exec();
+        } else {
+          throw err;
+        }
+      }
     }
-    return state;
+    return state!;
   }
 
   /**
@@ -489,19 +498,33 @@ export class KaraokeService {
 
     const wasPlaying = item.status === 'playing';
 
-    // 4. Mark item removed
-    item.status = 'removed';
-    item.position = 0;
-    item.removedAt = new Date();
-    await item.save();
-
-    // 5. If removing active playing track, advance playback
+    // 4. If removing active playing track, advance playback
     if (wasPlaying) {
       this.scheduler?.cancel(roomId);
+      item.status = 'removed';
+      item.position = 0;
+      item.removedAt = new Date();
+      await item.save();
       await this.advanceToNextTrack(roomId, { reason: 'manual_removal' });
     } else {
-      // Rebalance remaining queued items
-      await this.rebalanceQueuePositions(roomId);
+      // Execute removal, rebalance, and queueVersion advancement inside transaction boundary
+      await runInTransaction(async (session: ClientSession | null) => {
+        item.status = 'removed';
+        item.position = 0;
+        item.removedAt = new Date();
+        await item.save({ session: session || undefined });
+
+        await this.rebalanceQueuePositions(roomId, session);
+
+        await RoomPlaybackStateModel.findOneAndUpdate(
+          { roomId: roomObjectId },
+          {
+            $inc: { queueVersion: 1 },
+            $set: { lastTransitionId: transitionId },
+          },
+          { session: session || undefined }
+        ).exec();
+      });
     }
 
     const [queue, playback] = await Promise.all([
@@ -826,36 +849,44 @@ export class KaraokeService {
 
       case 'stop': {
         this.scheduler?.cancel(roomId);
-        if (playbackState.currentQueueItemId) {
-          await RoomQueueItemModel.updateOne(
-            { _id: playbackState.currentQueueItemId, roomId: roomObjectId, status: 'playing' },
-            { $set: { status: 'skipped', position: 0, completedAt: now } }
-          ).exec();
-        }
-
-        const updated = await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
-          roomId,
-          playbackState.playbackVersion,
-          {
-            currentQueueItemId: null,
-            status: 'idle',
-            positionMs: 0,
-            anchorStartedAt: null,
-            pausedAt: null,
-            playbackExpiresAt: null,
-            lastTransitionId: transitionId,
+        await runInTransaction(async (session: ClientSession | null) => {
+          if (playbackState.currentQueueItemId) {
+            await RoomQueueItemModel.updateOne(
+              { _id: playbackState.currentQueueItemId, roomId: roomObjectId, status: 'playing' },
+              { $set: { status: 'skipped', position: 0, completedAt: now } },
+              { session: session || undefined }
+            ).exec();
           }
-        );
 
-        if (!updated) {
-          throw new Error('STALE_PLAYBACK_VERSION');
-        }
+          const nextQueueVer = (playbackState.queueVersion || 1) + 1;
+          const updated = await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+            roomId,
+            playbackState.playbackVersion,
+            {
+              currentQueueItemId: null,
+              status: 'idle',
+              positionMs: 0,
+              anchorStartedAt: null,
+              pausedAt: null,
+              playbackExpiresAt: null,
+              queueVersion: nextQueueVer,
+              lastTransitionId: transitionId,
+            },
+            {
+              session,
+            }
+          );
 
-        if (room) {
-          room.currentSongTitle = null;
-          room.currentSingerName = null;
-          await room.save();
-        }
+          if (!updated) {
+            throw new Error('STALE_PLAYBACK_VERSION');
+          }
+
+          if (room) {
+            room.currentSongTitle = null;
+            room.currentSingerName = null;
+            await room.save({ session: session || undefined });
+          }
+        });
         break;
       }
 
@@ -1180,31 +1211,35 @@ export class KaraokeService {
     const roomObjectId = new Types.ObjectId(roomId);
     this.scheduler?.cancel(roomId);
 
-    // Stop playback
-    await RoomPlaybackStateModel.updateOne(
-      { roomId: roomObjectId },
-      {
-        $set: {
-          currentQueueItemId: null,
-          status: 'idle',
-          positionMs: 0,
-          anchorStartedAt: null,
-          pausedAt: null,
-          playbackExpiresAt: null,
-          claimedBy: null,
-          claimedAt: null,
-          leaseExpiresAt: null,
-          leaseToken: null,
+    await runInTransaction(async (session: ClientSession | null) => {
+      // Stop playback and advance versions
+      await RoomPlaybackStateModel.updateOne(
+        { roomId: roomObjectId },
+        {
+          $set: {
+            currentQueueItemId: null,
+            status: 'idle',
+            positionMs: 0,
+            anchorStartedAt: null,
+            pausedAt: null,
+            playbackExpiresAt: null,
+            claimedBy: null,
+            claimedAt: null,
+            leaseExpiresAt: null,
+            leaseToken: null,
+          },
+          $inc: { playbackVersion: 1, queueVersion: 1 },
         },
-        $inc: { playbackVersion: 1, queueVersion: 1 },
-      }
-    ).exec();
+        { session: session || undefined }
+      ).exec();
 
-    // Mark all active queue items removed
-    await RoomQueueItemModel.updateMany(
-      { roomId: roomObjectId, status: { $in: ['queued', 'playing'] } },
-      { $set: { status: 'removed', position: 0, removedAt: new Date() } }
-    ).exec();
+      // Mark all active queue items removed
+      await RoomQueueItemModel.updateMany(
+        { roomId: roomObjectId, status: { $in: ['queued', 'playing'] } },
+        { $set: { status: 'removed', position: 0, removedAt: new Date() } },
+        { session: session || undefined }
+      ).exec();
+    });
 
     logger.info({ roomId }, 'Cleaned up room karaoke queue and playback on room closure');
   }
@@ -1220,19 +1255,31 @@ export class KaraokeService {
     const roomObjectId = new Types.ObjectId(roomId);
     const userObjectId = new Types.ObjectId(userId);
 
-    // 1. Remove user's queued songs
-    const removeResult = await RoomQueueItemModel.updateMany(
-      { roomId: roomObjectId, requestedBy: userObjectId, status: 'queued' },
-      { $set: { status: 'removed', position: 0, removedAt: new Date() } }
-    ).exec();
+    let removedCount = 0;
+    let playbackChanged = false;
 
-    // 2. Rebalance remaining queue positions
-    if (removeResult.modifiedCount > 0) {
-      await this.rebalanceQueuePositions(roomId);
-    }
+    await runInTransaction(async (session: ClientSession | null) => {
+      // 1. Remove user's queued songs
+      const removeResult = await RoomQueueItemModel.updateMany(
+        { roomId: roomObjectId, requestedBy: userObjectId, status: 'queued' },
+        { $set: { status: 'removed', position: 0, removedAt: new Date() } },
+        { session: session || undefined }
+      ).exec();
+
+      removedCount = removeResult.modifiedCount;
+
+      // 2. Rebalance remaining queue positions and advance queueVersion
+      if (removedCount > 0) {
+        await this.rebalanceQueuePositions(roomId, session);
+        await RoomPlaybackStateModel.findOneAndUpdate(
+          { roomId: roomObjectId },
+          { $inc: { queueVersion: 1 } },
+          { session: session || undefined }
+        ).exec();
+      }
+    });
 
     // 3. If currently playing song belonged to departed user, advance playback
-    let playbackChanged = false;
     const playbackState = await RoomPlaybackStateModel.findOne({ roomId: roomObjectId }).exec();
     if (playbackState && playbackState.currentQueueItemId) {
       const currentItem = await RoomQueueItemModel.findById(playbackState.currentQueueItemId).exec();
@@ -1246,7 +1293,7 @@ export class KaraokeService {
       }
     }
 
-    if (removeResult.modifiedCount > 0 || playbackChanged) {
+    if (removedCount > 0 || playbackChanged) {
       const [queue, playback] = await Promise.all([
         this.getQueueSnapshot(roomId),
         this.getPlaybackSnapshot(roomId),

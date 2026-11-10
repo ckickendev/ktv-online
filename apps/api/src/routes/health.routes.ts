@@ -19,12 +19,15 @@ healthRoutes.get('/health/live', (_req: Request, res: Response) => {
 });
 
 import { isAppShuttingDown } from '../utils/lifecycle.js';
+import { isTransactionSupported } from '../database/transaction.js';
 
-// Readiness probe: returns 200 only if MongoDB is connected and process is not shutting down
+// Readiness probe: returns 200 only if MongoDB is connected, topology is valid, and process is not shutting down
 healthRoutes.get('/health/ready', (_req: Request, res: Response) => {
   const dbStatus = getDatabaseStatus();
   const shuttingDown = isAppShuttingDown();
-  const isReady = dbStatus === 'connected' && !shuttingDown;
+  const txSupported = isTransactionSupported();
+  const topologyValid = env.NODE_ENV !== 'production' || txSupported;
+  const isReady = dbStatus === 'connected' && !shuttingDown && topologyValid;
 
   const data: ReadinessStatusDto = {
     status: isReady ? 'ready' : 'not_ready',
@@ -41,7 +44,9 @@ healthRoutes.get('/health/ready', (_req: Request, res: Response) => {
       success: false,
       message: shuttingDown
         ? 'Service is shutting down'
-        : 'Service is not ready: database is disconnected',
+        : !topologyValid
+          ? 'Service is not ready: replica set transactions are required in production'
+          : 'Service is not ready: database is disconnected',
       data,
     });
     return;

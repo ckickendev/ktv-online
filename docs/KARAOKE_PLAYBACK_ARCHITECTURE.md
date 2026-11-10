@@ -214,19 +214,31 @@ $$
 
 ---
 
-### 6.2 Concurrency & Monotonicity
+### 6.2 Concurrency, Topology & Monotonicity
 1. **Single Playing Track**: MongoDB partial unique index guarantees that two concurrent requests cannot insert or update two queue items to `playing` status in the same room.
-2. **Dual-Mode Transaction / CAS Protocol**:
-   - On replica set deployments, multi-document mutations (`reorderQueue`, `advanceToNextTrack`, `handleMemberDeparted`) run within an ACID transaction session via `runInTransaction`.
-   - On standalone deployments, operations execute under atomic CAS filters, transition UUIDs, and automated rollback/reconciliation protocols.
-3. **Queue Reorder Atomicity**: Enforces full coverage validation (`dto.itemIds.length === queuedItems.length`, unique IDs) and atomic version advancement via CAS/transaction, preventing position duplication or interleaving corruption.
-4. **Distributed Lease Fencing**: Background workers acquire expiring leases with unique tokens. Outcome writes via `commitConditionalPlaybackTransition` verify `playbackVersion`, `currentQueueItemId`, `leaseToken`, and `leaseExpiresAt > now`, guaranteeing expired workers cannot commit stale transitions.
-5. **Version Checks**:
-   - `queueVersion`: Monotonically incremented on additions, removals, reorders, and auto-advances. Clients supply `expectedQueueVersion` to detect concurrent reorders.
-   - `playbackVersion`: Monotonically incremented on commands and status transitions. Stale commands with mismatched versions are rejected with HTTP 409 / socket error.
-6. **Room Closure**: Closing a room immediately stops playback, sets state to `idle`, marks all active queue items `removed`, cancels precision timers, and increments versions.
-7. **Member Departure**: When a member leaves or is evicted, their queued items are cleanly removed, remaining items are rebalanced, and if their song was playing, playback advances to the next track with current item identity fencing.
-8. **Self-Healing Reconciliation**: Startup and periodic sweeps detect and repair orphaned references, closed room state leaks, stray playing items on idle playback, position gaps, and expired worker leases using CAS-protected operations.
+2. **Production Topology Enforcement**:
+   - Production requires a MongoDB Replica Set (Atlas or multi-node cluster) supporting multi-document ACID transactions.
+   - [checkTransactionSupport](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts) probes database capabilities at startup. If standalone MongoDB is detected in production, the application fails closed immediately with [UnsupportedTopologyError](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/transaction.ts).
+   - In local development (`NODE_ENV === 'development'`), standalone MongoDB is supported via the Recoverable CAS & Reconciliation Protocols, preserving a lightweight single-container developer workflow.
+3. **Queue Reorder Protocol**:
+   - In transaction mode, all queue item reads, bulk updates, and `queueVersion` advancements share the same transaction session.
+   - Enforces full coverage validation (`dto.itemIds.length === queuedItems.length`, unique IDs) and atomic version advancement via CAS/transaction.
+   - Any stale reorder returns a structured `STALE_QUEUE_VERSION` (HTTP 409) conflict.
+4. **Distributed Lease Fencing**:
+   - Background workers claim overdue playbacks using atomic `findOneAndUpdate` that assigns a cryptographically unique `leaseToken`, `leaseExpiresAt`, and increments `leaseVersion`.
+   - Outcome writes commit via [commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) verifying `playbackVersion`, `currentQueueItemId`, `leaseToken`, and `leaseExpiresAt > now`.
+   - If Worker A's lease expires and Worker B acquires the lease, Worker A's outcome write updates zero documents and aborts cleanly.
+   - Lease renewal via [renewPlaybackLease](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) requires matching `leaseToken` and `leaseExpiresAt > now`.
+5. **Version Responsibilities & Monotonicity**:
+   - `queueVersion`: Co-located on [RoomPlaybackStateModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts) as the authoritative room-scoped queue coordinator. Advanced monotonically on enqueues, removals, reorders, position rebalancing, and track advancements.
+   - `playbackVersion`: Authoritative coordinator for playback state transitions (play, pause, seek, stop, skip, natural track completion).
+   - `stateVersion`: Authoritative coordinator on [RoomModel](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts) for room membership, participation, and lifecycle.
+6. **Room Closure**: Closing a room immediately stops playback, sets state to `idle`, marks all active queue items `removed`, cancels precision timers, and increments versions within an atomic transaction.
+7. **Member Departure**: When a member leaves or is evicted, their queued items are cleanly removed, remaining items are rebalanced, `queueVersion` is incremented, and if their song was playing, playback advances to the next track with current item identity fencing.
+8. **Self-Healing Reconciliation**:
+   - Startup and periodic sweeps detect and repair orphaned references, closed room state leaks, stray playing items on idle playback, position gaps, and expired worker leases.
+   - For `QUEUE_PLAYING_ITEM_WITH_IDLE_PLAYBACK`, reconciliation executes a CAS fence on `RoomPlaybackStateModel` (requiring `status: 'idle'` and matching `playbackVersion`) and targets only the specific orphaned item IDs. If a concurrent play command activated the stage, the CAS fence aborts without modifying items.
+   - Realtime publication occurs strictly post-commit.
 
 ---
 

@@ -116,7 +116,6 @@ export class KaraokeReconciliationService {
     // 2. Multiple Playing Items Invariant: at most one playing song per room
     if (playingItems.length > 1) {
       inconsistencies.push('MULTIPLE_PLAYING_ITEMS_DETECTED');
-      actionTaken = 'MULTIPLE_PLAYING_DEDUPLICATED';
 
       if (!dryRun) {
         // Keep the item currently referenced by playbackState, or the earliest started item
@@ -124,31 +123,79 @@ export class KaraokeReconciliationService {
           ? playbackState.currentQueueItemId.toString()
           : playingItems[0]!._id.toString();
 
-        await RoomQueueItemModel.updateMany(
-          { roomId: roomObjectId, _id: { $ne: new Types.ObjectId(keepId) }, status: 'playing' },
-          { $set: { status: 'skipped', position: 0, completedAt: new Date() } }
-        ).exec();
+        const duplicateIds = playingItems
+          .filter((item) => item._id.toString() !== keepId)
+          .map((item) => item._id);
 
-        logger.info(
-          { roomId, keepId, duplicateCount: playingItems.length - 1 },
-          '🛠️ Reconciled duplicate playing items in room'
-        );
+        if (duplicateIds.length > 0) {
+          const res = await RoomQueueItemModel.updateMany(
+            { roomId: roomObjectId, _id: { $in: duplicateIds }, status: 'playing' },
+            { $set: { status: 'skipped', position: 0, completedAt: new Date() } }
+          ).exec();
+
+          if (res.modifiedCount > 0 && actionTaken === 'NONE') {
+            actionTaken = 'MULTIPLE_PLAYING_DEDUPLICATED';
+          }
+
+          logger.info(
+            { roomId, keepId, duplicateCount: duplicateIds.length, modified: res.modifiedCount },
+            '🛠️ Reconciled duplicate playing items in room'
+          );
+        }
+      } else {
+        if (actionTaken === 'NONE') {
+          actionTaken = 'MULTIPLE_PLAYING_DEDUPLICATED';
+        }
       }
     }
 
     // 3. Queue Playing Item with Idle Playback Invariant
     if (playbackState && playbackState.status === 'idle' && playingItems.length > 0) {
       inconsistencies.push('QUEUE_PLAYING_ITEM_WITH_IDLE_PLAYBACK');
-      if (actionTaken === 'NONE') {
-        actionTaken = 'ORPHANED_PLAYING_ITEM_CLEARED';
-      }
 
       if (!dryRun) {
-        await RoomQueueItemModel.updateMany(
-          { roomId: roomObjectId, status: 'playing' },
-          { $set: { status: 'completed', position: 0, completedAt: new Date() } }
+        const orphanIds = playingItems.map((item) => item._id);
+
+        // CAS Fence: Verify that playbackState is STILL idle and matches expected version
+        // If a valid play or enqueue command activated the stage concurrently, abort safely.
+        const fencedPlayback = await RoomPlaybackStateModel.findOneAndUpdate(
+          {
+            roomId: roomObjectId,
+            playbackVersion: playbackState.playbackVersion,
+            status: 'idle',
+          },
+          {
+            $inc: { queueVersion: 1 },
+            $set: { lastTransitionId: crypto.randomUUID() },
+          },
+          { new: true }
         ).exec();
-        logger.info({ roomId, clearedCount: playingItems.length }, '🛠️ Reconciled playing items for idle playback');
+
+        if (fencedPlayback) {
+          // Re-verify and complete ONLY the specific orphaned item IDs captured in the read snapshot
+          const updateResult = await RoomQueueItemModel.updateMany(
+            { roomId: roomObjectId, _id: { $in: orphanIds }, status: 'playing' },
+            { $set: { status: 'completed', position: 0, completedAt: new Date() } }
+          ).exec();
+
+          if (actionTaken === 'NONE') {
+            actionTaken = 'ORPHANED_PLAYING_ITEM_CLEARED';
+          }
+
+          logger.info(
+            { roomId, clearedCount: updateResult.modifiedCount, orphanIds: orphanIds.map((id) => id.toString()) },
+            '🛠️ Reconciled orphaned playing items under CAS fencing for idle playback'
+          );
+        } else {
+          logger.warn(
+            { roomId, expectedPlaybackVersion: playbackState.playbackVersion },
+            'Aborting orphaned playing item cleanup: playback state changed concurrently (new track started)'
+          );
+        }
+      } else {
+        if (actionTaken === 'NONE') {
+          actionTaken = 'ORPHANED_PLAYING_ITEM_CLEARED';
+        }
       }
     }
 
@@ -158,9 +205,8 @@ export class KaraokeReconciliationService {
 
       if (!referencedItem) {
         inconsistencies.push('PLAYBACK_REFERENCES_MISSING_QUEUE_ITEM');
-        actionTaken = 'ORPHANED_PLAYBACK_RESET';
         if (!dryRun) {
-          await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+          const reset = await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
             roomId,
             playbackState.playbackVersion,
             {
@@ -172,12 +218,16 @@ export class KaraokeReconciliationService {
               playbackExpiresAt: null,
             }
           );
+          if (reset && actionTaken === 'NONE') {
+            actionTaken = 'ORPHANED_PLAYBACK_RESET';
+          }
+        } else {
+          if (actionTaken === 'NONE') actionTaken = 'ORPHANED_PLAYBACK_RESET';
         }
       } else if (referencedItem.roomId.toString() !== roomId) {
         inconsistencies.push('PLAYBACK_REFERENCES_FOREIGN_ROOM_ITEM');
-        actionTaken = 'ORPHANED_PLAYBACK_RESET';
         if (!dryRun) {
-          await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+          const reset = await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
             roomId,
             playbackState.playbackVersion,
             {
@@ -189,21 +239,32 @@ export class KaraokeReconciliationService {
               playbackExpiresAt: null,
             }
           );
+          if (reset && actionTaken === 'NONE') {
+            actionTaken = 'ORPHANED_PLAYBACK_RESET';
+          }
+        } else {
+          if (actionTaken === 'NONE') actionTaken = 'ORPHANED_PLAYBACK_RESET';
         }
       } else if (referencedItem.status !== 'playing') {
         inconsistencies.push('PLAYBACK_REFERENCES_NON_PLAYING_ITEM');
-        actionTaken = 'ORPHANED_PLAYBACK_RESET';
         if (!dryRun) {
           // If playback status was playing but item is terminal, advance to next track
-          await karaokeService.advanceToNextTrack(roomId, { reason: 'reconciliation' });
+          const advanced = await karaokeService.advanceToNextTrack(roomId, {
+            expectedPlaybackVersion: playbackState.playbackVersion,
+            reason: 'reconciliation',
+          });
+          if (advanced && actionTaken === 'NONE') {
+            actionTaken = 'ORPHANED_PLAYBACK_RESET';
+          }
+        } else {
+          if (actionTaken === 'NONE') actionTaken = 'ORPHANED_PLAYBACK_RESET';
         }
       }
     } else if (playbackState && playbackState.status === 'playing' && playingItems.length === 0) {
       // Playback says playing but zero items are playing
       inconsistencies.push('PLAYBACK_PLAYING_WITHOUT_PLAYING_ITEM');
-      actionTaken = 'ORPHANED_PLAYBACK_RESET';
       if (!dryRun) {
-        await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+        const reset = await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
           roomId,
           playbackState.playbackVersion,
           {
@@ -215,6 +276,11 @@ export class KaraokeReconciliationService {
             playbackExpiresAt: null,
           }
         );
+        if (reset && actionTaken === 'NONE') {
+          actionTaken = 'ORPHANED_PLAYBACK_RESET';
+        }
+      } else {
+        if (actionTaken === 'NONE') actionTaken = 'ORPHANED_PLAYBACK_RESET';
       }
     }
 
@@ -226,13 +292,17 @@ export class KaraokeReconciliationService {
       playbackState.leaseToken !== null
     ) {
       inconsistencies.push('EXPIRED_WORKER_LEASE_DETECTED');
-      if (actionTaken === 'NONE') {
-        actionTaken = 'EXPIRED_LEASE_CLEARED';
-      }
 
       if (!dryRun && playbackState.leaseToken) {
-        await RoomPlaybackStateModel.releasePlaybackLease(roomId, playbackState.leaseToken);
-        logger.info({ roomId, expiredLeaseToken: playbackState.leaseToken }, '🛠️ Reconciled expired worker lease');
+        const released = await RoomPlaybackStateModel.releasePlaybackLease(roomId, playbackState.leaseToken);
+        if (released && actionTaken === 'NONE') {
+          actionTaken = 'EXPIRED_LEASE_CLEARED';
+        }
+        logger.info({ roomId, expiredLeaseToken: playbackState.leaseToken, released }, '🛠️ Reconciled expired worker lease');
+      } else {
+        if (actionTaken === 'NONE') {
+          actionTaken = 'EXPIRED_LEASE_CLEARED';
+        }
       }
     }
 
@@ -255,15 +325,21 @@ export class KaraokeReconciliationService {
 
         if (derivedMs >= songDurationMs) {
           inconsistencies.push('PLAYBACK_OVERDUE_FOR_NATURAL_COMPLETION');
-          actionTaken = 'OVERDUE_PLAYBACK_COMPLETED';
 
           if (!dryRun) {
             logger.info({ roomId, songDurationMs, derivedMs }, '🛠️ Reconciling overdue playback track');
-            await karaokeService.advanceToNextTrack(roomId, {
+            const adv = await karaokeService.advanceToNextTrack(roomId, {
               expectedPlaybackVersion: playbackState.playbackVersion,
               expectedCurrentQueueItemId: playbackState.currentQueueItemId.toString(),
               reason: 'natural_completion',
             });
+            if (adv && actionTaken === 'NONE') {
+              actionTaken = 'OVERDUE_PLAYBACK_COMPLETED';
+            }
+          } else {
+            if (actionTaken === 'NONE') {
+              actionTaken = 'OVERDUE_PLAYBACK_COMPLETED';
+            }
           }
         }
       }
@@ -277,12 +353,21 @@ export class KaraokeReconciliationService {
 
     if (hasPositionGap) {
       inconsistencies.push('QUEUE_POSITIONS_NOT_SEQUENTIAL');
-      if (actionTaken === 'NONE') {
-        actionTaken = 'QUEUE_POSITIONS_REBALANCED';
-      }
 
       if (!dryRun) {
         await karaokeService.rebalanceQueuePositions(roomId);
+        await RoomPlaybackStateModel.findOneAndUpdate(
+          { roomId: roomObjectId },
+          { $inc: { queueVersion: 1 } }
+        ).exec();
+
+        if (actionTaken === 'NONE') {
+          actionTaken = 'QUEUE_POSITIONS_REBALANCED';
+        }
+      } else {
+        if (actionTaken === 'NONE') {
+          actionTaken = 'QUEUE_POSITIONS_REBALANCED';
+        }
       }
     }
 

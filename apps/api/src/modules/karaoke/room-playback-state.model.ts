@@ -33,6 +33,11 @@ export interface IRoomPlaybackStateModel extends Model<IRoomPlaybackStateDocumen
     roomId: Types.ObjectId | string,
     leaseToken: string
   ): Promise<boolean>;
+  renewPlaybackLease(
+    roomId: Types.ObjectId | string,
+    leaseToken: string,
+    additionalMs?: number
+  ): Promise<boolean>;
   releaseExpiredLeases(): Promise<number>;
   commitConditionalPlaybackTransition(
     roomId: Types.ObjectId | string,
@@ -197,6 +202,36 @@ RoomPlaybackStateSchema.statics.releasePlaybackLease = async function (
         leaseExpiresAt: null,
         leaseToken: null,
       },
+    }
+  ).exec();
+
+  return result.modifiedCount > 0;
+};
+
+/**
+  * Renews an active worker lease. Requires matching leaseToken and an unexpired lease.
+  * Cannot extend a different worker's lease or a lease that has already expired and been claimed.
+  */
+RoomPlaybackStateSchema.statics.renewPlaybackLease = async function (
+  roomId: Types.ObjectId | string,
+  leaseToken: string,
+  additionalMs: number = 15000
+): Promise<boolean> {
+  const roomObjectId = typeof roomId === 'string' ? new Types.ObjectId(roomId) : roomId;
+  const now = new Date();
+  const newExpiresAt = new Date(now.getTime() + additionalMs);
+
+  const result = await this.updateOne(
+    {
+      roomId: roomObjectId,
+      leaseToken,
+      leaseExpiresAt: { $gt: now },
+    },
+    {
+      $set: {
+        leaseExpiresAt: newExpiresAt,
+      },
+      $inc: { leaseVersion: 1 },
     }
   ).exec();
 
