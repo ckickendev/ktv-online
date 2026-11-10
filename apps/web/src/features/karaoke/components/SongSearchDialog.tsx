@@ -22,8 +22,10 @@ import { formatMsToTime } from './CurrentSongPanel';
 interface SongSearchDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectSong: (songId: string) => Promise<unknown>;
+  onSelectSong: (songId: string, singerId?: string) => Promise<unknown>;
   isAddingSong?: boolean;
+  queueLength?: number;
+  maxQueueSize?: number;
 }
 
 const GENRE_FILTERS = [
@@ -40,6 +42,8 @@ export function SongSearchDialog({
   onClose,
   onSelectSong,
   isAddingSong = false,
+  queueLength = 0,
+  maxQueueSize = 50,
 }: SongSearchDialogProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -136,12 +140,19 @@ export function SongSearchDialog({
           </button>
         </div>
 
-        {/* Development Catalog Notice Banner */}
-        <div className="px-5 py-2.5 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-2 text-xs text-amber-200">
-          <Info className="w-4 h-4 text-amber-400 shrink-0" />
-          <span className="text-[11px] leading-relaxed">
-            <strong>Development Catalog:</strong> Sample tracks provided for room queue and synchronized playback testing. Commercial catalog integration scheduled for future sprint.
-          </span>
+        {/* Development Catalog & Queue Position Banner */}
+        <div className="px-5 py-2.5 bg-gradient-to-r from-violet-950/40 via-purple-900/20 to-amber-950/30 border-b border-violet-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-amber-200">
+            <Info className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="text-[11px] leading-relaxed">
+              <strong>Development Catalog:</strong> Sample tracks provided for room queue and synchronized playback testing.
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-lg bg-violet-600/20 border border-violet-500/30 text-violet-200 font-medium text-[11px]">
+            <span>Will be</span>
+            <strong className="text-white">#{queueLength + 1}</strong>
+            <span>in queue (max {maxQueueSize})</span>
+          </div>
         </div>
 
         {/* Search input & genre filters */}
@@ -276,13 +287,18 @@ export function SongSearchDialog({
                       'px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0',
                       isAdded
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'bg-violet-600 hover:bg-violet-500 active:scale-95 text-white shadow-md shadow-violet-600/30'
+                        : 'bg-violet-600 hover:bg-violet-500 active:scale-95 text-white shadow-md shadow-violet-600/30 disabled:opacity-50'
                     )}
                   >
                     {isAdded ? (
                       <>
                         <Check className="w-3.5 h-3.5 text-emerald-400" />
                         <span>Queued</span>
+                      </>
+                    ) : isAddingSong ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Adding...</span>
                       </>
                     ) : (
                       <>

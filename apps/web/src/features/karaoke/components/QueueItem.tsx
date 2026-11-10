@@ -41,7 +41,11 @@ export function QueueItem({
 }: QueueItemProps) {
   const isPlaying = item.status === 'playing';
   const isMyRequest = Boolean(currentUserId && item.requestedBy.id === currentUserId);
-  const canRemove = isHost || isMyRequest;
+  const isMyPerformance = Boolean(currentUserId && item.singer && item.singer.id === currentUserId);
+  const canRemove = isHost || isMyRequest || isMyPerformance;
+
+  const performer = item.singer || item.requestedBy;
+  const isDifferentSinger = Boolean(item.singer && item.singer.id !== item.requestedBy.id);
 
   return (
     <div
@@ -93,9 +97,19 @@ export function QueueItem({
           <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
             <span className="truncate max-w-[120px]">{item.song.artist}</span>
             <span>&bull;</span>
-            <span className="flex items-center gap-1 text-slate-400 truncate max-w-[110px]">
+            <span className="flex items-center gap-1 text-slate-400 truncate max-w-[140px]">
               <User className="w-2.5 h-2.5 text-slate-500" />
-              {isMyRequest ? (
+              {isDifferentSinger ? (
+                <span>
+                  Singer:{' '}
+                  <strong className="text-violet-300 font-medium">
+                    {isMyPerformance ? 'You' : performer.displayName || performer.username}
+                  </strong>{' '}
+                  <span className="text-slate-500 text-[10px]">
+                    (by {isMyRequest ? 'You' : item.requestedBy.displayName || item.requestedBy.username})
+                  </span>
+                </span>
+              ) : isMyRequest ? (
                 <span className="text-violet-300 font-medium">You</span>
               ) : (
                 item.requestedBy.displayName || item.requestedBy.username

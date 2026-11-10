@@ -185,12 +185,15 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
 
   // 5. Current Playing Item and Singer Information
   const currentItem = playback?.currentItem || null;
-  const currentSingerId = currentItem?.requestedBy?.id || null;
+  const currentRequester = currentItem?.requestedBy || null;
+  const currentSinger = currentItem?.singer || currentItem?.requestedBy || null;
+  const currentSingerId = currentSinger?.id || null;
   const currentSingerName =
-    currentItem?.requestedBy?.displayName || currentItem?.requestedBy?.username || 'Guest';
+    currentSinger?.displayName || currentSinger?.username || null;
 
   const isCurrentSinger = Boolean(currentUserId && currentSingerId === currentUserId);
-  const canControlPlayback = Boolean(isHost || isCurrentSinger);
+  const isCurrentRequester = Boolean(currentUserId && currentRequester?.id === currentUserId);
+  const canControlPlayback = Boolean(isHost || isCurrentSinger || isCurrentRequester);
   const canAddSongs = Boolean(isMember && roomStatus !== 'closed');
 
   // Next up singer turn check
@@ -199,9 +202,24 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     return queue.items.find((item) => item.status === 'queued') || null;
   }, [queue?.items]);
 
+  const nextRequester = nextUpItem?.requestedBy || null;
+  const nextSinger = nextUpItem?.singer || nextUpItem?.requestedBy || null;
   const isNextUpSinger = Boolean(
-    currentUserId && nextUpItem && nextUpItem.requestedBy.id === currentUserId
+    currentUserId && nextSinger && nextSinger.id === currentUserId
   );
+  const isNextUpRequester = Boolean(
+    currentUserId && nextRequester && nextRequester.id === currentUserId
+  );
+
+  // Performer stage status
+  const currentPerformerState: 'singing' | 'paused' | 'preparing' | 'ended' | 'idle' = useMemo(() => {
+    if (!playback || !currentItem) return 'idle';
+    if (playback.status === 'playing') return 'singing';
+    if (playback.status === 'paused') return 'paused';
+    if (playback.status === 'loading') return 'preparing';
+    if (playback.status === 'ended') return 'ended';
+    return 'idle';
+  }, [playback, currentItem]);
 
   // 6. Mutations with Optimistic Updates & Error Handling
   const addMutation = useMutation({
@@ -253,8 +271,8 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
 
   // Action methods
   const addToQueue = useCallback(
-    (songId: string) => {
-      return addMutation.mutateAsync({ songId });
+    (songId: string, singerId?: string) => {
+      return addMutation.mutateAsync({ songId, singerId });
     },
     [addMutation]
   );
@@ -311,11 +329,18 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     playback,
     currentPositionMs,
     currentItem,
+    currentSinger,
+    currentRequester,
     currentSingerId,
     currentSingerName,
+    currentPerformerState,
     isCurrentSinger,
+    isCurrentRequester,
     isNextUpSinger,
+    isNextUpRequester,
     nextUpItem,
+    nextSinger,
+    nextRequester,
     canControlPlayback,
     canAddSongs,
     isHost,

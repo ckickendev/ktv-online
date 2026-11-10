@@ -144,6 +144,7 @@ export const RoomQueueItemDtoSchema = z.object({
   songId: z.string(),
   song: SongDtoSchema,
   requestedBy: RoomQueueRequesterDtoSchema,
+  singer: RoomQueueRequesterDtoSchema.nullable().optional(),
   position: z.number().int().nonnegative(),
   status: QueueItemStatusSchema,
   queueVersion: z.number().int().positive(),
@@ -165,6 +166,7 @@ export type RoomQueueSnapshotDto = z.infer<typeof RoomQueueSnapshotDtoSchema>;
 
 export const AddQueueItemDtoSchema = z.object({
   songId: z.string().min(1, 'Song ID is required'),
+  singerId: z.string().optional(),
 });
 export type AddQueueItemDto = z.infer<typeof AddQueueItemDtoSchema>;
 

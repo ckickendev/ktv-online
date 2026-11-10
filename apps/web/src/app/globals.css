@@ -99,3 +99,27 @@ body {
 .wave-bar-3 { animation: soundwave 1.3s ease-in-out infinite 0.4s; }
 .wave-bar-4 { animation: soundwave 0.9s ease-in-out infinite 0.1s; }
 .wave-bar-5 { animation: soundwave 1.2s ease-in-out infinite 0.3s; }
+
+/* Stage cheer floating emoji animation */
+@keyframes floatFade {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-16px) scale(1.1);
+  }
+  80% {
+    opacity: 0.9;
+    transform: translateY(-50px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-80px) scale(0.85);
+  }
+}
+
+.animate-float-fade {
+  animation: floatFade 1.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}

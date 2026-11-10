@@ -12,7 +12,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PlaybackStateDto, RoomQueueItemDto } from '@ktv/contracts';
+import { PlaybackStateDto, RoomQueueItemDto, RoomQueueRequesterDto } from '@ktv/contracts';
 import { CurrentSongPanel, formatMsToTime } from './CurrentSongPanel';
 import { PlaybackControls } from './PlaybackControls';
 import { SingerTurnIndicator } from './SingerTurnIndicator';
@@ -26,7 +26,15 @@ interface KaraokePlayerProps {
   isCurrentSinger: boolean;
   isNextUpSinger: boolean;
   currentSingerName: string | null;
+  currentSinger?: RoomQueueRequesterDto | null;
+  currentRequester?: RoomQueueRequesterDto | null;
   nextUpItem: RoomQueueItemDto | null;
+  nextSinger?: RoomQueueRequesterDto | null;
+  nextRequester?: RoomQueueRequesterDto | null;
+  performerState?: 'singing' | 'paused' | 'preparing' | 'ended' | 'idle';
+  isSingerSpeaking?: boolean;
+  isSingerVoiceConnected?: boolean;
+  isSingerMuted?: boolean;
   canControlPlayback: boolean;
   isMutating?: boolean;
   onPlay: () => void;
@@ -46,7 +54,15 @@ export function KaraokePlayer({
   isCurrentSinger,
   isNextUpSinger,
   currentSingerName,
+  currentSinger,
+  currentRequester,
   nextUpItem,
+  nextSinger,
+  nextRequester,
+  performerState,
+  isSingerSpeaking,
+  isSingerVoiceConnected,
+  isSingerMuted,
   canControlPlayback,
   isMutating = false,
   onPlay,
@@ -114,7 +130,16 @@ export function KaraokePlayer({
         isCurrentSinger={isCurrentSinger}
         isNextUpSinger={isNextUpSinger}
         currentSingerName={currentSingerName}
+        currentSinger={currentSinger}
+        currentRequester={currentRequester}
         nextUpItem={nextUpItem}
+        nextSinger={nextSinger}
+        nextRequester={nextRequester}
+        performerState={performerState}
+        isSingerSpeaking={isSingerSpeaking}
+        isSingerVoiceConnected={isSingerVoiceConnected}
+        isSingerMuted={isSingerMuted}
+        onOpenSearch={onOpenSearch}
       />
 
       {/* Autoplay Blocked Notification Banner */}

@@ -5,6 +5,7 @@ export interface IRoomQueueItem {
   roomId: Types.ObjectId;
   songId: Types.ObjectId;
   requestedBy: Types.ObjectId;
+  singer?: Types.ObjectId | null;
   position: number;
   status: QueueItemStatus;
   queueVersion: number;
@@ -36,6 +37,12 @@ const RoomQueueItemSchema = new Schema<IRoomQueueItemDocument>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
+    },
+    singer: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
       index: true,
     },
     position: {
@@ -95,6 +102,24 @@ const RoomQueueItemSchema = new Schema<IRoomQueueItemDocument>(
             username: 'Member',
             avatar: null,
           };
+        }
+
+        if (ret.singer && typeof ret.singer === 'object') {
+          const s = ret.singer as Record<string, unknown>;
+          ret.singer = {
+            id: s.id || (s._id ? String(s._id) : ''),
+            username: s.username || 'Member',
+            displayName: s.displayName || s.username || 'Member',
+            avatar: s.avatar || null,
+          };
+        } else if (ret.singer) {
+          ret.singer = {
+            id: String(ret.singer),
+            username: 'Member',
+            avatar: null,
+          };
+        } else if (ret.requestedBy) {
+          ret.singer = ret.requestedBy;
         }
 
         delete ret._id;

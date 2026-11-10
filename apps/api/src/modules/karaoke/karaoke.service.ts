@@ -12,6 +12,7 @@ import {
 } from '@ktv/contracts';
 import { RoomModel } from '../rooms/room.model.js';
 import { RoomMembershipModel } from '../rooms/membership.model.js';
+import { UserModel } from '../users/user.model.js';
 import { SongModel } from './song.model.js';
 import { RoomQueueItemModel, IRoomQueueItemDocument } from './room-queue-item.model.js';
 import { RoomPlaybackStateModel, IRoomPlaybackStateDocument } from './room-playback-state.model.js';
@@ -141,12 +142,26 @@ export class KaraokeService {
           avatar: null,
         };
 
+    const singerDoc = item.singer && typeof item.singer === 'object' && 'username' in item.singer
+      ? item.singer
+      : null;
+
+    const singerDto = singerDoc
+      ? {
+          id: (singerDoc.id || singerDoc._id).toString(),
+          username: singerDoc.username || 'Member',
+          displayName: singerDoc.displayName || singerDoc.username || 'Member',
+          avatar: singerDoc.avatar || null,
+        }
+      : requesterDto;
+
     return {
       id: item._id.toString(),
       roomId: item.roomId.toString(),
       songId: item.songId ? (item.songId._id ? item.songId._id.toString() : item.songId.toString()) : '',
       song: songDto,
       requestedBy: requesterDto,
+      singer: singerDto,
       position: item.position ?? 0,
       status: item.status,
       queueVersion: item.queueVersion || 1,
@@ -174,6 +189,7 @@ export class KaraokeService {
         .sort({ position: 1, addedAt: 1 })
         .populate('songId')
         .populate('requestedBy', 'username displayName avatar')
+        .populate('singer', 'username displayName avatar')
         .exec(),
       this.getOrCreatePlaybackState(roomId),
     ]);
@@ -206,6 +222,7 @@ export class KaraokeService {
       const queueItem = await RoomQueueItemModel.findById(playbackState.currentQueueItemId)
         .populate('songId')
         .populate('requestedBy', 'username displayName avatar')
+        .populate('singer', 'username displayName avatar')
         .exec();
 
       if (queueItem && queueItem.status === 'playing') {
@@ -346,6 +363,18 @@ export class KaraokeService {
     let queueItem: IRoomQueueItemDocument | null = null;
     let activatedImmediately = false;
 
+    // Resolve assigned singer (defaults to song requester)
+    const singerObjectId = dto.singerId && Types.ObjectId.isValid(dto.singerId)
+      ? new Types.ObjectId(dto.singerId)
+      : userObjectId;
+
+    const user = await UserModel.findById(userObjectId).select('username').exec();
+    const singerUser = singerObjectId.equals(userObjectId)
+      ? user
+      : await UserModel.findById(singerObjectId).select('username').exec();
+    const performerDisplayName =
+      singerUser?.username || user?.username || (membership.role === 'host' ? 'Host' : 'Singer');
+
     // Direct stage activation if room playback is idle, no item is playing, and song has available audio
     if (!hasActivePlaying && playbackState.status === 'idle' && song.audioAvailability === 'audio_available') {
       try {
@@ -353,6 +382,7 @@ export class KaraokeService {
           roomId: roomObjectId,
           songId: songObjectId,
           requestedBy: userObjectId,
+          singer: singerObjectId,
           position: 0,
           status: 'playing',
           queueVersion: nextQueueVersion,
@@ -376,7 +406,7 @@ export class KaraokeService {
 
         // Update room stage metadata for display
         room.currentSongTitle = song.title;
-        room.currentSingerName = membership.role === 'host' ? 'Host' : 'Singer';
+        room.currentSingerName = performerDisplayName;
         await room.save();
 
         // Schedule precision completion timer
@@ -417,6 +447,7 @@ export class KaraokeService {
         roomId: roomObjectId,
         songId: songObjectId,
         requestedBy: userObjectId,
+        singer: singerObjectId,
         position: nextPosition,
         status: 'queued',
         queueVersion: nextQueueVersion,
@@ -431,6 +462,7 @@ export class KaraokeService {
     const populated = await RoomQueueItemModel.findById(queueItem._id)
       .populate('songId')
       .populate('requestedBy', 'username displayName avatar')
+      .populate('singer', 'username displayName avatar')
       .exec();
 
     const addedItemDto = this.mapQueueItem(populated);
@@ -1032,6 +1064,7 @@ export class KaraokeService {
           .sort({ position: 1, addedAt: 1 })
           .populate('songId')
           .populate('requestedBy', 'username displayName')
+          .populate('singer', 'username displayName')
           .session(session || null)
           .exec();
 
@@ -1039,10 +1072,11 @@ export class KaraokeService {
           break;
         }
 
-        // Verify active membership of candidate requester
+        // Verify active membership of candidate performer (singer or requester)
+        const performerUserId = candidate.singer || candidate.requestedBy;
         const activeMember = await RoomMembershipModel.findOne({
           roomId: roomObjectId,
-          userId: candidate.requestedBy,
+          userId: performerUserId,
           status: 'active',
           kickedAt: null,
         })
@@ -1097,6 +1131,7 @@ export class KaraokeService {
         )
           .populate('songId')
           .populate('requestedBy', 'username displayName')
+          .populate('singer', 'username displayName')
           .exec();
 
         if (claimed) {
@@ -1145,9 +1180,9 @@ export class KaraokeService {
         await this.rebalanceQueuePositions(roomId, session);
 
         // Update room stage metadata
-        const userDoc = claimedItem.requestedBy as any;
+        const singerDoc = (claimedItem.singer || claimedItem.requestedBy) as any;
         room.currentSongTitle = selectedSong.title || 'Sing Along';
-        room.currentSingerName = userDoc?.displayName || userDoc?.username || 'Singer';
+        room.currentSingerName = singerDoc?.displayName || singerDoc?.username || 'Singer';
         await room.save({ session: session || undefined });
 
         // Schedule precision completion timer
@@ -1311,9 +1346,13 @@ export class KaraokeService {
     let playbackChanged = false;
 
     await runInTransaction(async (session: ClientSession | null) => {
-      // 1. Remove user's queued songs
+      // 1. Remove user's queued songs (whether they requested them or were designated as singer)
       const removeResult = await RoomQueueItemModel.updateMany(
-        { roomId: roomObjectId, requestedBy: userObjectId, status: 'queued' },
+        {
+          roomId: roomObjectId,
+          $or: [{ requestedBy: userObjectId }, { singer: userObjectId }],
+          status: 'queued',
+        },
         { $set: { status: 'removed', position: 0, removedAt: new Date() } },
         { session: session || undefined }
       ).exec();
@@ -1331,12 +1370,17 @@ export class KaraokeService {
       }
     });
 
-    // 3. If currently playing song belonged to departed user, advance playback
+    // 3. If currently playing song belonged to departed user (as requester or singer), advance playback
     const playbackState = await RoomPlaybackStateModel.findOne({ roomId: roomObjectId }).exec();
     if (playbackState && playbackState.currentQueueItemId) {
       const currentItem = await RoomQueueItemModel.findById(playbackState.currentQueueItemId).exec();
-      if (currentItem && currentItem.requestedBy.toString() === userId) {
-        logger.info({ roomId, userId }, 'Departed member was active singer; advancing to next track');
+      const isDepartedUserTrack =
+        currentItem &&
+        (currentItem.requestedBy.toString() === userId ||
+          (currentItem.singer && currentItem.singer.toString() === userId));
+
+      if (isDepartedUserTrack) {
+        logger.info({ roomId, userId }, 'Departed member was active singer/requester; advancing to next track');
         await this.advanceToNextTrack(roomId, {
           expectedCurrentQueueItemId: currentItem._id.toString(),
           reason: 'singer_departed',

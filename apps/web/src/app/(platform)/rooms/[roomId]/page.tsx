@@ -119,6 +119,24 @@ export default function RoomDetailPage() {
     roomStatus: room?.status,
   });
 
+  // Authoritative LiveKit Voice speaking & connection detection for stage performer
+  const currentSingerId = karaoke.currentSinger?.id || karaoke.currentSingerId;
+  const currentSingerParticipant = voice.participants.find(
+    (p) => p.userId === currentSingerId
+  );
+  const isSingerSpeaking = Boolean(
+    (voice.isConnected && currentUser?.id === currentSingerId && voice.isSpeaking) ||
+      currentSingerParticipant?.isSpeaking
+  );
+  const isSingerVoiceConnected = Boolean(
+    (voice.isConnected && currentUser?.id === currentSingerId) ||
+      currentSingerParticipant
+  );
+  const isSingerMuted = Boolean(
+    (voice.isConnected && currentUser?.id === currentSingerId && voice.isMuted) ||
+      currentSingerParticipant?.isMuted
+  );
+
   const handleOpenEqModal = useCallback(() => {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('ktv_open_audio_settings'));
@@ -530,7 +548,15 @@ export default function RoomDetailPage() {
             isCurrentSinger={karaoke.isCurrentSinger}
             isNextUpSinger={karaoke.isNextUpSinger}
             currentSingerName={karaoke.currentSingerName}
+            currentSinger={karaoke.currentSinger}
+            currentRequester={karaoke.currentRequester}
             nextUpItem={karaoke.nextUpItem}
+            nextSinger={karaoke.nextSinger}
+            nextRequester={karaoke.nextRequester}
+            performerState={karaoke.currentPerformerState}
+            isSingerSpeaking={isSingerSpeaking}
+            isSingerVoiceConnected={isSingerVoiceConnected}
+            isSingerMuted={isSingerMuted}
             canControlPlayback={karaoke.canControlPlayback}
             isMutating={karaoke.isMutating}
             onPlay={karaoke.play}
@@ -875,6 +901,8 @@ export default function RoomDetailPage() {
         onClose={() => setIsSearchOpen(false)}
         onSelectSong={karaoke.addToQueue}
         isAddingSong={karaoke.isMutating}
+        queueLength={karaoke.queue?.items?.length || 0}
+        maxQueueSize={karaoke.queue?.maxQueueSize || 50}
       />
     </div>
   );
