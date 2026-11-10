@@ -6,6 +6,7 @@ import {
   RoomStatusSchema,
   RoomTypeSchema,
   RoomVisibilitySchema,
+  RoomAtmospherePresetSchema,
 } from './room.js';
 
 // Safe snapshot representation of Room entity
@@ -21,6 +22,8 @@ export const RoomSnapshotDtoSchema = z.object({
   category: RoomCategorySchema,
   currentParticipantsCount: z.number().int().nonnegative(),
   isChatEnabled: z.boolean().default(true),
+  atmospherePreset: RoomAtmospherePresetSchema.default('midnight_lounge').optional(),
+  stateVersion: z.number().int().positive().optional(),
   currentSongTitle: z.string().nullable().optional(),
   currentSingerName: z.string().nullable().optional(),
 });

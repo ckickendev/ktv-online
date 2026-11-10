@@ -7,7 +7,7 @@ import { sendSuccess, sendError } from '../../utils/response.js';
 import { logger } from '../../utils/logger.js';
 import { broadcastRoomClosed } from '../../realtime/index.js';
 import { voiceService } from '../voice/voice.service.js';
-import { CreateRoomDto, RoomQueryDto, UpdateRoomDto } from '@ktv/contracts';
+import { CreateRoomDto, RoomQueryDto, UpdateRoomSchema } from '@ktv/contracts';
 
 export class RoomController {
   async getRooms(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -350,7 +350,26 @@ export class RoomController {
         return;
       }
 
-      const updateData = req.body as UpdateRoomDto;
+      const parseResult = UpdateRoomSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        sendError(res, parseResult.error.issues[0]?.message || 'Invalid room update data', 400);
+        return;
+      }
+
+      const updateData = parseResult.data;
+
+      // Concurrency check: reject stale writes if expectedStateVersion is supplied
+      if (
+        updateData.expectedStateVersion !== undefined &&
+        room.stateVersion !== updateData.expectedStateVersion
+      ) {
+        sendError(
+          res,
+          `Conflict: Room settings have been modified (expected version ${updateData.expectedStateVersion}, current version ${room.stateVersion})`,
+          409
+        );
+        return;
+      }
 
       // Validate capacity: cannot be lower than current participants count
       if (
@@ -378,7 +397,7 @@ export class RoomController {
             return;
           }
         }
-        sendError(res, 'Room not found', 404);
+        sendError(res, 'Room not found or update conflict', 404);
         return;
       }
 

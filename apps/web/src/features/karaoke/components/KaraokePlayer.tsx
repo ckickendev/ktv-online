@@ -35,6 +35,13 @@ interface KaraokePlayerProps {
   isSingerSpeaking?: boolean;
   isSingerVoiceConnected?: boolean;
   isSingerMuted?: boolean;
+  atmosphereStyles?: {
+    ambientGlow: string;
+    stageBackdrop: string;
+    stageBorder: string;
+    badgeClass: string;
+    accentGradient: string;
+  };
   canControlPlayback: boolean;
   isMutating?: boolean;
   onPlay: () => void;
@@ -63,6 +70,7 @@ export function KaraokePlayer({
   isSingerSpeaking,
   isSingerVoiceConnected,
   isSingerMuted,
+  atmosphereStyles,
   canControlPlayback,
   isMutating = false,
   onPlay,
@@ -199,11 +207,18 @@ export function KaraokePlayer({
       {/* Main Virtual Karaoke Stage Screen */}
       <div
         data-testid="karaoke-stage-surface"
-        className="relative rounded-2xl bg-[#030408] border border-violet-500/20 overflow-hidden shadow-2xl flex flex-col justify-between p-5 min-h-[380px] group transition-all"
+        className={cn(
+          'relative rounded-2xl overflow-hidden shadow-2xl flex flex-col justify-between p-5 min-h-[380px] group transition-all duration-300',
+          atmosphereStyles?.stageBorder || 'border border-violet-500/20',
+          atmosphereStyles ? `bg-gradient-to-b ${atmosphereStyles.stageBackdrop}` : 'bg-[#030408]'
+        )}
       >
         {/* Stage Ambient Glow Effect */}
         <div className="absolute -top-24 -left-24 w-72 h-72 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-24 -right-24 w-72 h-72 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
+        {atmosphereStyles && (
+          <div className={cn('absolute inset-0 pointer-events-none opacity-40', atmosphereStyles.ambientGlow)} />
+        )}
 
         {/* Screen Top Status Bar */}
         <div className="flex items-center justify-between text-xs text-slate-400 relative z-10">

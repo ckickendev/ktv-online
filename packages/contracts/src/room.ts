@@ -13,6 +13,15 @@ export type RoomStatus = z.infer<typeof RoomStatusSchema>;
 export const RoomCategorySchema = z.enum(['all', 'pop', 'anime', 'rock', 'ballad', 'hiphop', 'rnb']);
 export type RoomCategory = z.infer<typeof RoomCategorySchema>;
 
+export const RoomAtmospherePresetSchema = z.enum([
+  'midnight_lounge',
+  'neon_stage',
+  'cozy_acoustic',
+  'minimal_studio',
+  'classic_karaoke',
+]);
+export type RoomAtmospherePreset = z.infer<typeof RoomAtmospherePresetSchema>;
+
 export const HostDtoSchema = z.object({
   id: z.string(),
   username: z.string(),
@@ -33,6 +42,7 @@ export const RoomDtoSchema = z.object({
   currentParticipantsCount: z.number().int().nonnegative().default(0),
   category: RoomCategorySchema.default('all'),
   isChatEnabled: z.boolean().default(true).optional(),
+  atmospherePreset: RoomAtmospherePresetSchema.default('midnight_lounge').optional(),
   stateVersion: z.number().int().positive().default(1).optional(),
   currentSongTitle: z.string().optional().nullable(),
   currentSingerName: z.string().optional().nullable(),
@@ -53,6 +63,7 @@ export const CreateRoomSchema = z.object({
   capacity: z.coerce.number().int().min(2).max(50).default(10),
   category: RoomCategorySchema.default('all'),
   isChatEnabled: z.boolean().default(true).optional(),
+  atmospherePreset: RoomAtmospherePresetSchema.default('midnight_lounge').optional(),
 });
 
 export type CreateRoomDto = z.infer<typeof CreateRoomSchema>;
@@ -65,6 +76,8 @@ export const UpdateRoomSchema = z.object({
   status: RoomStatusSchema.optional(),
   category: RoomCategorySchema.optional(),
   isChatEnabled: z.boolean().optional(),
+  atmospherePreset: RoomAtmospherePresetSchema.optional(),
+  expectedStateVersion: z.number().int().positive().optional(),
 });
 
 export type UpdateRoomDto = z.infer<typeof UpdateRoomSchema>;

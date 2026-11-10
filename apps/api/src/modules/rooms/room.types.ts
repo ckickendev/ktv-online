@@ -1,5 +1,5 @@
 import { Document, Types } from 'mongoose';
-import { RoomType, RoomVisibility, RoomStatus, RoomCategory } from '@ktv/contracts';
+import { RoomType, RoomVisibility, RoomStatus, RoomCategory, RoomAtmospherePreset } from '@ktv/contracts';
 
 export interface IRoom {
   name: string;
@@ -12,6 +12,7 @@ export interface IRoom {
   category: RoomCategory;
   currentParticipantsCount: number;
   isChatEnabled?: boolean;
+  atmospherePreset?: RoomAtmospherePreset;
   stateVersion: number;
   currentSongTitle?: string | null;
   currentSingerName?: string | null;

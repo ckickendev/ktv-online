@@ -196,16 +196,23 @@ export class RoomService {
       return null;
     }
 
+    const { expectedStateVersion, ...updateFields } = data;
     const filter: FilterQuery<IRoomDocument> = { _id: new Types.ObjectId(id) };
+
+    // Concurrency fencing: prevent stale writes if caller provided expectedStateVersion
+    if (expectedStateVersion !== undefined) {
+      filter.stateVersion = expectedStateVersion;
+    }
+
     // Atomic capacity guard: cannot reduce capacity below current participant count
-    if (data.capacity !== undefined) {
-      filter.currentParticipantsCount = { $lte: data.capacity };
+    if (updateFields.capacity !== undefined) {
+      filter.currentParticipantsCount = { $lte: updateFields.capacity };
     }
 
     const updatedRoom = await RoomModel.findOneAndUpdate(
       filter,
       {
-        $set: data,
+        $set: updateFields,
         $inc: { stateVersion: 1 },
       },
       { new: true, runValidators: true }
@@ -225,6 +232,7 @@ export class RoomService {
           status: updatedRoom.status,
           category: updatedRoom.category,
           isChatEnabled: updatedRoom.isChatEnabled !== false,
+          atmospherePreset: updatedRoom.atmospherePreset || 'midnight_lounge',
           currentParticipantsCount: updatedRoom.currentParticipantsCount,
         },
         updatedRoom.stateVersion
@@ -1085,6 +1093,8 @@ export class RoomService {
       category: roomDoc.category,
       currentParticipantsCount: roomDoc.currentParticipantsCount,
       isChatEnabled: roomDoc.isChatEnabled !== false,
+      atmospherePreset: roomDoc.atmospherePreset || 'midnight_lounge',
+      stateVersion: verifiedVersion,
       currentSongTitle: roomDoc.currentSongTitle ?? null,
       currentSingerName: roomDoc.currentSingerName ?? null,
     };

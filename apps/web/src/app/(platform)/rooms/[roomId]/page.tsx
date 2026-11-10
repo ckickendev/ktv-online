@@ -21,6 +21,8 @@ import {
   X,
   PhoneCall,
   MicOff,
+  Paintbrush,
+  Info,
 } from 'lucide-react';
 import { RoomStatusBadge } from '@/components/shared/room-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -30,15 +32,19 @@ import { LeaveRoomDialog } from '@/components/rooms/leave-room-dialog';
 import { RoomChatPanel } from '@/components/chat/room-chat-panel';
 import { RoomActivityTimeline } from '@/components/chat/room-activity-timeline';
 import { KickMemberDialog } from '@/components/rooms/kick-member-dialog';
+import { RoomIdentityDialog } from '@/components/rooms/room-identity-dialog';
+import { RoomCustomizationDialog } from '@/components/rooms/room-customization-dialog';
 import {
   useJoinRoom,
   useLeaveRoom,
 } from '@/hooks/queries/use-room';
+import { useUpdateRoom } from '@/hooks/queries/use-room-mutations';
 import { useKickMember } from '@/hooks/queries/use-chat';
 import { useAuth } from '@/hooks/use-auth';
 import { useRoomState } from '@/hooks/use-room-state';
 import { useRoomChat } from '@/hooks/use-room-chat';
 import { useVoiceClient, VoiceControls } from '@/features/voice';
+import { useRoomAtmosphere } from '@/features/rooms/atmosphere';
 import { useKaraoke, KaraokePlayer, RoomSongQueue, SongSearchDialog } from '@/features/karaoke';
 import { cn } from '@/lib/utils';
 
@@ -73,6 +79,12 @@ export default function RoomDetailPage() {
   const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
   const [joinErrorMessage, setJoinErrorMessage] = useState<string | null>(null);
   const [leaveErrorMessage, setLeaveErrorMessage] = useState<string | null>(null);
+
+  // Room Identity & Atmosphere Customization Dialogs
+  const [isIdentityOpen, setIsIdentityOpen] = useState(false);
+  const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
+  const updateRoomMutation = useUpdateRoom();
+  const atmosphere = useRoomAtmosphere({ authoritativePreset: room?.atmospherePreset });
 
   // Desktop sidebar active tab (default to queue for instant entertainment focus)
   const [activeTab, setActiveTab] = useState<'queue' | 'chat' | 'people' | 'activities'>('queue');
@@ -207,7 +219,20 @@ export default function RoomDetailPage() {
   const totalQueueCount = (karaoke.currentItem ? 1 : 0) + (karaoke.queue?.items?.length || 0);
 
   return (
-    <div className="flex-1 flex flex-col bg-[#07090f] overflow-x-hidden min-h-screen text-slate-100">
+    <div
+      className={cn(
+        'flex-1 flex flex-col overflow-x-hidden min-h-screen text-slate-100 transition-colors duration-500 relative',
+        atmosphere.activeConfig.styles.rootBackground
+      )}
+    >
+      {/* Ambient Atmosphere Spotlight Glow */}
+      <div
+        className={cn(
+          'absolute top-0 left-0 right-0 h-[450px] pointer-events-none transition-opacity duration-700 z-0',
+          atmosphere.activeConfig.styles.ambientGlow
+        )}
+      />
+
       {/* Zone 1: Persistent Room Header & Voice Lounge Bar */}
       <header className="border-b border-white/10 bg-[#0b0e19]/95 backdrop-blur-md px-3 sm:px-5 py-2.5 sticky top-0 z-30 shadow-md">
         <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
@@ -223,9 +248,16 @@ export default function RoomDetailPage() {
 
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="font-bold text-white text-sm sm:text-base tracking-tight truncate max-w-[180px] sm:max-w-xs md:max-w-md">
-                  {room.name}
-                </h1>
+                <button
+                  type="button"
+                  data-testid="room-identity-info-trigger"
+                  onClick={() => setIsIdentityOpen(true)}
+                  className="font-bold text-white text-sm sm:text-base tracking-tight truncate max-w-[180px] sm:max-w-xs md:max-w-md hover:text-violet-300 transition-colors flex items-center gap-1.5 text-left"
+                  title="View Lounge Identity & Details"
+                >
+                  <span className="truncate">{room.name}</span>
+                  <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                </button>
                 <RoomStatusBadge status={room.status} />
                 {isPrivate && (
                   <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-md shrink-0">
@@ -236,6 +268,19 @@ export default function RoomDetailPage() {
                 <span className="hidden sm:inline-block text-[10px] font-semibold text-cyan-400 uppercase tracking-wide bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded-md shrink-0">
                   {room.category}
                 </span>
+                <button
+                  type="button"
+                  data-testid="header-atmosphere-badge"
+                  onClick={() => setIsIdentityOpen(true)}
+                  className={cn(
+                    'hidden xs:inline-flex items-center gap-1 text-[10px] font-semibold border px-2 py-0.5 rounded-full shrink-0 transition-transform active:scale-95',
+                    atmosphere.activeConfig.styles.badgeClass
+                  )}
+                  title={`Lounge Atmosphere: ${atmosphere.activeConfig.name}`}
+                >
+                  <Sparkles className="w-2.5 h-2.5" />
+                  <span>{atmosphere.activeConfig.name}</span>
+                </button>
               </div>
               {room.description && (
                 <p className="text-[11px] text-slate-400 hidden md:block truncate max-w-sm">
@@ -346,6 +391,16 @@ export default function RoomDetailPage() {
                       <Crown className="w-3.5 h-3.5 fill-amber-300" />
                       Host
                     </span>
+                    <button
+                      type="button"
+                      data-testid="customize-atmosphere-button"
+                      onClick={() => setIsCustomizationOpen(true)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 text-violet-200 text-xs font-semibold border border-violet-500/30 transition-all active:scale-95"
+                      title="Customize Lounge Atmosphere"
+                    >
+                      <Paintbrush className="w-3.5 h-3.5" />
+                      <span className="hidden md:inline">Vibe</span>
+                    </button>
                     <Link
                       href="/my-rooms"
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium border border-white/10 transition-colors"
@@ -566,11 +621,18 @@ export default function RoomDetailPage() {
             onSeek={karaoke.seek}
             onOpenSearch={() => setIsSearchOpen(true)}
             onOpenEqSettings={handleOpenEqModal}
+            atmosphereStyles={atmosphere.activeConfig.styles}
           />
         </div>
 
         {/* Zone 3: Supporting Lounge Sidebar (Col 4 on Desktop, Drawer on Mobile) */}
-        <aside className="hidden lg:flex lg:col-span-4 flex-col glass-panel rounded-3xl p-4 border border-white/10 min-h-[580px] h-full shadow-2xl bg-[#0c1020]/90">
+        <aside
+          className={cn(
+            'hidden lg:flex lg:col-span-4 flex-col glass-panel rounded-3xl p-4 min-h-[580px] h-full shadow-2xl transition-all duration-300',
+            atmosphere.activeConfig.styles.panelBackground,
+            atmosphere.activeConfig.styles.panelBorder
+          )}
+        >
           {/* Navigation Tabs */}
           <nav aria-label="Lounge sidebar tabs" className="flex items-center gap-1 p-1 rounded-2xl bg-black/50 border border-white/5 mb-3.5 shrink-0">
             <button
@@ -904,6 +966,38 @@ export default function RoomDetailPage() {
         queueLength={karaoke.queue?.items?.length || 0}
         maxQueueSize={karaoke.queue?.maxQueueSize || 50}
       />
+
+      {/* Room Identity & Lounge Info Dialog */}
+      <RoomIdentityDialog
+        room={room}
+        host={host}
+        totalOnline={totalOnline}
+        voiceParticipantsCount={voice.participants.length}
+        isOpen={isIdentityOpen}
+        isHost={isHost}
+        onClose={() => setIsIdentityOpen(false)}
+        onOpenCustomization={() => setIsCustomizationOpen(true)}
+      />
+
+      {/* Host Room Customization Dialog */}
+      {isHost && (
+        <RoomCustomizationDialog
+          room={room}
+          stateVersion={roomStateVersion}
+          isOpen={isCustomizationOpen}
+          isSaving={updateRoomMutation.isPending}
+          onClose={() => {
+            atmosphere.clearPreview();
+            setIsCustomizationOpen(false);
+          }}
+          onSave={async (updateData) => {
+            await updateRoomMutation.mutateAsync({ roomId, data: updateData });
+            refreshState();
+          }}
+          onPreviewPreset={atmosphere.setPreviewPreset}
+          onResetPreview={atmosphere.clearPreview}
+        />
+      )}
     </div>
   );
 }
