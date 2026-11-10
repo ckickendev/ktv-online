@@ -1,6 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import {
   AddQueueItemDtoSchema,
+  ClockSyncRequestSchema,
+  ClockSyncResponse,
   KaraokePlaybackUpdatedPayload,
   KaraokeQueueUpdatedPayload,
   KaraokeStateRequestPayloadSchema,
@@ -355,6 +357,27 @@ export function registerKaraokeEvents(
           error: { code: message, message: 'Failed to get karaoke snapshot' },
         });
       }
+    }
+  );
+
+  // 6. Clock Synchronization (NTP-style offset estimation)
+  socket.on(
+    SOCKET_EVENTS.CLIENT.KARAOKE_CLOCK_SYNC,
+    (rawPayload: unknown, ack?: (res: SocketAckResponse<ClockSyncResponse>) => void) => {
+      const serverTime = Date.now();
+      const parsed = ClockSyncRequestSchema.safeParse(rawPayload);
+      const clientSendTime = parsed.success ? parsed.data.clientSendTime : serverTime;
+      const response: ClockSyncResponse = {
+        clientSendTime,
+        serverTime,
+        serverIso: new Date(serverTime).toISOString(),
+      };
+
+      socket.emit(SOCKET_EVENTS.SERVER.KARAOKE_CLOCK_SYNC_RESPONSE, response);
+      ack?.({
+        success: true,
+        data: response,
+      });
     }
   );
 }

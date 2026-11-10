@@ -17,6 +17,7 @@ import {
 import { karaokeApi } from '../api/karaoke-api';
 import { queryKeys } from '@/hooks/queries/query-keys';
 import { socketManager } from '@/lib/socket/socket-client';
+import { clockSyncService } from '../services/clock-sync.service';
 
 export interface UseKaraokeOptions {
   enabled?: boolean;
@@ -101,22 +102,43 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
 
     const handleConnect = () => {
       socket.emit(SOCKET_EVENTS.CLIENT.KARAOKE_STATE_REQUEST, { roomId });
+      clockSyncService.sync(3).catch(() => {});
+    };
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        socket.emit(SOCKET_EVENTS.CLIENT.KARAOKE_STATE_REQUEST, { roomId });
+        clockSyncService.sync(2).catch(() => {});
+      }
     };
 
     socket.on('connect', handleConnect);
     socket.on(SOCKET_EVENTS.SERVER.KARAOKE_QUEUE_UPDATED, handleQueueUpdated);
     socket.on(SOCKET_EVENTS.SERVER.KARAOKE_PLAYBACK_UPDATED, handlePlaybackUpdated);
     socket.on(SOCKET_EVENTS.SERVER.KARAOKE_SNAPSHOT, handleSnapshot);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
 
     return () => {
       socket.off('connect', handleConnect);
       socket.off(SOCKET_EVENTS.SERVER.KARAOKE_QUEUE_UPDATED, handleQueueUpdated);
       socket.off(SOCKET_EVENTS.SERVER.KARAOKE_PLAYBACK_UPDATED, handlePlaybackUpdated);
       socket.off(SOCKET_EVENTS.SERVER.KARAOKE_SNAPSHOT, handleSnapshot);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
     };
   }, [enabled, roomId, queryClient]);
 
-  // 4. Derived Smooth Playback Progress from Server Time Anchor
+  // Initial clock sync on mount
+  useEffect(() => {
+    if (enabled) {
+      clockSyncService.sync(3).catch(() => {});
+    }
+  }, [enabled]);
+
+  // 4. Derived Smooth Playback Progress from Authoritative Server Clock Anchor
   const [currentPositionMs, setCurrentPositionMs] = useState<number>(0);
 
   useEffect(() => {
@@ -140,16 +162,22 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
       const baseMs = playback.positionMs;
       const durationMs = playback.currentItem?.song?.durationMs || 300000;
 
-      // Update position smoothly at 10Hz without spamming server
+      // Update position smoothly at 10Hz using authoritative server time
       const updatePosition = () => {
-        const elapsed = Math.max(0, Date.now() - anchorTime);
+        const serverNow = clockSyncService.now();
+        const elapsed = Math.max(0, serverNow - anchorTime);
         const derived = Math.min(durationMs, baseMs + elapsed);
         setCurrentPositionMs(derived);
       };
 
       updatePosition();
       const interval = setInterval(updatePosition, 100);
-      return () => clearInterval(interval);
+      const unsubscribe = clockSyncService.addListener(updatePosition);
+
+      return () => {
+        clearInterval(interval);
+        unsubscribe();
+      };
     }
 
     return undefined;
@@ -302,6 +330,8 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     skip,
     stop,
     requestSync,
+    clockOffsetMs: clockSyncService.getOffsetMs(),
+    estimatedRttMs: clockSyncService.getEstimatedRttMs(),
     isMutating:
       addMutation.isPending ||
       removeMutation.isPending ||

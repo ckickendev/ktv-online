@@ -252,7 +252,7 @@ export class KaraokeService {
       currentQueueItemId: playbackState.currentQueueItemId ? playbackState.currentQueueItemId.toString() : null,
       currentItem: currentItemDto,
       status: playbackState.status,
-      positionMs: derivedPositionMs,
+      positionMs: playbackState.positionMs,
       anchorStartedAt: playbackState.anchorStartedAt ? playbackState.anchorStartedAt.toISOString() : null,
       pausedAt: playbackState.pausedAt ? playbackState.pausedAt.toISOString() : null,
       playbackVersion: playbackState.playbackVersion,

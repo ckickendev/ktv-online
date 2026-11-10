@@ -18,11 +18,14 @@ The KTVOnline karaoke player provides synchronized backing-track audio playback 
 
 ---
 
-## 2. Server-Authoritative Playback Clock
+## 2. Server-Authoritative Playback Clock & Offset Estimation
 
 The backend calculates playback position without continuously writing to the database by using a time-anchor model:
 
-$$\text{currentPositionMs} = \text{positionMs} + (\text{now} - \text{anchorStartedAt})$$
+$$\text{serverNow} = \text{Date.now}() + \theta$$
+$$\text{currentPositionMs} = \text{positionMs} + (\text{serverNow} - \text{anchorStartedAt})$$
+
+Where $\theta$ is the client-server clock offset measured by `ClockSyncService` using lowest-RTT median filtering over HTTP and WebSocket exchanges.
 
 When paused, $\text{positionMs}$ is frozen and $\text{anchorStartedAt}$ is set to `null`.
 When stopped or idle, $\text{positionMs} = 0$.
@@ -33,37 +36,40 @@ Clients derive their continuous display and synchronization clock at 10 Hz from 
 
 ## 3. Synchronization & Drift Correction Algorithm
 
-Network jitter, tab throttling, and hardware audio buffering inevitably cause client audio elements to drift from the server anchor.
+Network jitter, tab throttling, and hardware audio buffering cause client audio elements to drift from the server anchor.
 
-`useKaraokeAudio` executes a controlled, three-tier drift correction strategy:
+`useKaraokeAudio` executes a controlled, three-tier drift correction strategy governed by `PLAYBACK_SYNC_CONFIG`:
 
 ```typescript
-const driftMs = localTimeMs - authoritativePositionMs;
-const absDrift = Math.abs(driftMs);
+const driftMs = Math.abs(audioMs - currentPositionMs);
 
-if (absDrift < 300) {
-  // Tier 1: Small drift (< 300ms)
+if (driftMs < PLAYBACK_SYNC_CONFIG.DRIFT_TOLERANCE_MS) {
+  // Tier 1: Small drift (< 250ms)
   // Imperceptible to human ear — leave playback untouched
   audio.playbackRate = 1.0;
-} else if (absDrift <= 1500) {
-  // Tier 2: Moderate drift (300ms - 1500ms)
+} else if (driftMs <= PLAYBACK_SYNC_CONFIG.DRIFT_NUDGE_MAX_MS) {
+  // Tier 2: Moderate drift (250ms - 1500ms)
   // Smooth tempo nudge to eliminate drift without audible glitching
-  if (driftMs > 0) {
-    audio.playbackRate = 0.95; // Local is ahead -> slow down
+  if (audioMs < currentPositionMs) {
+    audio.playbackRate = 1.04; // Local is behind -> gently speed up
   } else {
-    audio.playbackRate = 1.05; // Local is behind -> speed up
+    audio.playbackRate = 0.96; // Local is ahead -> gently slow down
   }
 } else {
   // Tier 3: Large drift (> 1500ms)
-  // Hard seek to authoritative anchor
-  audio.currentTime = authoritativePositionMs / 1000;
-  audio.playbackRate = 1.0;
+  // Hard seek to authoritative anchor with 2000ms minimum cooldown
+  if (Date.now() - lastHardSeekAt >= PLAYBACK_SYNC_CONFIG.MIN_SEEK_COOLDOWN_MS) {
+    audio.currentTime = currentPositionMs / 1000;
+    audio.playbackRate = 1.0;
+    lastHardSeekAt = Date.now();
+  }
 }
 ```
 
-### Protection Against Seek Loops
-- Seeking is throttled to at most once every 1,500 ms.
-- Drift correction is bypassed during audio buffering or track initial loading.
+### Protection Against Seek Loops & Buffering Guards
+- **Buffering Guard**: Drift correction is strictly bypassed when `isBuffering === true` or `audio.readyState < 3`. Stalled audio is never misidentified as clock drift.
+- **Seek Cooldown**: Programmatic hard seeks enforce a strict minimum cooldown of 2,000 ms to eliminate seek oscillation.
+- **Guaranteed Rate Reset**: Playback rate resets to $1.0\times$ on pause, stop, buffering, seek, track transition, tab backgrounding, and unmount.
 
 ---
 

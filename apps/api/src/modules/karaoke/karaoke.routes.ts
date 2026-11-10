@@ -73,3 +73,12 @@ karaokeRoutes.get('/rooms/:roomId/playback', optionalAuth, (req, res, next) => {
 karaokeRoutes.post('/rooms/:roomId/playback/command', requireAuth, (req, res, next) => {
   karaokeController.executePlaybackCommand(req, res, next);
 });
+
+// ==========================================
+// CLOCK SYNCHRONIZATION
+// ==========================================
+
+// Lightweight server timestamp for NTP-style client offset estimation
+karaokeRoutes.get('/time', (req, res) => {
+  karaokeController.getServerTime(req, res);
+});

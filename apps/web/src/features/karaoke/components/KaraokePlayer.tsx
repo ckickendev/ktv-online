@@ -65,6 +65,7 @@ export function KaraokePlayer({
     volume,
     isMuted,
     isAudioAvailable,
+    driftMs,
     unlockAutoplay,
     setVolume,
     toggleMute,
@@ -190,6 +191,16 @@ export function KaraokePlayer({
             <span className="hidden sm:inline text-slate-500 text-[11px]">
               &bull; Server Version: v{playback?.playbackVersion ?? 1}
             </span>
+
+            {isPlaying && (
+              <span
+                data-testid="sync-drift-indicator"
+                className="hidden lg:inline text-[10px] text-slate-500 font-mono"
+                title="Authoritative clock synchronization drift"
+              >
+                &bull; Drift: {driftMs > 0 ? `+${driftMs}` : driftMs}ms
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3 text-[11px] text-slate-400">

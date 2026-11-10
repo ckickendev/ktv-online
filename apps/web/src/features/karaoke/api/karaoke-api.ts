@@ -11,6 +11,7 @@ import {
   SongLyricsDto,
   SongSearchQuery,
   SongSearchResponse,
+  ServerTimeDto,
 } from '@ktv/contracts';
 
 export const karaokeApi = {
@@ -110,5 +111,12 @@ export const karaokeApi = {
    */
   async getSongById(songId: string): Promise<SongDto> {
     return apiClient.get<SongDto>(`/songs/${songId}`);
+  },
+
+  /**
+   * Fetch lightweight server timestamp for client clock synchronization.
+   */
+  async getServerTime(): Promise<ServerTimeDto> {
+    return apiClient.get<ServerTimeDto>('/time');
   },
 };

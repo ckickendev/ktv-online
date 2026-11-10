@@ -392,6 +392,20 @@ export class KaraokeController {
       next(err);
     }
   }
+
+  /**
+   * GET /api/v1/time
+   * Lightweight server timestamp endpoint for client NTP-style clock offset estimation.
+   */
+  public getServerTime(_req: Request, res: Response): void {
+    const now = Date.now();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Date', new Date(now).toUTCString());
+    res.status(200).json({
+      serverTime: now,
+      serverIso: new Date(now).toISOString(),
+    });
+  }
 }
 
 export const karaokeController = new KaraokeController();

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { PlaybackStateDto } from '@ktv/contracts';
 import { karaokeApi } from '../api/karaoke-api';
+import { clockSyncService } from '../services/clock-sync.service';
 
 export interface UseKaraokeAudioOptions {
   playback: PlaybackStateDto | undefined;
@@ -10,8 +11,19 @@ export interface UseKaraokeAudioOptions {
   enabled?: boolean;
 }
 
+export type AudioExecutionState =
+  | 'idle'
+  | 'resolving_source'
+  | 'loading'
+  | 'waiting_for_user_interaction'
+  | 'buffering'
+  | 'playing'
+  | 'paused'
+  | 'failed';
+
 export interface UseKaraokeAudioReturn {
   audioElement: HTMLAudioElement | null;
+  executionState: AudioExecutionState;
   isPlaying: boolean;
   isBuffering: boolean;
   isAutoplayBlocked: boolean;
@@ -19,6 +31,7 @@ export interface UseKaraokeAudioReturn {
   volume: number;
   isMuted: boolean;
   isAudioAvailable: boolean;
+  driftMs: number;
   unlockAutoplay: () => Promise<void>;
   setVolume: (volume: number) => void;
   toggleMute: () => void;
@@ -28,8 +41,17 @@ export interface UseKaraokeAudioReturn {
 const STORAGE_VOLUME_KEY = 'ktv_karaoke_volume';
 const STORAGE_MUTED_KEY = 'ktv_karaoke_muted';
 
-const DRIFT_TOLERANCE_MS = 300;
-const DRIFT_SEEK_THRESHOLD_MS = 1500;
+export const PLAYBACK_SYNC_CONFIG = {
+  DRIFT_TOLERANCE_MS: 250,
+  DRIFT_NUDGE_MAX_MS: 1500,
+  DRIFT_HARD_SEEK_MS: 1500,
+  RATE_FASTER: 1.04,
+  RATE_SLOWER: 0.96,
+  RATE_NORMAL: 1.0,
+  MIN_SEEK_COOLDOWN_MS: 2000,
+  SEEK_ALIGN_TOLERANCE_SEC: 0.4,
+  DRIFT_CHECK_INTERVAL_MS: 400,
+} as const;
 
 export function useKaraokeAudio({
   playback,
@@ -41,6 +63,8 @@ export function useKaraokeAudio({
   const [isAutoplayBlocked, setIsAutoplayBlocked] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isAudioAvailable, setIsAudioAvailable] = useState(true);
+  const [executionState, setExecutionState] = useState<AudioExecutionState>('idle');
+  const [currentDriftMs, setCurrentDriftMs] = useState(0);
 
   // Volume state persisted in localStorage
   const [volume, setVolumeState] = useState<number>(() => {
@@ -58,10 +82,27 @@ export function useKaraokeAudio({
   const loadGenerationRef = useRef<number>(0);
   const currentSongIdRef = useRef<string | null>(null);
   const isPlayingRef = useRef<boolean>(false);
+  const isBufferingRef = useRef<boolean>(false);
   const lastPlaybackVersionRef = useRef<number>(0);
+  const lastHardSeekAtRef = useRef<number>(0);
+  const isTabVisibleRef = useRef<boolean>(true);
 
   const volumeRef = useRef<number>(volume);
   const isMutedRef = useRef<boolean>(isMuted);
+
+  const playbackStatus = playback?.status || 'idle';
+  const playbackVersion = playback?.playbackVersion || 0;
+  const currentSongId = playback?.currentItem?.song?.id || null;
+  const currentPositionMsRef = useRef<number>(currentPositionMs);
+  const playbackRef = useRef<PlaybackStateDto | undefined>(playback);
+
+  useEffect(() => {
+    currentPositionMsRef.current = currentPositionMs;
+  }, [currentPositionMs]);
+
+  useEffect(() => {
+    playbackRef.current = playback;
+  }, [playback]);
 
   // Keep volume and mute refs synchronized
   useEffect(() => {
@@ -78,6 +119,43 @@ export function useKaraokeAudio({
     }
   }, [isMuted]);
 
+  // Tab visibility change listener: prevent seek queuing and manage rate
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleVisibilityChange = () => {
+      const visible = document.visibilityState === 'visible';
+      isTabVisibleRef.current = visible;
+
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      if (!visible) {
+        // Tab backgrounded: reset any active tempo nudge to prevent pitch shift
+        if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+        }
+      } else {
+        // Tab foregrounded: trigger clock sync and evaluate if realign seek is needed
+        clockSyncService.sampleSocket().catch(() => {});
+        if (playbackStatus === 'playing' && audio.readyState >= 3 && !audio.paused) {
+          const audioMs = audio.currentTime * 1000;
+          const drift = Math.abs(audioMs - currentPositionMsRef.current);
+          if (drift > PLAYBACK_SYNC_CONFIG.DRIFT_HARD_SEEK_MS) {
+            audio.currentTime = currentPositionMsRef.current / 1000;
+            audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+            lastHardSeekAtRef.current = Date.now();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [playbackStatus]);
+
   // Initialize native HTMLAudioElement once
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -92,23 +170,52 @@ export function useKaraokeAudio({
         setIsPlaying(true);
         isPlayingRef.current = true;
         setIsAutoplayBlocked(false);
+        setExecutionState('playing');
       });
 
       audio.addEventListener('pause', () => {
         setIsPlaying(false);
         isPlayingRef.current = false;
+        if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+        }
+        setExecutionState((prev) => (prev === 'buffering' ? prev : 'paused'));
       });
 
       audio.addEventListener('waiting', () => {
         setIsBuffering(true);
+        isBufferingRef.current = true;
+        setExecutionState('buffering');
+        // Shield buffering from drift correction rate shifts
+        if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+        }
       });
 
       audio.addEventListener('playing', () => {
         setIsBuffering(false);
+        isBufferingRef.current = false;
+        setExecutionState('playing');
       });
 
       audio.addEventListener('canplay', () => {
         setIsBuffering(false);
+        isBufferingRef.current = false;
+
+        // If server is playing, synchronize currentTime with authoritative anchor
+        const currentPb = playbackRef.current;
+        if (currentPb?.status === 'playing' && currentPb.anchorStartedAt) {
+          const anchorTime = new Date(currentPb.anchorStartedAt).getTime();
+          const baseMs = currentPb.positionMs;
+          const durationMs = currentPb.currentItem?.song?.durationMs || 300000;
+          const serverNow = clockSyncService.now();
+          const elapsed = Math.max(0, serverNow - anchorTime);
+          const targetSec = Math.min(durationMs, baseMs + elapsed) / 1000;
+
+          if (Math.abs(audio.currentTime - targetSec) > PLAYBACK_SYNC_CONFIG.SEEK_ALIGN_TOLERANCE_SEC) {
+            audio.currentTime = targetSec;
+          }
+        }
       });
 
       audio.addEventListener('error', () => {
@@ -116,12 +223,21 @@ export function useKaraokeAudio({
         const msg = err ? `AUDIO_ELEMENT_ERROR_${err.code}` : 'AUDIO_PLAYBACK_ERROR';
         setAudioError(msg);
         setIsBuffering(false);
+        isBufferingRef.current = false;
+        setExecutionState('failed');
+        if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+        }
       });
 
-      // Browser playback reached end: server remains authoritative for track completion
+      // Browser playback reached end: reset local audio; server scheduler remains sole authority
       audio.addEventListener('ended', () => {
         setIsPlaying(false);
         isPlayingRef.current = false;
+        if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+        }
+        setExecutionState('paused');
       });
 
       audioRef.current = audio;
@@ -129,6 +245,7 @@ export function useKaraokeAudio({
 
     return () => {
       if (audioRef.current) {
+        audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         audioRef.current.pause();
         audioRef.current.src = '';
         audioRef.current = null;
@@ -166,6 +283,8 @@ export function useKaraokeAudio({
     try {
       setAudioError(null);
       setIsBuffering(true);
+      isBufferingRef.current = true;
+      setExecutionState('resolving_source');
 
       const resolved = await karaokeApi.resolveAudioSource(songId);
 
@@ -178,6 +297,8 @@ export function useKaraokeAudio({
         setIsAudioAvailable(false);
         setAudioError('SONG_AUDIO_UNAVAILABLE');
         setIsBuffering(false);
+        isBufferingRef.current = false;
+        setExecutionState('failed');
         if (audioRef.current) {
           audioRef.current.pause();
           audioRef.current.src = '';
@@ -186,8 +307,9 @@ export function useKaraokeAudio({
       }
 
       setIsAudioAvailable(true);
+      setExecutionState('loading');
       if (audioRef.current) {
-        // Only re-set src if changed to avoid unnecessary reloads
+        // Only re-set src if changed to avoid redundant network fetch
         if (audioRef.current.src !== resolved.url) {
           audioRef.current.src = resolved.url;
           audioRef.current.load();
@@ -204,6 +326,8 @@ export function useKaraokeAudio({
         setAudioError('SONG_AUDIO_RESOLUTION_FAILED');
       }
       setIsBuffering(false);
+      isBufferingRef.current = false;
+      setExecutionState('failed');
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = '';
@@ -212,23 +336,22 @@ export function useKaraokeAudio({
   }, []);
 
   // Song switching effect: detect when currentQueueItemId or songId changes
-  const currentSongId = playback?.currentItem?.song?.id || null;
-  const playbackStatus = playback?.status || 'idle';
-  const playbackVersion = playback?.playbackVersion || 0;
-
   useEffect(() => {
     if (!enabled) return;
 
     if (!currentSongId || playbackStatus === 'idle' || playbackStatus === 'ended') {
       currentSongIdRef.current = null;
       if (audioRef.current) {
+        audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         audioRef.current.pause();
         audioRef.current.src = '';
       }
       setIsPlaying(false);
       setIsBuffering(false);
+      isBufferingRef.current = false;
       setAudioError(null);
       setIsAudioAvailable(true);
+      setExecutionState('idle');
       return;
     }
 
@@ -249,12 +372,15 @@ export function useKaraokeAudio({
       if (!audio.paused) {
         audio.pause();
       }
-      // Sync paused position
+      // Realign paused position
       const targetSec = currentPositionMs / 1000;
-      if (Math.abs(audio.currentTime - targetSec) > 0.5) {
+      if (Math.abs(audio.currentTime - targetSec) > PLAYBACK_SYNC_CONFIG.SEEK_ALIGN_TOLERANCE_SEC) {
         audio.currentTime = targetSec;
       }
-      audio.playbackRate = 1.0;
+      if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+        audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+      }
+      setExecutionState('paused');
       return;
     }
 
@@ -262,7 +388,10 @@ export function useKaraokeAudio({
       if (!audio.paused) {
         audio.pause();
       }
-      audio.playbackRate = 1.0;
+      if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+        audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+      }
+      setExecutionState('idle');
       return;
     }
 
@@ -271,20 +400,23 @@ export function useKaraokeAudio({
       if (lastPlaybackVersionRef.current !== playbackVersion) {
         lastPlaybackVersionRef.current = playbackVersion;
         const targetSec = currentPositionMs / 1000;
-        if (Math.abs(audio.currentTime - targetSec) > 0.5) {
+        if (Math.abs(audio.currentTime - targetSec) > PLAYBACK_SYNC_CONFIG.SEEK_ALIGN_TOLERANCE_SEC) {
           audio.currentTime = targetSec;
+          lastHardSeekAtRef.current = Date.now();
         }
       }
 
-      // If audio is paused, attempt to play
-      if (audio.paused) {
+      // If audio is paused, attempt to start playback
+      if (audio.paused && !isBufferingRef.current) {
         const playPromise = audio.play();
         if (playPromise !== undefined) {
           playPromise.catch((err: Error) => {
             if (err.name === 'NotAllowedError') {
               setIsAutoplayBlocked(true);
+              setExecutionState('waiting_for_user_interaction');
             } else {
               setAudioError('PLAYBACK_START_FAILED');
+              setExecutionState('failed');
             }
           });
         }
@@ -300,35 +432,60 @@ export function useKaraokeAudio({
     }
 
     const checkDrift = () => {
-      if (audio.paused || audio.readyState < 2) return;
+      // Invariant: Do not perform drift correction if tab is hidden, audio is paused, buffering, or lacks future data
+      if (!isTabVisibleRef.current || audio.paused || isBufferingRef.current || audio.readyState < 3) {
+        if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+        }
+        return;
+      }
 
       const audioMs = audio.currentTime * 1000;
-      const driftMs = Math.abs(audioMs - currentPositionMs);
+      const targetMs = currentPositionMsRef.current;
+      const driftDelta = audioMs - targetMs;
+      const absDrift = Math.abs(driftDelta);
 
-      if (driftMs < DRIFT_TOLERANCE_MS) {
-        // Drift is within acceptable tolerance: normal playback rate
-        if (audio.playbackRate !== 1.0) {
-          audio.playbackRate = 1.0;
+      setCurrentDriftMs(Math.round(driftDelta));
+
+      if (absDrift < PLAYBACK_SYNC_CONFIG.DRIFT_TOLERANCE_MS) {
+        // Tier 1: Drift is within acceptable deadband (<250ms) -> normal playback rate
+        if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         }
-      } else if (driftMs <= DRIFT_SEEK_THRESHOLD_MS) {
-        // Moderate drift: subtle tempo nudge to gracefully catch up or ease back
-        if (audioMs < currentPositionMs) {
-          // Audio lagging behind server anchor
-          audio.playbackRate = 1.04;
+      } else if (absDrift <= PLAYBACK_SYNC_CONFIG.DRIFT_NUDGE_MAX_MS) {
+        // Tier 2: Moderate drift (250ms - 1500ms) -> subtle tempo adjustment
+        if (driftDelta < 0) {
+          // Audio lagging behind server anchor -> speed up slightly
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_FASTER;
         } else {
-          // Audio slightly ahead of server anchor
-          audio.playbackRate = 0.96;
+          // Audio leading ahead of server anchor -> slow down slightly
+          audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_SLOWER;
         }
       } else {
-        // Large drift (>1.5s): hard seek directly to authoritative server position
-        audio.currentTime = currentPositionMs / 1000;
-        audio.playbackRate = 1.0;
+        // Tier 3: Large drift (>1500ms) -> execute hard seek respecting cooldown
+        const now = Date.now();
+        if (now - lastHardSeekAtRef.current < PLAYBACK_SYNC_CONFIG.MIN_SEEK_COOLDOWN_MS) {
+          // Enforce cooldown: avoid seek thrashing, keep rate normal
+          if (audio.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+            audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+          }
+          return;
+        }
+
+        lastHardSeekAtRef.current = now;
+        audio.currentTime = targetMs / 1000;
+        audio.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
       }
     };
 
-    const interval = setInterval(checkDrift, 500);
-    return () => clearInterval(interval);
-  }, [enabled, playbackStatus, currentPositionMs, isAudioAvailable]);
+    const interval = setInterval(checkDrift, PLAYBACK_SYNC_CONFIG.DRIFT_CHECK_INTERVAL_MS);
+    return () => {
+      clearInterval(interval);
+      if (audioRef.current && audioRef.current.playbackRate !== PLAYBACK_SYNC_CONFIG.RATE_NORMAL) {
+        audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
+      }
+    };
+  }, [enabled, playbackStatus, isAudioAvailable]);
 
   // Explicit user gesture unlock for browser autoplay policy
   const unlockAutoplay = useCallback(async () => {
@@ -336,14 +493,16 @@ export function useKaraokeAudio({
     if (!audio) return;
 
     try {
-      const targetSec = currentPositionMs / 1000;
+      const targetSec = currentPositionMsRef.current / 1000;
       audio.currentTime = targetSec;
       await audio.play();
       setIsAutoplayBlocked(false);
+      setExecutionState('playing');
     } catch {
       setIsAutoplayBlocked(true);
+      setExecutionState('waiting_for_user_interaction');
     }
-  }, [currentPositionMs]);
+  }, []);
 
   // Retry loading current track audio
   const retryAudioLoad = useCallback(() => {
@@ -355,6 +514,7 @@ export function useKaraokeAudio({
 
   return {
     audioElement: audioRef.current,
+    executionState,
     isPlaying,
     isBuffering,
     isAutoplayBlocked,
@@ -362,6 +522,7 @@ export function useKaraokeAudio({
     volume,
     isMuted,
     isAudioAvailable,
+    driftMs: currentDriftMs,
     unlockAutoplay,
     setVolume,
     toggleMute,

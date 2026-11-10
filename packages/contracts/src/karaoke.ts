@@ -246,3 +246,25 @@ export const KaraokeStateRequestPayloadSchema = z.object({
   correlationId: z.string().optional(),
 });
 export type KaraokeStateRequestPayload = z.infer<typeof KaraokeStateRequestPayloadSchema>;
+
+// ==========================================
+// CLOCK SYNCHRONIZATION CONTRACTS
+// ==========================================
+
+export const ClockSyncRequestSchema = z.object({
+  clientSendTime: z.number().int().positive(),
+});
+export type ClockSyncRequest = z.infer<typeof ClockSyncRequestSchema>;
+
+export const ClockSyncResponseSchema = z.object({
+  clientSendTime: z.number().int().positive(),
+  serverTime: z.number().int().positive(),
+  serverIso: z.string(),
+});
+export type ClockSyncResponse = z.infer<typeof ClockSyncResponseSchema>;
+
+export const ServerTimeDtoSchema = z.object({
+  serverTime: z.number().int().positive(),
+  serverIso: z.string(),
+});
+export type ServerTimeDto = z.infer<typeof ServerTimeDtoSchema>;
