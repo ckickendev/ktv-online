@@ -108,6 +108,9 @@ const RoomQueueItemSchema = new Schema<IRoomQueueItemDocument>(
 // Compound index for finding and ordering active items in a room
 RoomQueueItemSchema.index({ roomId: 1, status: 1, position: 1 });
 
+// User-scoped index for member departure / kick cleanup
+RoomQueueItemSchema.index({ roomId: 1, requestedBy: 1, status: 1 });
+
 // Partial unique index: at most ONE playing song per room at any time
 RoomQueueItemSchema.index(
   { roomId: 1, status: 1 },

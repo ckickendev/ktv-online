@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Types } from 'mongoose';
 import {
   AddQueueItemDto,
@@ -16,7 +17,21 @@ import { RoomQueueItemModel, IRoomQueueItemDocument } from './room-queue-item.mo
 import { RoomPlaybackStateModel, IRoomPlaybackStateDocument } from './room-playback-state.model.js';
 import { logger } from '../../utils/logger.js';
 
+export interface IPlaybackScheduler {
+  schedule(roomId: string, expectedPlaybackVersion: number, delayMs: number): void;
+  cancel(roomId: string): void;
+}
+
 export class KaraokeService {
+  private scheduler: IPlaybackScheduler | null = null;
+
+  /**
+   * Plugs in a high-precision in-memory completion scheduler (avoids ESM circular dependencies).
+   */
+  public setScheduler(scheduler: IPlaybackScheduler): void {
+    this.scheduler = scheduler;
+  }
+
   /**
    * Helper to ensure an authoritative playback state document exists for a room.
    */
@@ -31,7 +46,9 @@ export class KaraokeService {
         positionMs: 0,
         anchorStartedAt: null,
         pausedAt: null,
+        playbackExpiresAt: null,
         playbackVersion: 1,
+        queueVersion: 1,
       });
     }
     return state;
@@ -116,22 +133,24 @@ export class KaraokeService {
     }
 
     const roomObjectId = new Types.ObjectId(roomId);
-    const activeItems = await RoomQueueItemModel.find({
-      roomId: roomObjectId,
-      status: { $in: ['playing', 'queued'] },
-    })
-      .sort({ position: 1, addedAt: 1 })
-      .populate('songId')
-      .populate('requestedBy', 'username displayName avatar')
-      .exec();
+    const [activeItems, playbackState] = await Promise.all([
+      RoomQueueItemModel.find({
+        roomId: roomObjectId,
+        status: { $in: ['playing', 'queued'] },
+      })
+        .sort({ position: 1, addedAt: 1 })
+        .populate('songId')
+        .populate('requestedBy', 'username displayName avatar')
+        .exec(),
+      this.getOrCreatePlaybackState(roomId),
+    ]);
 
-    const maxQueueVersion = activeItems.reduce((max, i) => Math.max(max, i.queueVersion || 1), 1);
     const itemsDto = activeItems.map((i) => this.mapQueueItem(i));
 
     return {
       roomId,
       items: itemsDto,
-      queueVersion: maxQueueVersion,
+      queueVersion: playbackState.queueVersion || 1,
       totalCount: itemsDto.length,
       maxQueueSize: 50,
     };
@@ -166,21 +185,30 @@ export class KaraokeService {
           const elapsed = now - playbackState.anchorStartedAt.getTime();
           derivedPositionMs = Math.min(songDurationMs, playbackState.positionMs + Math.max(0, elapsed));
 
-          // Check if track naturally completed based on duration
+          // If track has passed duration and is overdue for completion, auto-advance
           if (derivedPositionMs >= songDurationMs) {
-            logger.info({ roomId, songId: currentItemDto.songId }, 'Track naturally completed duration; advancing queue');
-            // Auto-advance track to next item
-            await this.advanceToNextTrack(roomId);
-            return this.getPlaybackSnapshot(roomId);
+            logger.info(
+              { roomId, songId: currentItemDto.songId, derivedPositionMs, songDurationMs },
+              'Track naturally completed during snapshot fetch; advancing queue'
+            );
+            const advanceResult = await this.advanceToNextTrack(roomId, {
+              expectedPlaybackVersion: playbackState.playbackVersion,
+              reason: 'natural_completion',
+            });
+            if (advanceResult) {
+              return advanceResult.playback;
+            }
           }
         }
       } else {
-        // If current item is missing or not in playing status, self-heal playback state
+        // Self-heal: referenced item is missing or not playing
+        logger.warn({ roomId, currentQueueItemId: playbackState.currentQueueItemId }, 'Orphaned playback reference detected; self-healing to idle');
         playbackState.currentQueueItemId = null;
         playbackState.status = 'idle';
         playbackState.positionMs = 0;
         playbackState.anchorStartedAt = null;
         playbackState.pausedAt = null;
+        playbackState.playbackExpiresAt = null;
         playbackState.playbackVersion += 1;
         await playbackState.save();
       }
@@ -218,14 +246,16 @@ export class KaraokeService {
 
   /**
    * Adds a song to the persistent room queue.
-   * If room playback is currently idle, automatically transitions the song to 'playing'
-   * and initializes authoritative playback.
+   * If stage is idle, activates song directly to 'playing'.
+   * Gracefully handles concurrent idle-activation collisions by falling back to queue append.
    */
   public async addToQueue(
     roomId: string,
     userId: string,
     dto: AddQueueItemDto
   ): Promise<{ queue: RoomQueueSnapshotDto; playback: PlaybackStateDto; addedItem: RoomQueueItemDto }> {
+    const transitionId = crypto.randomUUID();
+
     if (!Types.ObjectId.isValid(roomId) || !Types.ObjectId.isValid(dto.songId)) {
       throw new Error('INVALID_ID');
     }
@@ -278,42 +308,63 @@ export class KaraokeService {
       status: 'playing',
     });
 
-    let queueItem: IRoomQueueItemDocument;
+    const now = new Date();
+    const nextQueueVersion = (playbackState.queueVersion || 1) + 1;
+    let queueItem: IRoomQueueItemDocument | null = null;
+    let activatedImmediately = false;
 
-    // Next queue version
-    const latestItem = await RoomQueueItemModel.findOne({ roomId: roomObjectId })
-      .sort({ queueVersion: -1 })
-      .select('queueVersion')
-      .exec();
-    const nextQueueVersion = (latestItem?.queueVersion || 0) + 1;
-
+    // Direct stage activation if room playback is idle and no item is playing
     if (!hasActivePlaying && playbackState.status === 'idle') {
-      // Direct stage activation: start playing immediately
-      queueItem = await RoomQueueItemModel.create({
-        roomId: roomObjectId,
-        songId: songObjectId,
-        requestedBy: userObjectId,
-        position: 0,
-        status: 'playing',
-        queueVersion: nextQueueVersion,
-        addedAt: new Date(),
-        startedAt: new Date(),
-      });
+      try {
+        queueItem = await RoomQueueItemModel.create({
+          roomId: roomObjectId,
+          songId: songObjectId,
+          requestedBy: userObjectId,
+          position: 0,
+          status: 'playing',
+          queueVersion: nextQueueVersion,
+          addedAt: now,
+          startedAt: now,
+        });
 
-      playbackState.currentQueueItemId = queueItem._id as Types.ObjectId;
-      playbackState.status = 'playing';
-      playbackState.positionMs = 0;
-      playbackState.anchorStartedAt = new Date();
-      playbackState.pausedAt = null;
-      playbackState.playbackVersion += 1;
-      await playbackState.save();
+        const songDurationMs = song.durationMs || 180000;
+        playbackState.currentQueueItemId = queueItem._id as Types.ObjectId;
+        playbackState.status = 'playing';
+        playbackState.positionMs = 0;
+        playbackState.anchorStartedAt = now;
+        playbackState.pausedAt = null;
+        playbackState.playbackExpiresAt = new Date(now.getTime() + songDurationMs);
+        playbackState.playbackVersion += 1;
+        playbackState.queueVersion = nextQueueVersion;
+        playbackState.lastTransitionId = transitionId;
+        await playbackState.save();
 
-      // Update room stage metadata for display
-      room.currentSongTitle = song.title;
-      room.currentSingerName = membership.role === 'host' ? 'Host' : 'Singer';
-      await room.save();
-    } else {
-      // Add to upcoming queue: calculate next position
+        activatedImmediately = true;
+
+        // Update room stage metadata for display
+        room.currentSongTitle = song.title;
+        room.currentSingerName = membership.role === 'host' ? 'Host' : 'Singer';
+        await room.save();
+
+        // Schedule precision completion timer
+        this.scheduler?.schedule(roomId, playbackState.playbackVersion, songDurationMs);
+      } catch (err: any) {
+        // If duplicate key error (11000) on { roomId: 1, status: 'playing' },
+        // another concurrent request claimed stage activation during this exact tick.
+        if (err?.code === 11000) {
+          logger.info(
+            { roomId, userId, transitionId },
+            'Concurrent direct activation collision; cleanly falling back to append as queued item'
+          );
+          queueItem = null; // Will trigger fallback below
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    // Standard queue append if stage was active OR if direct activation collided
+    if (!queueItem) {
       const lastQueued = await RoomQueueItemModel.findOne({
         roomId: roomObjectId,
         status: 'queued',
@@ -331,8 +382,12 @@ export class KaraokeService {
         position: nextPosition,
         status: 'queued',
         queueVersion: nextQueueVersion,
-        addedAt: new Date(),
+        addedAt: now,
       });
+
+      playbackState.queueVersion = nextQueueVersion;
+      playbackState.lastTransitionId = transitionId;
+      await playbackState.save();
     }
 
     const populated = await RoomQueueItemModel.findById(queueItem._id)
@@ -347,8 +402,17 @@ export class KaraokeService {
     ]);
 
     logger.info(
-      { roomId, userId, songId: dto.songId, queueItemId: queueItem._id.toString(), status: queueItem.status },
-      'Added song to room karaoke queue'
+      {
+        roomId,
+        userId,
+        songId: dto.songId,
+        queueItemId: queueItem._id.toString(),
+        status: queueItem.status,
+        activatedImmediately,
+        queueVersion: nextQueueVersion,
+        transitionId,
+      },
+      'Song enqueued in room karaoke queue'
     );
 
     return { queue, playback, addedItem: addedItemDto };
@@ -364,6 +428,8 @@ export class KaraokeService {
     userId: string,
     itemId: string
   ): Promise<{ queue: RoomQueueSnapshotDto; playback: PlaybackStateDto }> {
+    const transitionId = crypto.randomUUID();
+
     if (!Types.ObjectId.isValid(roomId) || !Types.ObjectId.isValid(itemId)) {
       throw new Error('INVALID_ID');
     }
@@ -412,7 +478,8 @@ export class KaraokeService {
 
     // 5. If removing active playing track, advance playback
     if (wasPlaying) {
-      await this.advanceToNextTrack(roomId);
+      this.scheduler?.cancel(roomId);
+      await this.advanceToNextTrack(roomId, { reason: 'manual_removal' });
     } else {
       // Rebalance remaining queued items
       await this.rebalanceQueuePositions(roomId);
@@ -423,19 +490,22 @@ export class KaraokeService {
       this.getPlaybackSnapshot(roomId),
     ]);
 
-    logger.info({ roomId, userId, itemId, wasPlaying }, 'Removed item from room karaoke queue');
+    logger.info({ roomId, userId, itemId, wasPlaying, transitionId }, 'Removed item from room karaoke queue');
 
     return { queue, playback };
   }
 
   /**
    * Reorders queued items. Restricted strictly to the room host.
+   * Atomic batch execution prevents race conditions and position corruption.
    */
   public async reorderQueue(
     roomId: string,
     userId: string,
     dto: ReorderQueueDto
   ): Promise<RoomQueueSnapshotDto> {
+    const transitionId = crypto.randomUUID();
+
     if (!Types.ObjectId.isValid(roomId)) {
       throw new Error('INVALID_ID');
     }
@@ -443,7 +513,13 @@ export class KaraokeService {
     const roomObjectId = new Types.ObjectId(roomId);
     const userObjectId = new Types.ObjectId(userId);
 
-    // 1. Verify host role
+    // 1. Verify room is not closed
+    const room = await RoomModel.findById(roomObjectId).select('status').exec();
+    if (!room || room.status === 'closed') {
+      throw new Error('FORBIDDEN_ROOM_CLOSED');
+    }
+
+    // 2. Verify host role
     const membership = await RoomMembershipModel.findOne({
       roomId: roomObjectId,
       userId: userObjectId,
@@ -456,7 +532,20 @@ export class KaraokeService {
       throw new Error('FORBIDDEN_HOST_ONLY');
     }
 
-    // 2. Fetch all currently queued items
+    // 3. Check optimistic concurrency version if supplied
+    const playbackState = await this.getOrCreatePlaybackState(roomId);
+    if (
+      dto.expectedQueueVersion !== undefined &&
+      dto.expectedQueueVersion !== playbackState.queueVersion
+    ) {
+      logger.warn(
+        { roomId, expected: dto.expectedQueueVersion, current: playbackState.queueVersion, transitionId },
+        'Rejected stale queue reorder command due to queueVersion mismatch'
+      );
+      throw new Error('STALE_QUEUE_VERSION');
+    }
+
+    // 4. Fetch all currently queued items
     const queuedItems = await RoomQueueItemModel.find({
       roomId: roomObjectId,
       status: 'queued',
@@ -464,36 +553,41 @@ export class KaraokeService {
 
     const existingIds = new Set(queuedItems.map((i) => i._id.toString()));
 
-    // Verify reorder payload covers valid items
+    // Verify reorder payload covers valid active queued items
     for (const id of dto.itemIds) {
       if (!existingIds.has(id)) {
         throw new Error('INVALID_REORDER_ITEM_ID');
       }
     }
 
-    // Fetch next queueVersion
-    const latestItem = await RoomQueueItemModel.findOne({ roomId: roomObjectId })
-      .sort({ queueVersion: -1 })
-      .select('queueVersion')
-      .exec();
-    const nextQueueVersion = (latestItem?.queueVersion || 0) + 1;
+    const nextQueueVersion = (playbackState.queueVersion || 1) + 1;
 
-    // Apply new positions
-    for (let index = 0; index < dto.itemIds.length; index++) {
-      const id = dto.itemIds[index];
-      await RoomQueueItemModel.updateOne(
-        { _id: new Types.ObjectId(id), roomId: roomObjectId, status: 'queued' },
-        { $set: { position: index + 1, queueVersion: nextQueueVersion } }
-      ).exec();
+    // 5. Execute atomic bulk write across all reordered items
+    const bulkOps = dto.itemIds.map((id, index) => ({
+      updateOne: {
+        filter: { _id: new Types.ObjectId(id), roomId: roomObjectId, status: 'queued' },
+        update: { $set: { position: index + 1, queueVersion: nextQueueVersion } },
+      },
+    }));
+
+    if (bulkOps.length > 0) {
+      await RoomQueueItemModel.bulkWrite(bulkOps);
     }
 
-    logger.info({ roomId, userId, reorderedCount: dto.itemIds.length }, 'Reordered karaoke queue positions');
+    playbackState.queueVersion = nextQueueVersion;
+    playbackState.lastTransitionId = transitionId;
+    await playbackState.save();
+
+    logger.info(
+      { roomId, userId, reorderedCount: dto.itemIds.length, queueVersion: nextQueueVersion, transitionId },
+      'Atomically reordered karaoke queue positions'
+    );
 
     return this.getQueueSnapshot(roomId);
   }
 
   /**
-   * Executes a playback control command (play, pause, seek, skip, stop).
+   * Executes an authoritative playback control command (play, pause, seek, skip, stop).
    * Verified against active room membership, host role (or singer for own song),
    * and expected playback version fencing.
    */
@@ -502,6 +596,8 @@ export class KaraokeService {
     userId: string,
     dto: PlaybackCommandDto
   ): Promise<{ playback: PlaybackStateDto; queue: RoomQueueSnapshotDto }> {
+    const transitionId = crypto.randomUUID();
+
     if (!Types.ObjectId.isValid(roomId)) {
       throw new Error('INVALID_ID');
     }
@@ -509,7 +605,13 @@ export class KaraokeService {
     const roomObjectId = new Types.ObjectId(roomId);
     const userObjectId = new Types.ObjectId(userId);
 
-    // 1. Verify active membership
+    // 1. Verify room is open
+    const room = await RoomModel.findById(roomObjectId).exec();
+    if (!room || room.status === 'closed') {
+      throw new Error('FORBIDDEN_ROOM_CLOSED');
+    }
+
+    // 2. Verify active membership
     const membership = await RoomMembershipModel.findOne({
       roomId: roomObjectId,
       userId: userObjectId,
@@ -521,22 +623,22 @@ export class KaraokeService {
       throw new Error('FORBIDDEN_NOT_MEMBER');
     }
 
-    // 2. Load playback state
+    // 3. Load playback state
     const playbackState = await this.getOrCreatePlaybackState(roomId);
 
-    // 3. Version fencing check
+    // 4. Version fencing check
     if (
       dto.expectedPlaybackVersion !== undefined &&
       dto.expectedPlaybackVersion !== playbackState.playbackVersion
     ) {
       logger.warn(
-        { roomId, expected: dto.expectedPlaybackVersion, current: playbackState.playbackVersion },
-        'Rejected stale playback command due to version conflict'
+        { roomId, expected: dto.expectedPlaybackVersion, current: playbackState.playbackVersion, transitionId },
+        'Rejected stale playback command due to playbackVersion conflict'
       );
       throw new Error('STALE_PLAYBACK_VERSION');
     }
 
-    // 4. Role authorization: host has full control; current singer may control their own active track
+    // 5. Role authorization: host has full control; current singer may control their own active track
     let isAuthorized = membership.role === 'host';
     if (!isAuthorized && playbackState.currentQueueItemId) {
       const currentItem = await RoomQueueItemModel.findById(playbackState.currentQueueItemId).exec();
@@ -550,19 +652,35 @@ export class KaraokeService {
       throw new Error('FORBIDDEN_PLAYBACK_CONTROL');
     }
 
-    // 5. Execute command state transition
+    // 6. Execute command state transition
     const now = new Date();
+
+    // Resolve duration of current song if active
+    let songDurationMs = 180000;
+    if (playbackState.currentQueueItemId) {
+      const currentItemDoc = await RoomQueueItemModel.findById(playbackState.currentQueueItemId)
+        .populate('songId')
+        .exec();
+      if (currentItemDoc && currentItemDoc.songId) {
+        songDurationMs = (currentItemDoc.songId as any).durationMs || 180000;
+      }
+    }
 
     switch (dto.command) {
       case 'play': {
         if (playbackState.status === 'paused') {
+          const remainingMs = Math.max(0, songDurationMs - playbackState.positionMs);
           playbackState.status = 'playing';
           playbackState.anchorStartedAt = now;
           playbackState.pausedAt = null;
+          playbackState.playbackExpiresAt = new Date(now.getTime() + remainingMs);
           playbackState.playbackVersion += 1;
+          playbackState.lastTransitionId = transitionId;
           await playbackState.save();
+
+          this.scheduler?.schedule(roomId, playbackState.playbackVersion, remainingMs);
         } else if (playbackState.status === 'idle') {
-          await this.advanceToNextTrack(roomId);
+          await this.advanceToNextTrack(roomId, { reason: 'play_idle' });
         }
         break;
       }
@@ -570,42 +688,54 @@ export class KaraokeService {
       case 'pause': {
         if (playbackState.status === 'playing' && playbackState.anchorStartedAt) {
           const elapsed = now.getTime() - playbackState.anchorStartedAt.getTime();
-          playbackState.positionMs += Math.max(0, elapsed);
+          playbackState.positionMs = Math.min(songDurationMs, playbackState.positionMs + Math.max(0, elapsed));
           playbackState.status = 'paused';
           playbackState.anchorStartedAt = null;
           playbackState.pausedAt = now;
+          playbackState.playbackExpiresAt = null;
           playbackState.playbackVersion += 1;
+          playbackState.lastTransitionId = transitionId;
           await playbackState.save();
+
+          this.scheduler?.cancel(roomId);
         }
         break;
       }
 
       case 'seek': {
-        const targetMs = Math.max(0, dto.positionMs || 0);
+        const targetMs = Math.min(songDurationMs, Math.max(0, dto.positionMs || 0));
         playbackState.positionMs = targetMs;
+
         if (playbackState.status === 'playing') {
+          const remainingMs = Math.max(0, songDurationMs - targetMs);
           playbackState.anchorStartedAt = now;
+          playbackState.playbackExpiresAt = new Date(now.getTime() + remainingMs);
+          this.scheduler?.schedule(roomId, playbackState.playbackVersion + 1, remainingMs);
         }
+
         playbackState.playbackVersion += 1;
+        playbackState.lastTransitionId = transitionId;
         await playbackState.save();
         break;
       }
 
       case 'skip': {
+        this.scheduler?.cancel(roomId);
         if (playbackState.currentQueueItemId) {
           await RoomQueueItemModel.updateOne(
-            { _id: playbackState.currentQueueItemId },
+            { _id: playbackState.currentQueueItemId, roomId: roomObjectId, status: 'playing' },
             { $set: { status: 'skipped', position: 0, completedAt: now } }
           ).exec();
         }
-        await this.advanceToNextTrack(roomId);
+        await this.advanceToNextTrack(roomId, { reason: 'skip' });
         break;
       }
 
       case 'stop': {
+        this.scheduler?.cancel(roomId);
         if (playbackState.currentQueueItemId) {
           await RoomQueueItemModel.updateOne(
-            { _id: playbackState.currentQueueItemId },
+            { _id: playbackState.currentQueueItemId, roomId: roomObjectId, status: 'playing' },
             { $set: { status: 'skipped', position: 0, completedAt: now } }
           ).exec();
         }
@@ -614,10 +744,11 @@ export class KaraokeService {
         playbackState.positionMs = 0;
         playbackState.anchorStartedAt = null;
         playbackState.pausedAt = null;
+        playbackState.playbackExpiresAt = null;
         playbackState.playbackVersion += 1;
+        playbackState.lastTransitionId = transitionId;
         await playbackState.save();
 
-        const room = await RoomModel.findById(roomObjectId).exec();
         if (room) {
           room.currentSongTitle = null;
           room.currentSingerName = null;
@@ -635,86 +766,201 @@ export class KaraokeService {
       this.getQueueSnapshot(roomId),
     ]);
 
-    logger.info({ roomId, userId, command: dto.command, newStatus: playback.status }, 'Executed playback command');
+    logger.info(
+      { roomId, userId, command: dto.command, newStatus: playback.status, playbackVersion: playback.playbackVersion, transitionId },
+      'Executed playback command'
+    );
 
     return { playback, queue };
   }
 
   /**
-   * Internal helper: advances playback to the next available queued song,
+   * Internal helper: authoritatively advances playback to the next available queued song,
    * or transitions to idle if the queue is empty.
+   * Protects against concurrent transition races and verifies next track requester eligibility.
    */
-  private async advanceToNextTrack(roomId: string): Promise<void> {
+  public async advanceToNextTrack(
+    roomId: string,
+    options?: { expectedPlaybackVersion?: number; reason?: string }
+  ): Promise<{ playback: PlaybackStateDto; queue: RoomQueueSnapshotDto } | null> {
+    const transitionId = crypto.randomUUID();
     const roomObjectId = new Types.ObjectId(roomId);
-    const playbackState = await this.getOrCreatePlaybackState(roomId);
-    const room = await RoomModel.findById(roomObjectId).exec();
 
-    // 1. Mark existing playing item completed if still playing
+    // 1. Load room and playback state
+    const [playbackState, room] = await Promise.all([
+      this.getOrCreatePlaybackState(roomId),
+      RoomModel.findById(roomObjectId).exec(),
+    ]);
+
+    if (!room || room.status === 'closed') {
+      logger.info({ roomId, transitionId }, 'Aborting track advance: room is closed');
+      await this.handleRoomClosed(roomId);
+      return null;
+    }
+
+    // Version fencing: if caller specified expected version and state changed, abort safely
+    if (
+      options?.expectedPlaybackVersion !== undefined &&
+      options.expectedPlaybackVersion !== playbackState.playbackVersion
+    ) {
+      logger.info(
+        { roomId, expected: options.expectedPlaybackVersion, current: playbackState.playbackVersion, transitionId },
+        'Aborting track advance: expected playbackVersion mismatch'
+      );
+      return null;
+    }
+
+    const now = new Date();
+    const nextQueueVersion = (playbackState.queueVersion || 1) + 1;
+
+    // 2. Mark existing playing item completed if still playing
     if (playbackState.currentQueueItemId) {
       await RoomQueueItemModel.updateOne(
-        { _id: playbackState.currentQueueItemId, status: 'playing' },
-        { $set: { status: 'completed', position: 0, completedAt: new Date() } }
+        { _id: playbackState.currentQueueItemId, roomId: roomObjectId, status: 'playing' },
+        { $set: { status: 'completed', position: 0, completedAt: now } }
       ).exec();
     }
 
-    // 2. Find next queued item
-    const nextItem = await RoomQueueItemModel.findOne({
-      roomId: roomObjectId,
-      status: 'queued',
-    })
-      .sort({ position: 1, addedAt: 1 })
-      .populate('songId')
-      .populate('requestedBy', 'username displayName')
-      .exec();
+    // 3. Selection loop: find earliest valid queued item whose requester is still an active member
+    let claimedItem: IRoomQueueItemDocument | null = null;
+    let selectedSong: any = null;
 
-    if (nextItem) {
-      // Transition next item to playing
-      nextItem.status = 'playing';
-      nextItem.position = 0;
-      nextItem.startedAt = new Date();
-      await nextItem.save();
+    while (!claimedItem) {
+      const candidate = await RoomQueueItemModel.findOne({
+        roomId: roomObjectId,
+        status: 'queued',
+      })
+        .sort({ position: 1, addedAt: 1 })
+        .populate('songId')
+        .populate('requestedBy', 'username displayName')
+        .exec();
 
-      playbackState.currentQueueItemId = nextItem._id as Types.ObjectId;
+      if (!candidate) {
+        // No more candidates in queue
+        break;
+      }
+
+      // Verify that candidate requester is still an active member in this room
+      const activeMember = await RoomMembershipModel.findOne({
+        roomId: roomObjectId,
+        userId: candidate.requestedBy,
+        status: 'active',
+        kickedAt: null,
+      }).exec();
+
+      if (!activeMember) {
+        // Requester has left or was kicked: mark item removed and proceed to next candidate
+        logger.info(
+          { roomId, candidateId: candidate._id.toString(), requesterId: candidate.requestedBy.toString(), transitionId },
+          'Skipping queued song: requester is no longer an active member'
+        );
+        candidate.status = 'removed';
+        candidate.position = 0;
+        candidate.removedAt = now;
+        await candidate.save();
+        continue;
+      }
+
+      // Atomically claim candidate from 'queued' to 'playing' using CAS
+      const claimed = await RoomQueueItemModel.findOneAndUpdate(
+        { _id: candidate._id, roomId: roomObjectId, status: 'queued' },
+        {
+          $set: {
+            status: 'playing',
+            position: 0,
+            startedAt: now,
+            queueVersion: nextQueueVersion,
+          },
+        },
+        { new: true }
+      )
+        .populate('songId')
+        .populate('requestedBy', 'username displayName')
+        .exec();
+
+      if (claimed) {
+        claimedItem = claimed;
+        selectedSong = candidate.songId;
+        break;
+      }
+      // If claimed is null, a concurrent worker claimed this item; loop will evaluate next
+    }
+
+    if (claimedItem && selectedSong) {
+      const songDurationMs = selectedSong.durationMs || 180000;
+
+      playbackState.currentQueueItemId = claimedItem._id as Types.ObjectId;
       playbackState.status = 'playing';
       playbackState.positionMs = 0;
-      playbackState.anchorStartedAt = new Date();
+      playbackState.anchorStartedAt = now;
       playbackState.pausedAt = null;
+      playbackState.playbackExpiresAt = new Date(now.getTime() + songDurationMs);
       playbackState.playbackVersion += 1;
+      playbackState.queueVersion = nextQueueVersion;
+      playbackState.lastTransitionId = transitionId;
       await playbackState.save();
 
       // Rebalance remaining queued items
       await this.rebalanceQueuePositions(roomId);
 
       // Update room stage metadata
-      if (room) {
-        const songDoc = nextItem.songId as any;
-        const userDoc = nextItem.requestedBy as any;
-        room.currentSongTitle = songDoc?.title || 'Sing Along';
-        room.currentSingerName = userDoc?.displayName || userDoc?.username || 'Singer';
-        await room.save();
-      }
+      const userDoc = claimedItem.requestedBy as any;
+      room.currentSongTitle = selectedSong.title || 'Sing Along';
+      room.currentSingerName = userDoc?.displayName || userDoc?.username || 'Singer';
+      await room.save();
+
+      // Schedule high-precision completion timer
+      this.scheduler?.schedule(roomId, playbackState.playbackVersion, songDurationMs);
+
+      logger.info(
+        {
+          roomId,
+          nextItemId: claimedItem._id.toString(),
+          songTitle: selectedSong.title,
+          playbackVersion: playbackState.playbackVersion,
+          queueVersion: nextQueueVersion,
+          reason: options?.reason,
+          transitionId,
+        },
+        'Advanced karaoke playback to next track'
+      );
     } else {
       // No more items in queue: return to idle
+      this.scheduler?.cancel(roomId);
+
       playbackState.currentQueueItemId = null;
       playbackState.status = 'idle';
       playbackState.positionMs = 0;
       playbackState.anchorStartedAt = null;
       playbackState.pausedAt = null;
+      playbackState.playbackExpiresAt = null;
       playbackState.playbackVersion += 1;
+      playbackState.queueVersion = nextQueueVersion;
+      playbackState.lastTransitionId = transitionId;
       await playbackState.save();
 
-      if (room) {
-        room.currentSongTitle = null;
-        room.currentSingerName = null;
-        await room.save();
-      }
+      room.currentSongTitle = null;
+      room.currentSingerName = null;
+      await room.save();
+
+      logger.info(
+        { roomId, playbackVersion: playbackState.playbackVersion, queueVersion: nextQueueVersion, transitionId },
+        'No queued tracks remaining; karaoke playback returned to idle'
+      );
     }
+
+    const [playback, queue] = await Promise.all([
+      this.getPlaybackSnapshot(roomId),
+      this.getQueueSnapshot(roomId),
+    ]);
+
+    return { playback, queue };
   }
 
   /**
-   * Internal helper: rebalances positions of all active queued items (1 ... N).
+   * Internal helper: rebalances positions of all active queued items (1 ... N) using atomic bulkWrite.
    */
-  private async rebalanceQueuePositions(roomId: string): Promise<void> {
+  public async rebalanceQueuePositions(roomId: string): Promise<void> {
     const roomObjectId = new Types.ObjectId(roomId);
     const queuedItems = await RoomQueueItemModel.find({
       roomId: roomObjectId,
@@ -723,13 +969,26 @@ export class KaraokeService {
       .sort({ position: 1, addedAt: 1 })
       .exec();
 
+    // Check if rebalancing is actually needed
+    let needsRebalance = false;
     for (let i = 0; i < queuedItems.length; i++) {
-      const item = queuedItems[i];
-      const targetPos = i + 1;
-      if (item && item.position !== targetPos) {
-        item.position = targetPos;
-        await item.save();
+      if (queuedItems[i]!.position !== i + 1) {
+        needsRebalance = true;
+        break;
       }
+    }
+
+    if (!needsRebalance) return;
+
+    const bulkOps = queuedItems.map((item, index) => ({
+      updateOne: {
+        filter: { _id: item._id, roomId: roomObjectId, status: 'queued' },
+        update: { $set: { position: index + 1 } },
+      },
+    }));
+
+    if (bulkOps.length > 0) {
+      await RoomQueueItemModel.bulkWrite(bulkOps);
     }
   }
 
@@ -738,6 +997,7 @@ export class KaraokeService {
    */
   public async handleRoomClosed(roomId: string): Promise<void> {
     const roomObjectId = new Types.ObjectId(roomId);
+    this.scheduler?.cancel(roomId);
 
     // Stop playback
     await RoomPlaybackStateModel.updateOne(
@@ -749,8 +1009,13 @@ export class KaraokeService {
           positionMs: 0,
           anchorStartedAt: null,
           pausedAt: null,
+          playbackExpiresAt: null,
+          claimedBy: null,
+          claimedAt: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
         },
-        $inc: { playbackVersion: 1 },
+        $inc: { playbackVersion: 1, queueVersion: 1 },
       }
     ).exec();
 
@@ -792,7 +1057,8 @@ export class KaraokeService {
       const currentItem = await RoomQueueItemModel.findById(playbackState.currentQueueItemId).exec();
       if (currentItem && currentItem.requestedBy.toString() === userId) {
         logger.info({ roomId, userId }, 'Departed member was active singer; advancing to next track');
-        await this.advanceToNextTrack(roomId);
+        this.scheduler?.cancel(roomId);
+        await this.advanceToNextTrack(roomId, { reason: 'singer_departed' });
         playbackChanged = true;
       }
     }

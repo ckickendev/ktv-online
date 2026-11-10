@@ -9,6 +9,8 @@ import { createSocketServer, closeSocketServer } from './realtime/index.js';
 
 import { voiceEvictionWorker } from './modules/voice/voice-eviction.worker.js';
 import { songService } from './modules/karaoke/song.service.js';
+import { karaokePlaybackWorker } from './modules/karaoke/karaoke-playback.worker.js';
+import { karaokeReconciliationService } from './modules/karaoke/karaoke-reconciliation.service.js';
 
 async function bootstrap() {
   const app = createApp();
@@ -28,8 +30,17 @@ async function bootstrap() {
     logger.error({ err }, 'Failed to initialize karaoke song catalog');
   }
 
-  // Start voice eviction background recovery worker
+  // Reconcile any orphaned or interrupted room playback states on startup
+  try {
+    await karaokeReconciliationService.reconcileAllActiveRooms();
+    logger.info('🛠️ Initial karaoke playback reconciliation completed');
+  } catch (err) {
+    logger.error({ err }, 'Failed to execute initial karaoke playback reconciliation');
+  }
+
+  // Start background workers
   voiceEvictionWorker.start();
+  karaokePlaybackWorker.start();
 
   server.listen(env.PORT, () => {
     logger.info(`🚀 KTV Online API server running at http://localhost:${env.PORT}`);
@@ -52,6 +63,7 @@ async function bootstrap() {
 
     // 1. Stop background workers
     await voiceEvictionWorker.stop();
+    await karaokePlaybackWorker.stop();
 
     // 2. Close Socket.IO connections
     await closeSocketServer();

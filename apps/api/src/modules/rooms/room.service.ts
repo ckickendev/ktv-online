@@ -279,6 +279,15 @@ export class RoomService {
       // 4. Clean up karaoke queue and playback for closed room
       try {
         await karaokeService.handleRoomClosed(id);
+        const io = getSocketServer();
+        if (io) {
+          const [playback, queue] = await Promise.all([
+            karaokeService.getPlaybackSnapshot(id),
+            karaokeService.getQueueSnapshot(id),
+          ]);
+          broadcastKaraokePlaybackUpdated(io, id, playback);
+          broadcastKaraokeQueueUpdated(io, id, queue, 'cleared');
+        }
       } catch (err) {
         logger.error({ err, roomId: id }, 'Error cleaning up karaoke for closed room');
       }
@@ -818,6 +827,20 @@ export class RoomService {
       await voiceService.evictLiveKitParticipant(roomId, targetUserId);
     } catch {
       // Non-blocking
+    }
+
+    // Clean up queued songs and advance playback if kicked user is current singer
+    try {
+      const departureResult = await karaokeService.handleMemberDeparted(roomId, targetUserId);
+      if (departureResult) {
+        const io = getSocketServer();
+        if (io) {
+          broadcastKaraokeQueueUpdated(io, roomId, departureResult.queue, 'removed');
+          broadcastKaraokePlaybackUpdated(io, roomId, departureResult.playback);
+        }
+      }
+    } catch (err) {
+      logger.error({ err, roomId, targetUserId }, 'Error cleaning up karaoke on member kick');
     }
 
     return { success: true };

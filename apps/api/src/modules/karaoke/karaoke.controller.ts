@@ -193,6 +193,10 @@ export class KaraokeController {
         sendError(res, 'Only the room host can reorder the song queue', 403);
         return;
       }
+      if (msg === 'STALE_QUEUE_VERSION') {
+        sendError(res, 'Queue state was modified concurrently. Please refresh.', 409);
+        return;
+      }
       next(err);
     }
   }
@@ -264,6 +268,10 @@ export class KaraokeController {
       }
       if (msg === 'FORBIDDEN_NOT_MEMBER') {
         sendError(res, 'You must be an active room member', 403);
+        return;
+      }
+      if (msg === 'FORBIDDEN_ROOM_CLOSED') {
+        sendError(res, 'Room is closed', 400);
         return;
       }
       next(err);

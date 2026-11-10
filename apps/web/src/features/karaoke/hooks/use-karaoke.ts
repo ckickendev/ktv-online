@@ -99,11 +99,17 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
       }
     };
 
+    const handleConnect = () => {
+      socket.emit(SOCKET_EVENTS.CLIENT.KARAOKE_STATE_REQUEST, { roomId });
+    };
+
+    socket.on('connect', handleConnect);
     socket.on(SOCKET_EVENTS.SERVER.KARAOKE_QUEUE_UPDATED, handleQueueUpdated);
     socket.on(SOCKET_EVENTS.SERVER.KARAOKE_PLAYBACK_UPDATED, handlePlaybackUpdated);
     socket.on(SOCKET_EVENTS.SERVER.KARAOKE_SNAPSHOT, handleSnapshot);
 
     return () => {
+      socket.off('connect', handleConnect);
       socket.off(SOCKET_EVENTS.SERVER.KARAOKE_QUEUE_UPDATED, handleQueueUpdated);
       socket.off(SOCKET_EVENTS.SERVER.KARAOKE_PLAYBACK_UPDATED, handlePlaybackUpdated);
       socket.off(SOCKET_EVENTS.SERVER.KARAOKE_SNAPSHOT, handleSnapshot);
@@ -178,6 +184,7 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     },
     onError: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.queue(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.playback(roomId) });
     },
   });
 
@@ -189,6 +196,7 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     },
     onError: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.queue(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.playback(roomId) });
     },
   });
 
@@ -199,6 +207,7 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     },
     onError: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.queue(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.playback(roomId) });
     },
   });
 
@@ -210,6 +219,7 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     },
     onError: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.playback(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.karaoke.queue(roomId) });
     },
   });
 

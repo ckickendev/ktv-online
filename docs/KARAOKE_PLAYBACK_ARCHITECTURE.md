@@ -79,6 +79,17 @@ Collection: `roomplaybackstates`
 | `pausedAt` | `Date` (nullable) | Server timestamp when playback was paused |
 | `playbackVersion` | `Number` | Monotonically incrementing version integer |
 | `queueVersion` | `Number` | Monotonically incrementing queue version integer |
+| `playbackExpiresAt` | `Date` (nullable) | Server-computed natural completion timestamp |
+| `lastTransitionId` | `String` (nullable) | UUID tracking last logical transition |
+| `claimedBy` | `String` (nullable) | Worker instance holding current lease |
+| `claimedAt` | `Date` (nullable) | Timestamp lease was acquired |
+| `leaseExpiresAt` | `Date` (nullable) | Timestamp lease expires |
+| `leaseToken` | `String` (nullable) | Unique token for lease verification |
+| `leaseVersion` | `Number` | Monotonic lease version counter |
+
+**Indexes**:
+- Unique index: `{ roomId: 1 }`
+- Distributed lease query index: `{ status: 1, playbackExpiresAt: 1, leaseExpiresAt: 1 }`
 
 ---
 
