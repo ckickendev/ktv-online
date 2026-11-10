@@ -76,6 +76,7 @@ export class KaraokePlaybackWorker {
   public schedulePrecisionTimer(
     roomId: string,
     expectedPlaybackVersion: number,
+    expectedCurrentQueueItemId: string | null,
     delayMs: number
   ): void {
     // Clear any existing timer for this room
@@ -86,7 +87,13 @@ export class KaraokePlaybackWorker {
     const timer = setTimeout(async () => {
       this.precisionTimers.delete(roomId);
       try {
-        await this.handleNaturalCompletion(roomId, expectedPlaybackVersion, 'precision_timer');
+        await this.handleNaturalCompletion(
+          roomId,
+          expectedPlaybackVersion,
+          expectedCurrentQueueItemId,
+          null,
+          'precision_timer'
+        );
       } catch (err) {
         logger.warn({ roomId, err }, 'Precision timer completion execution aborted or failed');
       }
@@ -126,9 +133,18 @@ export class KaraokePlaybackWorker {
         const roomId = claimedState.roomId.toString();
         const leaseToken = claimedState.leaseToken || '';
         const playbackVersion = claimedState.playbackVersion;
+        const currentQueueItemId = claimedState.currentQueueItemId
+          ? claimedState.currentQueueItemId.toString()
+          : null;
 
         try {
-          await this.handleNaturalCompletion(roomId, playbackVersion, 'lease_worker');
+          await this.handleNaturalCompletion(
+            roomId,
+            playbackVersion,
+            currentQueueItemId,
+            leaseToken,
+            'lease_worker'
+          );
         } finally {
           // Always release or clean up lease
           await RoomPlaybackStateModel.releasePlaybackLease(roomId, leaseToken);
@@ -149,15 +165,20 @@ export class KaraokePlaybackWorker {
   private async handleNaturalCompletion(
     roomId: string,
     expectedPlaybackVersion: number,
+    expectedCurrentQueueItemId: string | null,
+    leaseToken: string | null,
     source: 'precision_timer' | 'lease_worker'
   ): Promise<void> {
     logger.info(
-      { roomId, expectedPlaybackVersion, source },
+      { roomId, expectedPlaybackVersion, expectedCurrentQueueItemId, leaseToken, source },
       'Executing server-authoritative natural playback completion'
     );
 
     const result = await karaokeService.advanceToNextTrack(roomId, {
       expectedPlaybackVersion,
+      expectedCurrentQueueItemId,
+      leaseToken,
+      leaseWorkerInstanceId: this.instanceId,
       reason: 'natural_completion',
     });
 
@@ -175,7 +196,7 @@ export const karaokePlaybackWorker = new KaraokePlaybackWorker();
 
 // Connect scheduler to karaokeService
 karaokeService.setScheduler({
-  schedule: (roomId, version, delayMs) =>
-    karaokePlaybackWorker.schedulePrecisionTimer(roomId, version, delayMs),
+  schedule: (roomId, version, currentQueueItemId, delayMs) =>
+    karaokePlaybackWorker.schedulePrecisionTimer(roomId, version, currentQueueItemId, delayMs),
   cancel: (roomId) => karaokePlaybackWorker.cancelPrecisionTimer(roomId),
 });

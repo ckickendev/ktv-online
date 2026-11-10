@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './database/connection.js';
+import { checkTransactionSupport } from './database/transaction.js';
 
 import { setAppShuttingDown } from './utils/lifecycle.js';
 import { createSocketServer, closeSocketServer } from './realtime/index.js';
@@ -21,6 +22,7 @@ async function bootstrap() {
 
   // Attempt database connection
   await connectDatabase();
+  await checkTransactionSupport();
 
   // Initialize fixture song catalog
   try {

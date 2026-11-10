@@ -197,6 +197,14 @@ export class KaraokeController {
         sendError(res, 'Queue state was modified concurrently. Please refresh.', 409);
         return;
       }
+      if (msg === 'INVALID_REORDER_ITEM_COUNT') {
+        sendError(res, 'Reorder payload must account for all active queued items without duplicates', 400);
+        return;
+      }
+      if (msg === 'INVALID_REORDER_ITEM_ID') {
+        sendError(res, 'One or more song IDs in reorder payload are invalid or not currently queued', 400);
+        return;
+      }
       next(err);
     }
   }

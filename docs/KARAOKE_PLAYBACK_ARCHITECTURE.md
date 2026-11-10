@@ -216,11 +216,17 @@ $$
 
 ### 6.2 Concurrency & Monotonicity
 1. **Single Playing Track**: MongoDB partial unique index guarantees that two concurrent requests cannot insert or update two queue items to `playing` status in the same room.
-2. **Version Checks**:
+2. **Dual-Mode Transaction / CAS Protocol**:
+   - On replica set deployments, multi-document mutations (`reorderQueue`, `advanceToNextTrack`, `handleMemberDeparted`) run within an ACID transaction session via `runInTransaction`.
+   - On standalone deployments, operations execute under atomic CAS filters, transition UUIDs, and automated rollback/reconciliation protocols.
+3. **Queue Reorder Atomicity**: Enforces full coverage validation (`dto.itemIds.length === queuedItems.length`, unique IDs) and atomic version advancement via CAS/transaction, preventing position duplication or interleaving corruption.
+4. **Distributed Lease Fencing**: Background workers acquire expiring leases with unique tokens. Outcome writes via `commitConditionalPlaybackTransition` verify `playbackVersion`, `currentQueueItemId`, `leaseToken`, and `leaseExpiresAt > now`, guaranteeing expired workers cannot commit stale transitions.
+5. **Version Checks**:
    - `queueVersion`: Monotonically incremented on additions, removals, reorders, and auto-advances. Clients supply `expectedQueueVersion` to detect concurrent reorders.
    - `playbackVersion`: Monotonically incremented on commands and status transitions. Stale commands with mismatched versions are rejected with HTTP 409 / socket error.
-3. **Room Closure**: Closing a room immediately stops playback, sets state to `idle`, marks all active queue items `removed`, and increments versions.
-4. **Member Departure**: When a member leaves or is evicted, their queued items are cleanly removed, remaining items are rebalanced, and if their song was playing, playback advances to the next track.
+6. **Room Closure**: Closing a room immediately stops playback, sets state to `idle`, marks all active queue items `removed`, cancels precision timers, and increments versions.
+7. **Member Departure**: When a member leaves or is evicted, their queued items are cleanly removed, remaining items are rebalanced, and if their song was playing, playback advances to the next track with current item identity fencing.
+8. **Self-Healing Reconciliation**: Startup and periodic sweeps detect and repair orphaned references, closed room state leaks, stray playing items on idle playback, position gaps, and expired worker leases using CAS-protected operations.
 
 ---
 

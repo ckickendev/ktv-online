@@ -2,132 +2,118 @@
 
 ## 1. Overview & Consistency Strategy
 
-Sprint 2.4.1 hardens the karaoke domain against race conditions, split-brain queue/playback states, uncoordinated concurrent host/singer mutations, unauthoritative client completion signals, server restarts, and member/room lifecycle events.
+Sprint 2.4.1.1 hardens the consistency protocols of the karaoke domain to ensure verified, truthful guarantees under concurrent host commands, singer departures, room closures, worker execution delays, and server crashes.
 
-Because standalone MongoDB environments (common in single-node staging, local development, and containerized CI) do not support multi-document replica-set transactions (`session.withTransaction`), the karaoke architecture implements a **Dual-Layer Atomic CAS & Recoverable State Machine Protocol**:
+### Dual-Mode Execution Strategy
+MongoDB multi-document ACID transactions (`session.withTransaction`) require a replica set or sharded cluster. In standalone MongoDB deployments (often encountered in local development or single-container CI), transactions are unavailable.
 
-1. **Database-Level Partial Unique Constraints**: Enforces single-playing item per room at the storage layer (`{ roomId: 1, status: 1 }` where `status: 'playing'`).
-2. **Optimistic Version Fencing**: Version counters (`queueVersion` and `playbackVersion`) ensure stale mutations are rejected with structured HTTP 409 / Socket errors before state modification.
-3. **Atomic Bulk Operations**: Multi-item position rebalancing occurs via `RoomQueueItemModel.bulkWrite` in a single database roundtrip.
-4. **Distributed Lease Claiming for Server-Side Completion**: Worker processes acquire atomic, expiring leases on overdue playbacks using single-document `findOneAndUpdate` fencing.
-5. **Idempotent Background Reconciliation**: Startup and periodic sweeps detect and repair orphaned references, closed-room state leaks, multiple playing items, or position gaps.
-
----
-
-## 2. Cross-Collection Invariant Rules
-
-The following core invariants are enforced across `RoomQueueItem` and `RoomPlaybackState`:
-
-| Invariant | Storage Enforcement | Recovery Protocol |
-| :--- | :--- | :--- |
-| **At most one `playing` track per room** | MongoDB Partial Unique Index on `{ roomId: 1, status: 'playing' }` with `unique: true` | `KaraokeReconciliationService` marks excess playing items as `skipped` |
-| **Referential Integrity** | `playbackState.currentQueueItemId` must match a valid, existing `RoomQueueItem` in the same room | If item is missing or belongs to another room, reconciliation clears reference and sets status to `idle` |
-| **Playback Status Consistency** | If playback status is `playing`, the referenced queue item must be in `playing` status | If referenced item is terminal (`completed`, `skipped`, `removed`), reconciliation advances to next queued track or resets to `idle` |
-| **Idle Playback Invariant** | If playback is `idle`, no queue item in that room may be in `playing` status | Reconciliation transitions any stray `playing` queue items to `completed` |
-| **Closed Room Invariant** | A closed room must have zero active queue items (`queued` or `playing`) and playback status must be `idle` | Closure handler and reconciliation purge active items to `removed` and set playback to `idle` |
-| **Monotonic Version Advancement** | `queueVersion` and `playbackVersion` only advance on committed state changes | Optimistic CAS rejects stale commands |
+To guarantee correctness in all environments without making false atomicity claims:
+1. **Replica Set Deployments (ACID Transactions)**:
+   All multi-document operations (`reorderQueue`, `advanceToNextTrack`, `handleMemberDeparted`) execute inside a MongoDB transaction session via `runInTransaction(async (session) => { ... })`. If any write or version check fails, the entire transaction is rolled back by the database engine.
+2. **Standalone Deployments (Recoverable CAS Protocol)**:
+   Operations execute using single-document atomic Compare-And-Swap (CAS) filters (`findOneAndUpdate` matching status and version), unique database partial indexes, transition UUIDs, and automated rollback/reconciliation protocols.
 
 ---
 
-## 3. Atomic Queue Mutation Protocols
+## 2. Transition Protection Matrix
 
-### 3.1 Adding a Song
-- **Capacity Guard**: Atomic check ensures room queue does not exceed 50 items (`countDocuments({ roomId, status: { $in: ['queued', 'playing'] } }) < 50`).
-- **Initial Playback Trigger**: If playback is currently `idle`, the system attempts to activate the track directly to `playing`. If a concurrent add races to activate, MongoDB duplicate key error `E11000` is caught cleanly, falling back to appending the song at the end of the `queued` list with position $N+1$.
-- **Version Increment**: `queueVersion` and `playbackVersion` advance synchronously upon commit.
-
-### 3.2 Removing a Song
-- **Authorization Check**: Caller must be an active room member and either the original requester (`requestedBy === userId`) or the room host (`room.ownerId === userId`).
-- **Terminal State Lock**: Only items currently in `queued` status can be removed. Items already `playing` or in terminal states cannot be removed via queue removal (they must be skipped or stopped).
-- **Position Rebalancing**: An atomic bulk update resets positions of all subsequent queued items to preserve a contiguous 1-based sequence ($1, 2, \dots, N$).
-
-### 3.3 Reordering the Queue
-- **Host Authorization**: Strictly host-only.
-- **Version Fencing**: Request accepts `expectedQueueVersion`. If `expectedQueueVersion !== playbackState.queueVersion`, the command is rejected with `STALE_QUEUE_VERSION` (HTTP 409).
-- **Atomic Bulk Execution**: All items in `dto.itemIds` are validated to belong to the room and reside in `queued` status. A single `RoomQueueItemModel.bulkWrite` updates all item positions atomically, followed by a monotonic increment of `playbackState.queueVersion`.
+| Transition Pathway | Database Documents Modified | Replica Set Protection | Standalone CAS Protection | Fencing / Idempotency Key |
+| :--- | :--- | :--- | :--- | :--- |
+| **Queue Reorder** | Multiple `RoomQueueItem` documents, `RoomPlaybackState` | Multi-document ACID Transaction (`runInTransaction`) | Full-coverage check (`INVALID_REORDER_ITEM_COUNT`) + CAS on `queueVersion` | `expectedQueueVersion` |
+| **Natural Track Completion** | Old `RoomQueueItem`, Next `RoomQueueItem`, `RoomPlaybackState`, `Room` | Multi-document ACID Transaction (`runInTransaction`) | CAS candidate claim + `commitConditionalPlaybackTransition` with lease verification | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` + `leaseToken` |
+| **Host / Singer Skip** | Old `RoomQueueItem`, Next `RoomQueueItem`, `RoomPlaybackState`, `Room` | Multi-document ACID Transaction (`runInTransaction`) | Preempts worker lease, CAS candidate claim + conditional playback update | `expectedPlaybackVersion` + `expectedCurrentQueueItemId` |
+| **Play / Pause / Seek / Stop** | `RoomPlaybackState` (+ `RoomQueueItem` if stopped) | Conditional CAS Update | `commitConditionalPlaybackTransition` matching `playbackVersion` | `expectedPlaybackVersion` |
+| **Member Departure / Kick** | Departed user's `RoomQueueItem` documents, `RoomPlaybackState` (if active singer) | Multi-document ACID Transaction (`runInTransaction`) | Atomic `updateMany` for queued items, CAS next track advance for active singer | `expectedCurrentQueueItemId` |
+| **Room Closure** | `RoomPlaybackState`, all active `RoomQueueItem` documents, `Room` | Atomic sequential purge | `Room.status = 'closed'` check blocks all future mutations; CAS purge to idle | `room.status !== 'closed'` |
 
 ---
 
-## 4. Server-Authoritative Playback Completion
+## 3. Queue Reorder Multi-Document Atomicity
 
-### 4.1 The Dual-Layer Completion Architecture
-Frontend clients are explicitly **never trusted** to authoritatively signal that a track has completed. Playback duration is derived strictly from trusted song catalog metadata (`song.durationMs`).
+### The Multi-Document Problem
+MongoDB `bulkWrite()` alone executes operations sequentially on the server. Without an active transaction session, a crash or concurrent command between bulk write steps can leave duplicate or missing positions.
 
-Natural track completion is orchestrated via two complementary layers:
+### The Sprint 2.4.1.1 Hardened Protocol
+1. **Host Role & Room Status Verification**: Checked before entering mutation boundaries.
+2. **Transaction Session Propagation**: In `reorderQueue`, `RoomQueueItemModel.find(...)`, `RoomQueueItemModel.bulkWrite(...)`, and `RoomPlaybackStateModel.findOneAndUpdate(...)` all receive the transaction `session`.
+3. **Full Coverage Enforcement**:
+   - Compares `dto.itemIds.length` against `queuedItems.length`.
+   - Validates that `new Set(dto.itemIds).size === dto.itemIds.length`.
+   - Verifies every item ID exists in the active queued set.
+   - Any omission or duplicate throws `INVALID_REORDER_ITEM_COUNT` (HTTP 400), preventing incomplete reorders from creating duplicate positions.
+4. **CAS Version Fencing**:
+   `RoomPlaybackStateModel.findOneAndUpdate({ roomId, queueVersion: expectedVersion }, { $set: { queueVersion: nextVersion } })`.
+   If a concurrent operation modified `queueVersion`, the query matches 0 documents and throws `STALE_QUEUE_VERSION` (HTTP 409), triggering an automatic transaction abort and rollback.
 
-```mermaid
-flowchart TD
-    subgraph Precision In-Memory Layer
-        A[Playback Starts / Resumes] --> B[Calculate Remaining Duration]
-        B --> C[Schedule Precision Node.js Timer]
-        C -->|Timer Fires| D[Trigger Authoritative Natural Completion]
-    end
+---
 
-    subgraph Distributed Polling Lease Layer
-        E[Worker Interval 2000ms] --> F[Scan for Overdue Playbacks]
-        F --> G[Atomic CAS Claim Lease]
-        G -->|Lease Acquired| D
-        G -->|Lease Contention / Stale Version| H[Discard / Skip]
-    end
+## 4. Distributed Worker Lease Fencing
 
-    D --> I[Advance to Next Track with Version Fencing]
-    I --> J[Broadcast Authoritative Events to Socket.IO]
-```
+### The Stale Worker Hazard
+If a distributed worker claims an overdue playback lease but experiences a GC pause or network delay exceeding the lease duration (15 seconds), a second worker or a host command could process the room. When the delayed worker resumes, an unfenced outcome write would corrupt playback state by double-advancing the track.
 
-1. **Precision In-Memory Timer (`schedulePrecisionTimer`)**:
-   - Computes exact remaining milliseconds: $\text{delayMs} = \max(0, \text{durationMs} - \text{positionMs})$.
-   - Fires an in-memory timer anchored to the exact expected completion millisecond.
-   - Provides instant, sub-second natural transition for connected users without polling lag.
+### The Conditional Outcome Write Solution
+1. **Atomic Lease Acquisition**:
+   `RoomPlaybackStateModel.claimDuePlayback(instanceId, 15000)` claims overdue playbacks with a cryptographically random `leaseToken`, `leaseExpiresAt`, and increments `leaseVersion`.
+2. **Conditional Outcome Write ([commitConditionalPlaybackTransition](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/room-playback-state.model.ts))**:
+   Every worker transition commits via an atomic `findOneAndUpdate` filter requiring:
+   - `playbackVersion: expectedPlaybackVersion`
+   - `currentQueueItemId: expectedCurrentQueueItemId`
+   - `leaseToken: workerLeaseToken`
+   - `leaseExpiresAt: { $gt: new Date() }`
+3. **Immediate Invalidation on Expiry**:
+   If the lease expired, was released, or was preempted by a host command, the update matches zero documents and returns `null`. The worker aborts with zero side effects.
+4. **Idempotent Cleanup**:
+   Worker's `finally` block calls `releasePlaybackLease(roomId, leaseToken)`, which only clears lease fields if `leaseToken` still matches.
+
+---
+
+## 5. Playback Completion & Automatic Advancement
+
+### Dual-Layer Completion Engine
+1. **Precision In-Memory Timers**:
+   - Anchored to the exact completion millisecond ($\text{delayMs} = \text{durationMs} - \text{positionMs}$).
+   - Supplies `expectedPlaybackVersion` and `expectedCurrentQueueItemId`.
+   - If the track was paused, skipped, or stopped, the timer fires harmlessly and aborts without mutating state.
 2. **Distributed Polling Worker (`KaraokePlaybackWorker`)**:
-   - Runs on a 2000ms background interval.
-   - Polls MongoDB for any rooms where `status = 'playing'`, `playbackExpiresAt <= now`, and `leaseExpiresAt <= now` (or unleased).
-   - Uses `RoomPlaybackStateModel.claimDuePlayback(instanceId, leaseDurationMs)` to acquire an atomic distributed lease via CAS (`findOneAndUpdate`).
-   - Acts as a bulletproof safety net: if a process crashes, an in-memory timer is dropped, or server clock drifts, the worker automatically reclaims and completes the track.
+   - Polls MongoDB every 2000ms.
+   - Recovers any playbacks where the precision timer was missed due to a process crash or restart.
+   - Acts as a fault-tolerant safety net.
 
-### 4.2 Playback Version Fencing
-Both the precision timer and background worker pass the `expectedPlaybackVersion` to `karaokeService.advanceToNextTrack()`.
-If a host skipped, paused, or stopped the track in the interim, the playback version will have advanced. The completion attempt is detected as stale and discarded idempotently with zero state corruption.
-
----
-
-## 5. Automatic Next-Track Selection & Requester Eligibility
-
-When a track completes, is skipped, or is stopped, `advanceToNextTrack` executes:
-1. Marks the active item as terminal (`completed` or `skipped`) with timestamp `completedAt = new Date()`.
-2. Scans for the next eligible item: `status: 'queued'`, sorted by `position: 1, addedAt: 1`.
-3. **Requester Eligibility Verification**:
-   - Checks `RoomMembershipModel` for the next item's requester.
-   - If the requester has left or been kicked (`status !== 'active'`), their track is automatically marked `removed` (`reason: 'requester_departed'`), and the loop proceeds to inspect the subsequent track.
-4. **Transition Execution**:
-   - If an eligible queued track exists: it atomically transitions to `playing`, `positionMs = 0`, `anchorStartedAt = new Date()`, `playbackExpiresAt = new Date(Date.now() + durationMs)`, and positions are rebalanced.
-   - If no eligible tracks remain: playback transitions to `status: 'idle'`, `currentQueueItemId = null`, and room song metadata is cleared.
+### Automatic Next-Track Selection & Requester Eligibility
+- Selects the earliest valid item: `status: 'queued'`, ordered by `position: 1, addedAt: 1`.
+- **Dynamic Membership Verification**: Verifies `RoomMembershipModel`. If the requester is no longer active in the room (departed or kicked), their item is marked `removed` (`reason: 'requester_departed'`), and the loop evaluates the next candidate.
+- If queue is empty, playback transitions to `idle` and room song metadata is cleared.
 
 ---
 
-## 6. Lifecycle Integration (Leave, Kick, Closure)
+## 6. Race-Safe Lifecycle Cleanups
 
-### 6.1 Member Departure & Kick
-- When a user leaves (`leaveRoom`) or is removed by the host (`kickMember`):
-  1. `karaokeService.handleMemberDeparted(roomId, userId)` is invoked.
-  2. All pending items requested by the user in `queued` status are set to `removed` (`position = 0`).
-  3. Remaining queue positions are atomically rebalanced.
-  4. If the departed user was the active singer (`currentItem.requestedBy === userId`), the track is immediately terminated, in-memory timers are canceled, and playback advances to the next track.
-  5. Updated queue and playback snapshots are broadcast to the room channel.
-
-### 6.2 Room Closure
-- When a host closes a room (`closeRoom`):
-  1. `karaokeService.handleRoomClosed(roomId)` is invoked.
-  2. Cancels active precision timers.
-  3. Resets playback state to `status: 'idle'`, clears all timestamps and leases, and increments `playbackVersion`.
-  4. Marks all active queue items (`queued` and `playing`) as `removed`.
-  5. Cleared snapshots are broadcast to connected clients before sockets disconnect.
+1. **Member Departure & Kick**:
+   - `leaveRoom` and `kickMember` both invoke `handleMemberDeparted(roomId, userId)`.
+   - All pending requests are transitioned to `removed`, and remaining queue positions are rebalanced.
+   - If the departed user was the active singer, playback advances to the next track using `expectedCurrentQueueItemId: currentItem._id.toString()`.
+   - If a skip or natural completion raced and already advanced the track, the fencing check aborts safely, preventing a double track advancement.
+2. **Room Closure**:
+   - `closeRoom` invokes `handleRoomClosed(roomId)`.
+   - Precision timers are canceled.
+   - Playback is reset to `idle`, all queue items are marked `removed`, and cleared state snapshots are broadcast to connected clients before disconnection.
+   - All playback and queue mutations reject closed rooms immediately with `FORBIDDEN_ROOM_CLOSED`.
 
 ---
 
-## 7. Startup Recovery & Self-Healing Reconciliation
+## 7. Self-Healing Reconciliation Correctness
 
-During API bootstrap (`server.ts`), before incoming HTTP requests or socket connections are accepted:
-1. `karaokeReconciliationService.reconcileAllActiveRooms()` scans all active rooms and compares `Room`, `RoomPlaybackState`, and `RoomQueueItem`.
-2. Any broken references, multiple playing items, orphaned playbacks, or overdue songs are reconciled into safe deterministic states.
-3. `karaokePlaybackWorker.start()` starts the distributed lease polling engine.
-4. On graceful shutdown (`SIGTERM`/`SIGINT`), `karaokePlaybackWorker.stop()` cleanly drains in-flight work and cancels in-memory precision timers.
+[KaraokeReconciliationService](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/karaoke-reconciliation.service.ts) runs on server startup and periodic maintenance cycles:
+
+1. **Closed Room with Active State**: Purges active items to `removed` and resets playback to `idle`.
+2. **Multiple Playing Items**: Deduplicates to at most 1 playing item, marking extras `skipped`.
+3. **Queue Playing Item with Idle Playback**: Transitions stray playing items to `completed`.
+4. **Playback Playing without Playing Item**: Advances to next track or resets playback to `idle`.
+5. **Playback References Missing or Foreign Item**: Resets playback to `idle`.
+6. **Playback References Terminal Item**: Advances to next track.
+7. **Overdue Playback**: Advances to next track using version and current item fencing.
+8. **Position Gaps or Duplicates**: Rebalances queue positions to a contiguous $1 \dots N$ sequence.
+9. **Expired Worker Leases**: Clears dangling leases database-wide via `releaseExpiredLeases()`.
+10. **Repairs Use CAS**: All reconciliation updates use conditional CAS filters to ensure they never overwrite valid concurrent mutations.
+11. **Post-Commit Publication**: Realtime updates are broadcast to Socket.IO only after reconciliation writes have successfully committed.

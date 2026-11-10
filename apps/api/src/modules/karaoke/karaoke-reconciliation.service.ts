@@ -3,6 +3,11 @@ import { RoomModel } from '../rooms/room.model.js';
 import { RoomQueueItemModel } from './room-queue-item.model.js';
 import { RoomPlaybackStateModel } from './room-playback-state.model.js';
 import { karaokeService } from './karaoke.service.js';
+import { getSocketServer } from '../../realtime/socket.server.js';
+import {
+  broadcastKaraokePlaybackUpdated,
+  broadcastKaraokeQueueUpdated,
+} from '../../realtime/karaoke.events.js';
 import { logger } from '../../utils/logger.js';
 
 export interface KaraokeReconcileResult {
@@ -18,8 +23,10 @@ export interface KaraokeReconcileResult {
     | 'CLOSED_ROOM_PURGED'
     | 'ORPHANED_PLAYBACK_RESET'
     | 'MULTIPLE_PLAYING_DEDUPLICATED'
+    | 'ORPHANED_PLAYING_ITEM_CLEARED'
     | 'OVERDUE_PLAYBACK_COMPLETED'
-    | 'QUEUE_POSITIONS_REBALANCED';
+    | 'QUEUE_POSITIONS_REBALANCED'
+    | 'EXPIRED_LEASE_CLEARED';
 }
 
 export interface KaraokeReconcileSummary {
@@ -32,6 +39,7 @@ export interface KaraokeReconcileSummary {
 export class KaraokeReconciliationService {
   /**
    * Reconciles cross-collection queue and playback invariants for a single room.
+   * Uses CAS updates and version checks to prevent overwriting concurrent mutations.
    */
   public async reconcileRoom(roomId: string, dryRun = false): Promise<KaraokeReconcileResult | null> {
     if (!Types.ObjectId.isValid(roomId)) {
@@ -56,7 +64,7 @@ export class KaraokeReconciliationService {
     // 1. Closed Room Invariant: zero active queue items, playback idle, no playing items
     if (room.status === 'closed') {
       const activeQueueCount = playingItems.length + queuedItems.length;
-      const isPlaybackActive = playbackState && playbackState.status !== 'idle';
+      const isPlaybackActive = playbackState && (playbackState.status !== 'idle' || playbackState.currentQueueItemId !== null);
 
       if (activeQueueCount > 0 || isPlaybackActive) {
         inconsistencies.push('CLOSED_ROOM_HAS_ACTIVE_KARAOKE_STATE');
@@ -69,14 +77,18 @@ export class KaraokeReconciliationService {
           ).exec();
 
           if (playbackState) {
-            playbackState.currentQueueItemId = null;
-            playbackState.status = 'idle';
-            playbackState.positionMs = 0;
-            playbackState.anchorStartedAt = null;
-            playbackState.pausedAt = null;
-            playbackState.playbackExpiresAt = null;
-            playbackState.playbackVersion += 1;
-            await playbackState.save();
+            await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+              roomId,
+              playbackState.playbackVersion,
+              {
+                currentQueueItemId: null,
+                status: 'idle',
+                positionMs: 0,
+                anchorStartedAt: null,
+                pausedAt: null,
+                playbackExpiresAt: null,
+              }
+            );
           }
 
           if (room.currentSongTitle || room.currentSingerName) {
@@ -112,14 +124,10 @@ export class KaraokeReconciliationService {
           ? playbackState.currentQueueItemId.toString()
           : playingItems[0]!._id.toString();
 
-        for (const item of playingItems) {
-          if (item._id.toString() !== keepId) {
-            item.status = 'skipped';
-            item.position = 0;
-            item.completedAt = new Date();
-            await item.save();
-          }
-        }
+        await RoomQueueItemModel.updateMany(
+          { roomId: roomObjectId, _id: { $ne: new Types.ObjectId(keepId) }, status: 'playing' },
+          { $set: { status: 'skipped', position: 0, completedAt: new Date() } }
+        ).exec();
 
         logger.info(
           { roomId, keepId, duplicateCount: playingItems.length - 1 },
@@ -128,7 +136,23 @@ export class KaraokeReconciliationService {
       }
     }
 
-    // 3. Playback Reference Validity Invariant
+    // 3. Queue Playing Item with Idle Playback Invariant
+    if (playbackState && playbackState.status === 'idle' && playingItems.length > 0) {
+      inconsistencies.push('QUEUE_PLAYING_ITEM_WITH_IDLE_PLAYBACK');
+      if (actionTaken === 'NONE') {
+        actionTaken = 'ORPHANED_PLAYING_ITEM_CLEARED';
+      }
+
+      if (!dryRun) {
+        await RoomQueueItemModel.updateMany(
+          { roomId: roomObjectId, status: 'playing' },
+          { $set: { status: 'completed', position: 0, completedAt: new Date() } }
+        ).exec();
+        logger.info({ roomId, clearedCount: playingItems.length }, '🛠️ Reconciled playing items for idle playback');
+      }
+    }
+
+    // 4. Playback Reference Validity Invariant
     if (playbackState && playbackState.currentQueueItemId) {
       const referencedItem = await RoomQueueItemModel.findById(playbackState.currentQueueItemId).exec();
 
@@ -136,27 +160,35 @@ export class KaraokeReconciliationService {
         inconsistencies.push('PLAYBACK_REFERENCES_MISSING_QUEUE_ITEM');
         actionTaken = 'ORPHANED_PLAYBACK_RESET';
         if (!dryRun) {
-          playbackState.currentQueueItemId = null;
-          playbackState.status = 'idle';
-          playbackState.positionMs = 0;
-          playbackState.anchorStartedAt = null;
-          playbackState.pausedAt = null;
-          playbackState.playbackExpiresAt = null;
-          playbackState.playbackVersion += 1;
-          await playbackState.save();
+          await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+            roomId,
+            playbackState.playbackVersion,
+            {
+              currentQueueItemId: null,
+              status: 'idle',
+              positionMs: 0,
+              anchorStartedAt: null,
+              pausedAt: null,
+              playbackExpiresAt: null,
+            }
+          );
         }
       } else if (referencedItem.roomId.toString() !== roomId) {
         inconsistencies.push('PLAYBACK_REFERENCES_FOREIGN_ROOM_ITEM');
         actionTaken = 'ORPHANED_PLAYBACK_RESET';
         if (!dryRun) {
-          playbackState.currentQueueItemId = null;
-          playbackState.status = 'idle';
-          playbackState.positionMs = 0;
-          playbackState.anchorStartedAt = null;
-          playbackState.pausedAt = null;
-          playbackState.playbackExpiresAt = null;
-          playbackState.playbackVersion += 1;
-          await playbackState.save();
+          await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+            roomId,
+            playbackState.playbackVersion,
+            {
+              currentQueueItemId: null,
+              status: 'idle',
+              positionMs: 0,
+              anchorStartedAt: null,
+              pausedAt: null,
+              playbackExpiresAt: null,
+            }
+          );
         }
       } else if (referencedItem.status !== 'playing') {
         inconsistencies.push('PLAYBACK_REFERENCES_NON_PLAYING_ITEM');
@@ -171,18 +203,40 @@ export class KaraokeReconciliationService {
       inconsistencies.push('PLAYBACK_PLAYING_WITHOUT_PLAYING_ITEM');
       actionTaken = 'ORPHANED_PLAYBACK_RESET';
       if (!dryRun) {
-        playbackState.currentQueueItemId = null;
-        playbackState.status = 'idle';
-        playbackState.positionMs = 0;
-        playbackState.anchorStartedAt = null;
-        playbackState.pausedAt = null;
-        playbackState.playbackExpiresAt = null;
-        playbackState.playbackVersion += 1;
-        await playbackState.save();
+        await RoomPlaybackStateModel.commitConditionalPlaybackTransition(
+          roomId,
+          playbackState.playbackVersion,
+          {
+            currentQueueItemId: null,
+            status: 'idle',
+            positionMs: 0,
+            anchorStartedAt: null,
+            pausedAt: null,
+            playbackExpiresAt: null,
+          }
+        );
       }
     }
 
-    // 4. Overdue Playback Invariant
+    // 5. Expired Worker Lease Invariant
+    if (
+      playbackState &&
+      playbackState.leaseExpiresAt &&
+      playbackState.leaseExpiresAt <= new Date() &&
+      playbackState.leaseToken !== null
+    ) {
+      inconsistencies.push('EXPIRED_WORKER_LEASE_DETECTED');
+      if (actionTaken === 'NONE') {
+        actionTaken = 'EXPIRED_LEASE_CLEARED';
+      }
+
+      if (!dryRun && playbackState.leaseToken) {
+        await RoomPlaybackStateModel.releasePlaybackLease(roomId, playbackState.leaseToken);
+        logger.info({ roomId, expiredLeaseToken: playbackState.leaseToken }, '🛠️ Reconciled expired worker lease');
+      }
+    }
+
+    // 6. Overdue Playback Invariant
     if (
       playbackState &&
       playbackState.status === 'playing' &&
@@ -205,20 +259,21 @@ export class KaraokeReconciliationService {
 
           if (!dryRun) {
             logger.info({ roomId, songDurationMs, derivedMs }, '🛠️ Reconciling overdue playback track');
-            await karaokeService.advanceToNextTrack(roomId, { reason: 'natural_completion' });
+            await karaokeService.advanceToNextTrack(roomId, {
+              expectedPlaybackVersion: playbackState.playbackVersion,
+              expectedCurrentQueueItemId: playbackState.currentQueueItemId.toString(),
+              reason: 'natural_completion',
+            });
           }
         }
       }
     }
 
-    // 5. Queue Position Gaps & Ordering Check
-    let hasPositionGap = false;
-    for (let i = 0; i < queuedItems.length; i++) {
-      if (queuedItems[i]!.position !== i + 1) {
-        hasPositionGap = true;
-        break;
-      }
-    }
+    // 7. Queue Position Gaps & Ordering Check
+    const uniquePositions = new Set(queuedItems.map((i) => i.position));
+    const hasPositionGap =
+      uniquePositions.size !== queuedItems.length ||
+      queuedItems.some((item, i) => item.position !== i + 1);
 
     if (hasPositionGap) {
       inconsistencies.push('QUEUE_POSITIONS_NOT_SEQUENTIAL');
@@ -228,6 +283,23 @@ export class KaraokeReconciliationService {
 
       if (!dryRun) {
         await karaokeService.rebalanceQueuePositions(roomId);
+      }
+    }
+
+    // 8. Realtime Publication of Committed Reconciled State
+    if (!dryRun && actionTaken !== 'NONE') {
+      try {
+        const io = getSocketServer();
+        if (io) {
+          const [reconciledPlayback, reconciledQueue] = await Promise.all([
+            karaokeService.getPlaybackSnapshot(roomId),
+            karaokeService.getQueueSnapshot(roomId),
+          ]);
+          broadcastKaraokePlaybackUpdated(io, roomId, reconciledPlayback);
+          broadcastKaraokeQueueUpdated(io, roomId, reconciledQueue, 'status_changed');
+        }
+      } catch (err) {
+        logger.warn({ err, roomId }, 'Could not broadcast reconciled state to socket channel');
       }
     }
 
@@ -245,10 +317,15 @@ export class KaraokeReconciliationService {
 
   /**
    * Scans all rooms with active queue items or active playback and repairs inconsistencies.
-   * Executed on server bootstrap and periodic health monitors.
+   * Also cleans up any expired leases across the database.
    */
   public async reconcileAllActiveRooms(dryRun = false): Promise<KaraokeReconcileSummary> {
-    // 1. Find all rooms with playback not idle OR with active items
+    if (!dryRun) {
+      // First clean up any expired leases database-wide
+      await RoomPlaybackStateModel.releaseExpiredLeases();
+    }
+
+    // Find all rooms with playback not idle OR with active items
     const [activePlaybackRooms, activeQueueRooms] = await Promise.all([
       RoomPlaybackStateModel.find({ status: { $ne: 'idle' } }).select('roomId').exec(),
       RoomQueueItemModel.distinct('roomId', { status: { $in: ['queued', 'playing'] } }).exec(),

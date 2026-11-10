@@ -33,6 +33,17 @@ export interface IRoomPlaybackStateModel extends Model<IRoomPlaybackStateDocumen
     roomId: Types.ObjectId | string,
     leaseToken: string
   ): Promise<boolean>;
+  releaseExpiredLeases(): Promise<number>;
+  commitConditionalPlaybackTransition(
+    roomId: Types.ObjectId | string,
+    expectedPlaybackVersion: number,
+    update: Partial<IRoomPlaybackState>,
+    options?: {
+      expectedCurrentQueueItemId?: Types.ObjectId | string | null;
+      leaseToken?: string | null;
+      session?: mongoose.ClientSession | null;
+    }
+  ): Promise<IRoomPlaybackStateDocument | null>;
 }
 
 const RoomPlaybackStateSchema = new Schema<IRoomPlaybackStateDocument, IRoomPlaybackStateModel>(
@@ -190,6 +201,90 @@ RoomPlaybackStateSchema.statics.releasePlaybackLease = async function (
   ).exec();
 
   return result.modifiedCount > 0;
+};
+
+/**
+ * Sweeps and clears expired worker leases across all rooms.
+ */
+RoomPlaybackStateSchema.statics.releaseExpiredLeases = async function (): Promise<number> {
+  const now = new Date();
+  const result = await this.updateMany(
+    {
+      leaseExpiresAt: { $lte: now },
+      leaseToken: { $ne: null },
+    },
+    {
+      $set: {
+        claimedBy: null,
+        claimedAt: null,
+        leaseExpiresAt: null,
+        leaseToken: null,
+      },
+    }
+  ).exec();
+
+  return result.modifiedCount;
+};
+
+/**
+ * Conditionally commits a playback state transition using optimistic version fencing
+ * and worker lease validation. If the expected version or lease token does not match,
+ * the write matches zero documents and safely returns null.
+ */
+RoomPlaybackStateSchema.statics.commitConditionalPlaybackTransition = async function (
+  roomId: Types.ObjectId | string,
+  expectedPlaybackVersion: number,
+  update: Partial<IRoomPlaybackState>,
+  options?: {
+    expectedCurrentQueueItemId?: Types.ObjectId | string | null;
+    leaseToken?: string | null;
+    session?: mongoose.ClientSession | null;
+  }
+): Promise<IRoomPlaybackStateDocument | null> {
+  const roomObjectId = typeof roomId === 'string' ? new Types.ObjectId(roomId) : roomId;
+  const now = new Date();
+
+  const filter: Record<string, unknown> = {
+    roomId: roomObjectId,
+    playbackVersion: expectedPlaybackVersion,
+  };
+
+  if (options?.expectedCurrentQueueItemId !== undefined) {
+    if (options.expectedCurrentQueueItemId === null) {
+      filter.currentQueueItemId = null;
+    } else {
+      filter.currentQueueItemId =
+        typeof options.expectedCurrentQueueItemId === 'string'
+          ? new Types.ObjectId(options.expectedCurrentQueueItemId)
+          : options.expectedCurrentQueueItemId;
+    }
+  }
+
+  if (options?.leaseToken) {
+    filter.leaseToken = options.leaseToken;
+    filter.leaseExpiresAt = { $gt: now };
+  }
+
+  // Clear any existing worker lease upon successful outcome commit
+  const setPayload: Record<string, unknown> = {
+    ...update,
+    claimedBy: null,
+    claimedAt: null,
+    leaseExpiresAt: null,
+    leaseToken: null,
+  };
+
+  return this.findOneAndUpdate(
+    filter,
+    {
+      $set: setPayload,
+      $inc: { playbackVersion: 1 },
+    },
+    {
+      new: true,
+      session: options?.session || undefined,
+    }
+  ).exec();
 };
 
 export const RoomPlaybackStateModel: IRoomPlaybackStateModel =
