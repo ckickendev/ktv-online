@@ -5,3 +5,4 @@ export * from './SingerTurnIndicator';
 export * from './RoomSongQueue';
 export * from './QueueItem';
 export * from './SongSearchDialog';
+export * from './LyricsStage';

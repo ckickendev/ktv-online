@@ -20,25 +20,19 @@ export class SongService {
    */
   public async ensureSeedSongs(): Promise<void> {
     try {
-      const count = await SongModel.countDocuments().exec();
-      if (count > 0) {
-        return; // Already seeded
-      }
-
-      logger.info('Populating initial song catalog fixtures into database...');
       const seedItems =
         this.primaryProvider instanceof FixtureCatalogProvider
           ? this.primaryProvider.getSeedItems()
           : [];
       const providerName = this.primaryProvider.providerName;
 
+      logger.info('Syncing initial song catalog fixtures into database...');
+
       for (const item of seedItems) {
         await SongModel.updateOne(
           { provider: providerName, providerSongId: item.providerSongId },
           {
-            $setOnInsert: {
-              provider: providerName,
-              providerSongId: item.providerSongId,
+            $set: {
               title: item.title,
               artist: item.artist,
               thumbnailUrl: item.thumbnailUrl,
@@ -46,6 +40,13 @@ export class SongService {
               language: item.language,
               genre: item.genre,
               mediaAvailability: item.mediaAvailability,
+              audioAvailability: item.audioAvailability || 'metadata_only',
+              lyricsAvailability: item.lyricsAvailability || 'unavailable',
+              licenseClassification: item.licenseClassification || 'development_fixture',
+            },
+            $setOnInsert: {
+              provider: providerName,
+              providerSongId: item.providerSongId,
             },
           },
           { upsert: true }

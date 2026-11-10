@@ -14,6 +14,8 @@ import {
 } from '../../realtime/karaoke.events.js';
 import { sendError } from '../../utils/response.js';
 import { UnsupportedTopologyError } from '../../database/transaction.js';
+import { audioSourceService } from './audio-source.service.js';
+import { lyricsService } from './lyrics.service.js';
 
 export class KaraokeController {
   /**
@@ -289,6 +291,102 @@ export class KaraokeController {
       }
       if (msg === 'FORBIDDEN_ROOM_CLOSED') {
         sendError(res, 'Room is closed', 400);
+        return;
+      }
+      if (msg === 'SONG_AUDIO_UNAVAILABLE') {
+        res.status(400).json({ code: 'SONG_AUDIO_UNAVAILABLE', message: 'Audio stream is unavailable for this song' });
+        return;
+      }
+      next(err);
+    }
+  }
+
+  /**
+   * GET /api/v1/songs/:songId
+   */
+  public async getSongById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const songId = req.params.songId;
+      if (!songId) {
+        sendError(res, 'Song ID is required', 400);
+        return;
+      }
+
+      const song = await songService.getSongById(songId);
+      if (!song) {
+        sendError(res, 'Song not found', 404);
+        return;
+      }
+
+      res.status(200).json(song);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * POST /api/v1/songs/:songId/audio/resolve
+   * GET /api/v1/songs/:songId/audio/resolve
+   */
+  public async resolveAudioSource(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const songId = req.params.songId;
+      if (!songId) {
+        sendError(res, 'Song ID is required', 400);
+        return;
+      }
+
+      const baseUrl = `${req.protocol}://${req.get('host') || ''}`;
+      const audioSource = await audioSourceService.resolveAudioSource(songId, baseUrl);
+      res.status(200).json(audioSource);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'SONG_NOT_FOUND') {
+        sendError(res, 'Song not found', 404);
+        return;
+      }
+      if (msg === 'SONG_AUDIO_UNAVAILABLE') {
+        res.status(400).json({ code: 'SONG_AUDIO_UNAVAILABLE', message: 'Audio stream is unavailable for this song' });
+        return;
+      }
+      next(err);
+    }
+  }
+
+  /**
+   * GET /api/v1/songs/:songId/audio/stream
+   */
+  public async streamAudio(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const songId = req.params.songId;
+      if (!songId) {
+        sendError(res, 'Song ID is required', 400);
+        return;
+      }
+
+      await audioSourceService.streamAudio(songId, req, res);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * GET /api/v1/songs/:songId/lyrics
+   */
+  public async getLyrics(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const songId = req.params.songId;
+      if (!songId) {
+        sendError(res, 'Song ID is required', 400);
+        return;
+      }
+
+      const lyrics = await lyricsService.getLyrics(songId);
+      res.status(200).json(lyrics);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'SONG_NOT_FOUND') {
+        sendError(res, 'Song not found', 404);
         return;
       }
       next(err);

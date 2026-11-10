@@ -44,6 +44,7 @@ export function SongSearchDialog({
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('all');
+  const [playableOnly, setPlayableOnly] = useState(false);
   const [addedSongIds, setAddedSongIds] = useState<Set<string>>(new Set());
 
   // Debounce search query 300ms
@@ -82,7 +83,10 @@ export function SongSearchDialog({
     staleTime: 30000,
   });
 
-  const songs: SongDto[] = data?.songs || [];
+  const rawSongs: SongDto[] = data?.songs || [];
+  const songs = playableOnly
+    ? rawSongs.filter((s) => s.audioAvailability === 'audio_available')
+    : rawSongs;
 
   const handleAdd = async (songId: string) => {
     try {
@@ -155,8 +159,21 @@ export function SongSearchDialog({
             />
           </div>
 
-          {/* Genre filter pills */}
+          {/* Genre & Audio filter pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <button
+              type="button"
+              onClick={() => setPlayableOnly(!playableOnly)}
+              className={cn(
+                'px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 border',
+                playableOnly
+                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                  : 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border-emerald-500/30'
+              )}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Playable Audio Only
+            </button>
             {GENRE_FILTERS.map((g) => (
               <button
                 key={g.id}
@@ -191,7 +208,9 @@ export function SongSearchDialog({
               <Disc3 className="w-10 h-10 text-slate-600 mb-2" />
               <p className="text-sm font-semibold text-slate-300">No songs found</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                Try searching with a different title or keyword
+                {playableOnly
+                  ? 'No songs matching the criteria have playable backing audio'
+                  : 'Try searching with a different title or keyword'}
               </p>
             </div>
           ) : (
@@ -226,12 +245,24 @@ export function SongSearchDialog({
                         {song.title}
                       </h4>
                       <p className="text-[11px] text-slate-400 truncate mt-0.5">{song.artist}</p>
-                      <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500">
+                      <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500 flex-wrap">
                         <span className="capitalize">{song.genre}</span>
                         <span>&bull;</span>
                         <span className="uppercase">{song.language}</span>
                         <span>&bull;</span>
                         <span>{formatMsToTime(song.durationMs)}</span>
+                        <span>&bull;</span>
+                        {song.audioAvailability === 'audio_available' ? (
+                          <span className="text-emerald-400 font-semibold">Playable Audio</span>
+                        ) : (
+                          <span className="text-amber-400/80">Metadata Only</span>
+                        )}
+                        {song.lyricsAvailability === 'timed_available' && (
+                          <>
+                            <span>&bull;</span>
+                            <span className="text-cyan-400 font-semibold">Timed Lyrics</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

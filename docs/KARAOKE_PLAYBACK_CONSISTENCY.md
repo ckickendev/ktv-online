@@ -145,3 +145,17 @@ In [KaraokeReconciliationService](file:///Users/mac/Documents/workspace/workspac
   3. Returns `AMBIGUOUS_QUEUE_FLAGGED`.
   4. Refuses to invent arbitrary ordering or increment `queueVersion`.
   5. Suppresses realtime queue broadcasts until resolved.
+
+---
+
+## 9. Playback Source Resolution & Client Execution Boundaries (Sprint 2.5)
+
+### 9.1 Generation Fencing for Asynchronous Audio Resolution
+- **Problem**: When users skip tracks in rapid succession, asynchronous network requests resolving track audio streams may return out of order. A slow resolution for Track A could arrive after Track B has already been commanded to play.
+- **Protocol**: The browser player maintains a monotonic `loadGenerationRef` counter. Each track resolution request captures the current generation counter. When the promise resolves, the response is committed to the local `HTMLAudioElement` only if `generation === loadGenerationRef.current` and `songId === currentSongIdRef.current`. Stale resolutions are silently dropped.
+
+### 9.2 Authoritative Natural Track Completion Boundary
+- **Boundary**: The browser `HTMLAudioElement.addEventListener('ended')` callback signals that the client has reached the end of its local audio buffer.
+- **Invariant**: The browser client **must not** emit a track advancement or completion mutation to the server.
+- **Authority**: Natural track completion remains strictly owned by `KaraokePlaybackScheduler` and `KaraokePlaybackWorker` on the server, coordinated by `playbackVersion` CAS fences and the distributed lease protocol.
+- **Fail-Safe**: If a client's audio ends before the server advances, the client transitions its local audio to paused/standby at the end of the timeline and waits for the server's authoritative `karaoke:playback_updated` or `karaoke:queue_updated` event.

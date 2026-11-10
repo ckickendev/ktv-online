@@ -146,3 +146,18 @@ Outputs:
 - `@ktv/contracts`: `packages/contracts/dist/`
 - `@ktv/api`: `apps/api/dist/`
 - `@ktv/web`: `apps/web/.next/`
+
+---
+
+## 9. Development Karaoke Audio & Sample Catalog
+
+During local development and testing, commercial karaoke catalog APIs are not connected. Instead, KTVOnline includes:
+- **Procedural Development Audio Generator**: Pure PCM stereo WAV 44.1kHz 16-bit generator built into `apps/api/src/modules/karaoke/fixture-audio.generator.ts`.
+- **4 Playable Authorized Tracks**:
+  - `Auld Lang Syne` (Public Domain) — ID: `fix_auld_lang_syne`
+  - `Amazing Grace` (Public Domain) — ID: `fix_amazing_grace`
+  - `Scarborough Fair` (Public Domain) — ID: `fix_scarborough_fair`
+  - `Neon City Synthwave` (Royalty-Free) — ID: `fix_synth_groove`
+- **Synchronized Timed Lyrics**: Available for all 4 tracks.
+- **Audio Streaming Endpoint**: `GET /api/v1/songs/:songId/audio/stream` supporting HTTP 206 Partial Content range requests for native seeking.
+- **Commercial Metadata-Only Tracks**: The database seeds sample metadata for commercial tracks. These tracks are explicitly marked `audioAvailability: 'metadata_only'` and cannot be started until a commercial audio provider is integrated.

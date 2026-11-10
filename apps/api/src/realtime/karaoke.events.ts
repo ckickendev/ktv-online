@@ -300,16 +300,19 @@ export function registerKaraokeEvents(
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'FAILED_TO_EXECUTE_PLAYBACK_COMMAND';
+        const userMsg = message === 'SONG_AUDIO_UNAVAILABLE'
+          ? 'Backing audio is unavailable for this song'
+          : 'Unable to execute playback command';
         logger.warn({ err, userId: user.id }, 'Karaoke playback command rejected');
 
         socket.emit(SOCKET_EVENTS.SERVER.KARAOKE_ERROR, {
           code: message,
-          message: 'Unable to execute playback command',
+          message: userMsg,
         });
 
         ack?.({
           success: false,
-          error: { code: message, message: 'Failed to execute playback command' },
+          error: { code: message, message: userMsg },
         });
       }
     }

@@ -1,4 +1,9 @@
-import { SongMediaAvailability } from '@ktv/contracts';
+import {
+  AudioAvailability,
+  AudioLicenseClassification,
+  LyricsAvailability,
+  SongMediaAvailability,
+} from '@ktv/contracts';
 
 export interface CatalogSongItem {
   providerSongId: string;
@@ -9,6 +14,9 @@ export interface CatalogSongItem {
   language: string;
   genre: string;
   mediaAvailability: SongMediaAvailability;
+  audioAvailability?: AudioAvailability;
+  lyricsAvailability?: LyricsAvailability;
+  licenseClassification?: AudioLicenseClassification;
 }
 
 export interface SongSearchOptions {
@@ -37,6 +45,65 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
   public readonly providerName = 'fixture';
 
   private readonly fixtureSongs: CatalogSongItem[] = [
+    // -------------------------------------------------------------
+    // Authorized Development Fixtures (Playable Audio & Timed Lyrics)
+    // -------------------------------------------------------------
+    {
+      providerSongId: 'fix_auld_lang_syne',
+      title: 'Auld Lang Syne',
+      artist: 'Robert Burns (Traditional Folk)',
+      thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&auto=format&fit=crop&q=80',
+      durationMs: 50000, // 50s
+      language: 'en',
+      genre: 'folk',
+      mediaAvailability: 'available',
+      audioAvailability: 'audio_available',
+      lyricsAvailability: 'timed_available',
+      licenseClassification: 'public_domain',
+    },
+    {
+      providerSongId: 'fix_amazing_grace',
+      title: 'Amazing Grace',
+      artist: 'John Newton (Instrumental Hymn)',
+      thumbnailUrl: 'https://images.unsplash.com/photo-1465847899084-d164df4dedc6?w=300&auto=format&fit=crop&q=80',
+      durationMs: 45000, // 45s
+      language: 'en',
+      genre: 'ballad',
+      mediaAvailability: 'available',
+      audioAvailability: 'audio_available',
+      lyricsAvailability: 'timed_available',
+      licenseClassification: 'public_domain',
+    },
+    {
+      providerSongId: 'fix_scarborough_fair',
+      title: 'Scarborough Fair',
+      artist: 'Traditional English Ballad',
+      thumbnailUrl: 'https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=300&auto=format&fit=crop&q=80',
+      durationMs: 40000, // 40s
+      language: 'en',
+      genre: 'folk',
+      mediaAvailability: 'available',
+      audioAvailability: 'audio_available',
+      lyricsAvailability: 'timed_available',
+      licenseClassification: 'public_domain',
+    },
+    {
+      providerSongId: 'fix_synth_groove',
+      title: 'Neon City Synthwave',
+      artist: 'KTV Lounge Collective',
+      thumbnailUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&auto=format&fit=crop&q=80',
+      durationMs: 60000, // 60s
+      language: 'en',
+      genre: 'city_pop',
+      mediaAvailability: 'available',
+      audioAvailability: 'audio_available',
+      lyricsAvailability: 'timed_available',
+      licenseClassification: 'royalty_free',
+    },
+
+    // -------------------------------------------------------------
+    // Commercial Music Catalog Fixtures (Metadata Only - No Audio Stream)
+    // -------------------------------------------------------------
     {
       providerSongId: 'fix_blinding_lights',
       title: 'Blinding Lights',
@@ -45,7 +112,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 200000, // 3m 20s
       language: 'en',
       genre: 'pop',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_cruel_summer',
@@ -55,7 +125,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 178000, // 2m 58s
       language: 'en',
       genre: 'pop',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_bohemian_rhapsody',
@@ -65,7 +138,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 355000, // 5m 55s
       language: 'en',
       genre: 'rock',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_hotel_california',
@@ -75,7 +151,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 390000, // 6m 30s
       language: 'en',
       genre: 'rock',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_stay_with_me',
@@ -85,7 +164,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 304000, // 5m 04s
       language: 'ja',
       genre: 'city_pop',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_gurenge',
@@ -95,7 +177,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 236000, // 3m 56s
       language: 'ja',
       genre: 'anime',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_fly_me_to_the_moon',
@@ -105,7 +190,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 147000, // 2m 27s
       language: 'en',
       genre: 'ballad',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_someone_like_you',
@@ -115,7 +203,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 285000, // 4m 45s
       language: 'en',
       genre: 'ballad',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_cant_hold_us',
@@ -125,7 +216,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 258000, // 4m 18s
       language: 'en',
       genre: 'hiphop',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_treasure',
@@ -135,7 +229,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 176000, // 2m 56s
       language: 'en',
       genre: 'rnb',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_unravel',
@@ -145,7 +242,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 240000, // 4m 00s
       language: 'ja',
       genre: 'anime',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
     {
       providerSongId: 'fix_shape_of_you',
@@ -155,7 +255,10 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       durationMs: 233000, // 3m 53s
       language: 'en',
       genre: 'pop',
-      mediaAvailability: 'fixture_mock',
+      mediaAvailability: 'unavailable',
+      audioAvailability: 'metadata_only',
+      lyricsAvailability: 'unavailable',
+      licenseClassification: 'licensed_commercial',
     },
   ];
 

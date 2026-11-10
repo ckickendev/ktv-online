@@ -4,8 +4,11 @@ import {
   PlaybackCommandDto,
   PlaybackStateDto,
   ReorderQueueDto,
+  ResolvedAudioSourceDto,
   RoomQueueItemDto,
   RoomQueueSnapshotDto,
+  SongDto,
+  SongLyricsDto,
   SongSearchQuery,
   SongSearchResponse,
 } from '@ktv/contracts';
@@ -86,5 +89,26 @@ export const karaokeApi = {
       `/rooms/${roomId}/playback/command`,
       payload
     );
+  },
+
+  /**
+   * Resolve playable audio source for a song.
+   */
+  async resolveAudioSource(songId: string): Promise<ResolvedAudioSourceDto> {
+    return apiClient.post<ResolvedAudioSourceDto>(`/songs/${songId}/audio/resolve`);
+  },
+
+  /**
+   * Fetch synchronized lyrics for a song.
+   */
+  async getLyrics(songId: string): Promise<SongLyricsDto> {
+    return apiClient.get<SongLyricsDto>(`/songs/${songId}/lyrics`);
+  },
+
+  /**
+   * Get single song details by ID.
+   */
+  async getSongById(songId: string): Promise<SongDto> {
+    return apiClient.get<SongDto>(`/songs/${songId}`);
   },
 };

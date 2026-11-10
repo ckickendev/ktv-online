@@ -105,6 +105,9 @@ export class KaraokeService {
           language: songDoc.language || 'en',
           genre: songDoc.genre || 'pop',
           mediaAvailability: songDoc.mediaAvailability || 'fixture_mock',
+          audioAvailability: songDoc.audioAvailability || 'metadata_only',
+          lyricsAvailability: songDoc.lyricsAvailability || 'unavailable',
+          licenseClassification: songDoc.licenseClassification || 'development_fixture',
           createdAt: songDoc.createdAt?.toISOString(),
           updatedAt: songDoc.updatedAt?.toISOString(),
         }
@@ -119,6 +122,9 @@ export class KaraokeService {
           language: 'en',
           genre: 'pop',
           mediaAvailability: 'fixture_mock',
+          audioAvailability: 'metadata_only',
+          lyricsAvailability: 'unavailable',
+          licenseClassification: 'development_fixture',
         };
 
     const requesterDto = userDoc
@@ -340,8 +346,8 @@ export class KaraokeService {
     let queueItem: IRoomQueueItemDocument | null = null;
     let activatedImmediately = false;
 
-    // Direct stage activation if room playback is idle and no item is playing
-    if (!hasActivePlaying && playbackState.status === 'idle') {
+    // Direct stage activation if room playback is idle, no item is playing, and song has available audio
+    if (!hasActivePlaying && playbackState.status === 'idle' && song.audioAvailability === 'audio_available') {
       try {
         queueItem = await RoomQueueItemModel.create({
           roomId: roomObjectId,
@@ -757,7 +763,11 @@ export class KaraokeService {
         .populate('songId')
         .exec();
       if (currentItemDoc && currentItemDoc.songId) {
-        songDurationMs = (currentItemDoc.songId as any).durationMs || 180000;
+        const songDoc = currentItemDoc.songId as any;
+        songDurationMs = songDoc.durationMs || 180000;
+        if (dto.command === 'play' && songDoc.audioAvailability && songDoc.audioAvailability !== 'audio_available') {
+          throw new Error('SONG_AUDIO_UNAVAILABLE');
+        }
       }
     }
 
@@ -1047,6 +1057,27 @@ export class KaraokeService {
           candidate.status = 'removed';
           candidate.position = 0;
           candidate.removedAt = now;
+          await candidate.save({ session: session || undefined });
+          continue;
+        }
+
+        // Verify audio availability for candidate track
+        const candidateSong = candidate.songId as any;
+        if (candidateSong && candidateSong.audioAvailability && candidateSong.audioAvailability !== 'audio_available') {
+          if (options?.reason === 'play_idle') {
+            logger.warn(
+              { roomId, candidateId: candidate._id.toString(), title: candidateSong.title },
+              'Host attempted to play track with unavailable audio'
+            );
+            throw new Error('SONG_AUDIO_UNAVAILABLE');
+          }
+          logger.warn(
+            { roomId, candidateId: candidate._id.toString(), title: candidateSong.title, transitionId },
+            'Marking queued song as failed: audio source is unavailable'
+          );
+          candidate.status = 'failed';
+          candidate.position = 0;
+          candidate.completedAt = now;
           await candidate.save({ session: session || undefined });
           continue;
         }

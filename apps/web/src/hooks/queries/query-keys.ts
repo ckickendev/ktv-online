@@ -33,5 +33,7 @@ export const queryKeys = {
     queue: (roomId: string) => [...queryKeys.karaoke.all, 'queue', roomId] as const,
     playback: (roomId: string) => [...queryKeys.karaoke.all, 'playback', roomId] as const,
     songs: (query?: Record<string, unknown>) => [...queryKeys.karaoke.all, 'songs', query ?? {}] as const,
+    lyrics: (songId: string) => [...queryKeys.karaoke.all, 'lyrics', songId] as const,
+    audio: (songId: string) => [...queryKeys.karaoke.all, 'audio', songId] as const,
   },
 };

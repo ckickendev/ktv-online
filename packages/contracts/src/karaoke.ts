@@ -12,6 +12,61 @@ export const SongMediaAvailabilitySchema = z.enum([
 ]);
 export type SongMediaAvailability = z.infer<typeof SongMediaAvailabilitySchema>;
 
+export const AudioAvailabilitySchema = z.enum([
+  'metadata_only',
+  'audio_available',
+  'audio_unavailable',
+  'restricted',
+]);
+export type AudioAvailability = z.infer<typeof AudioAvailabilitySchema>;
+
+export const AudioLicenseClassificationSchema = z.enum([
+  'licensed_commercial',
+  'royalty_free',
+  'public_domain',
+  'user_supplied_authorized',
+  'development_fixture',
+]);
+export type AudioLicenseClassification = z.infer<typeof AudioLicenseClassificationSchema>;
+
+export const ResolvedAudioSourceDtoSchema = z.object({
+  songId: z.string(),
+  provider: z.string(),
+  url: z.string(),
+  mimeType: z.string().default('audio/mpeg'),
+  availability: AudioAvailabilitySchema,
+  licenseClassification: AudioLicenseClassificationSchema,
+  expiresAt: z.string().nullable().optional(),
+  attribution: z.string().nullable().optional(),
+});
+export type ResolvedAudioSourceDto = z.infer<typeof ResolvedAudioSourceDtoSchema>;
+
+export const TimedLyricLineSchema = z.object({
+  id: z.string(),
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().nonnegative().optional(),
+  text: z.string(),
+  translation: z.string().optional(),
+});
+export type TimedLyricLine = z.infer<typeof TimedLyricLineSchema>;
+
+export const LyricsAvailabilitySchema = z.enum([
+  'timed_available',
+  'text_only',
+  'unavailable',
+]);
+export type LyricsAvailability = z.infer<typeof LyricsAvailabilitySchema>;
+
+export const SongLyricsDtoSchema = z.object({
+  songId: z.string(),
+  provider: z.string(),
+  lines: z.array(TimedLyricLineSchema),
+  language: z.string().default('en'),
+  hasTimedLyrics: z.boolean(),
+  attribution: z.string().optional(),
+});
+export type SongLyricsDto = z.infer<typeof SongLyricsDtoSchema>;
+
 export const SongDtoSchema = z.object({
   id: z.string(),
   provider: z.string(),
@@ -23,6 +78,9 @@ export const SongDtoSchema = z.object({
   language: z.string().default('en'),
   genre: z.string().default('pop'),
   mediaAvailability: SongMediaAvailabilitySchema.default('fixture_mock'),
+  audioAvailability: AudioAvailabilitySchema.default('metadata_only'),
+  lyricsAvailability: LyricsAvailabilitySchema.default('unavailable'),
+  licenseClassification: AudioLicenseClassificationSchema.default('development_fixture'),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });

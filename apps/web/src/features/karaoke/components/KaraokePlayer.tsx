@@ -1,17 +1,23 @@
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Disc3,
   AlertCircle,
   Radio,
   Volume2,
+  VolumeX,
+  Mic2,
+  Activity,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PlaybackStateDto, RoomQueueItemDto } from '@ktv/contracts';
 import { CurrentSongPanel, formatMsToTime } from './CurrentSongPanel';
 import { PlaybackControls } from './PlaybackControls';
 import { SingerTurnIndicator } from './SingerTurnIndicator';
+import { LyricsStage } from './LyricsStage';
+import { useKaraokeAudio } from '../hooks/use-karaoke-audio';
 
 interface KaraokePlayerProps {
   playback: PlaybackStateDto | undefined;
@@ -49,6 +55,25 @@ export function KaraokePlayer({
   className,
 }: KaraokePlayerProps) {
   const progressBarRef = useRef<HTMLDivElement>(null);
+  const [stageView, setStageView] = useState<'lyrics' | 'visualizer'>('lyrics');
+
+  // Authoritative Audio Engine Hook
+  const {
+    isBuffering,
+    isAutoplayBlocked,
+    audioError,
+    volume,
+    isMuted,
+    isAudioAvailable,
+    unlockAutoplay,
+    setVolume,
+    toggleMute,
+    retryAudioLoad,
+  } = useKaraokeAudio({
+    playback,
+    currentPositionMs,
+    enabled: true,
+  });
 
   const currentItem = playback?.currentItem || null;
   const status = playback?.status || 'idle';
@@ -85,10 +110,53 @@ export function KaraokePlayer({
         nextUpItem={nextUpItem}
       />
 
+      {/* Autoplay Blocked Notification Banner */}
+      {isAutoplayBlocked && (
+        <div
+          data-testid="autoplay-blocked-banner"
+          className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-amber-200 text-xs shadow-lg animate-in fade-in"
+        >
+          <div className="flex items-center gap-2.5">
+            <VolumeX className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="font-medium">
+              Audio autoplay blocked by browser. Click to unmute backing track.
+            </span>
+          </div>
+          <button
+            type="button"
+            data-testid="autoplay-unlock-button"
+            onClick={unlockAutoplay}
+            className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs transition-transform active:scale-95 shadow-md shadow-amber-950/40 shrink-0"
+          >
+            Listen to Backing Track
+          </button>
+        </div>
+      )}
+
+      {/* Audio Loading Error Banner */}
+      {audioError && isAudioAvailable && (
+        <div
+          data-testid="audio-load-error-banner"
+          className="flex items-center justify-between p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs shadow-lg"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>Audio stream failed to load ({audioError})</span>
+          </div>
+          <button
+            type="button"
+            onClick={retryAudioLoad}
+            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-[11px] transition-colors"
+          >
+            Retry Audio
+          </button>
+        </div>
+      )}
+
       {/* Main Virtual Karaoke Stage Screen */}
       <div
         data-testid="karaoke-stage-surface"
-        className="relative rounded-2xl bg-[#030408] border border-violet-500/20 overflow-hidden shadow-2xl flex flex-col justify-between p-5 min-h-[360px] group transition-all"
+        className="relative rounded-2xl bg-[#030408] border border-violet-500/20 overflow-hidden shadow-2xl flex flex-col justify-between p-5 min-h-[380px] group transition-all"
       >
         {/* Stage Ambient Glow Effect */}
         <div className="absolute -top-24 -left-24 w-72 h-72 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
@@ -112,61 +180,113 @@ export function KaraokePlayer({
               </span>
             )}
 
+            {isBuffering && isPlaying && (
+              <span className="flex items-center gap-1 text-[11px] text-amber-300 font-medium">
+                <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                Buffering...
+              </span>
+            )}
+
             <span className="hidden sm:inline text-slate-500 text-[11px]">
               &bull; Server Version: v{playback?.playbackVersion ?? 1}
             </span>
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            <Radio className={cn('w-3.5 h-3.5', isPlaying && 'text-cyan-400 animate-pulse')} />
-            <span className="hidden sm:inline">Authoritative Sync Engine</span>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            {/* View Switcher: Lyrics vs Visualizer */}
+            {currentItem && (
+              <div className="flex items-center bg-white/5 p-0.5 rounded-lg border border-white/10">
+                <button
+                  type="button"
+                  data-testid="stage-view-lyrics-button"
+                  onClick={() => setStageView('lyrics')}
+                  className={cn(
+                    'flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors',
+                    stageView === 'lyrics'
+                      ? 'bg-violet-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  )}
+                  title="Switch to Timed Lyrics Stage"
+                >
+                  <Mic2 className="w-3 h-3" />
+                  <span>Lyrics</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="stage-view-visualizer-button"
+                  onClick={() => setStageView('visualizer')}
+                  className={cn(
+                    'flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors',
+                    stageView === 'visualizer'
+                      ? 'bg-violet-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  )}
+                  title="Switch to Audio Wave Visualizer"
+                >
+                  <Activity className="w-3 h-3" />
+                  <span>Wave</span>
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5">
+              <Radio className={cn('w-3.5 h-3.5', isPlaying && 'text-cyan-400 animate-pulse')} />
+              <span className="hidden md:inline">Authoritative Sync Engine</span>
+            </div>
           </div>
         </div>
 
-        {/* Central Stage Visualizer & Lyrics Placeholder */}
-        <div className="my-auto text-center space-y-4 py-8 relative z-10">
+        {/* Central Stage Area: Either LyricsStage or Visualizer */}
+        <div className="my-auto py-4 relative z-10 w-full">
           {currentItem ? (
-            <>
-              {/* Animated Soundwave Visualizer Bars */}
-              <div className="flex items-center justify-center gap-1.5 h-12 mb-2">
-                {[40, 75, 55, 90, 65, 100, 80, 50, 85, 60, 95, 70, 45, 80, 60].map((h, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      height: isPlaying ? `${h}%` : '20%',
-                      animationDelay: `${(i * 0.08).toFixed(2)}s`,
-                    }}
-                    className={cn(
-                      'w-1.5 rounded-full transition-all duration-300',
-                      isPlaying
-                        ? 'bg-gradient-to-t from-violet-600 via-fuchsia-500 to-cyan-400 animate-pulse'
-                        : 'bg-white/10'
-                    )}
-                  />
-                ))}
-              </div>
+            stageView === 'lyrics' ? (
+              <LyricsStage
+                songId={currentItem.song.id}
+                currentPositionMs={currentPositionMs}
+                isPlaying={isPlaying}
+                className="max-h-[220px]"
+              />
+            ) : (
+              /* Visualizer Mode */
+              <div className="text-center space-y-4 py-4">
+                <div className="flex items-center justify-center gap-1.5 h-12 mb-2">
+                  {[40, 75, 55, 90, 65, 100, 80, 50, 85, 60, 95, 70, 45, 80, 60].map((h, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        height: isPlaying ? `${h}%` : '20%',
+                        animationDelay: `${(i * 0.08).toFixed(2)}s`,
+                      }}
+                      className={cn(
+                        'w-1.5 rounded-full transition-all duration-300',
+                        isPlaying
+                          ? 'bg-gradient-to-t from-violet-600 via-fuchsia-500 to-cyan-400 animate-pulse'
+                          : 'bg-white/10'
+                      )}
+                    />
+                  ))}
+                </div>
 
-              {/* Central Performing Track Display */}
-              <div className="inline-block p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-violet-600/15 via-cyan-500/10 to-violet-600/15 border border-violet-500/30 shadow-inner max-w-xl mx-auto">
-                <p className="text-xl sm:text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-violet-300 via-white to-cyan-300 tracking-wide truncate">
-                  {currentItem.song.title}
-                </p>
-                <p className="text-sm font-medium text-slate-300 mt-1">
-                  {currentItem.song.artist}
+                <div className="inline-block p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-violet-600/15 via-cyan-500/10 to-violet-600/15 border border-violet-500/30 shadow-inner max-w-xl mx-auto">
+                  <p className="text-xl sm:text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-violet-300 via-white to-cyan-300 tracking-wide truncate">
+                    {currentItem.song.title}
+                  </p>
+                  <p className="text-sm font-medium text-slate-300 mt-1">
+                    {currentItem.song.artist}
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+                  <Volume2 className="w-3 h-3 text-slate-500" />
+                  <span>
+                    Synchronized backing audio player &bull; Native browser HTMLAudioElement
+                  </span>
                 </p>
               </div>
-
-              {/* Licensed Provider Notice */}
-              <p className="text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
-                <Volume2 className="w-3 h-3 text-slate-500" />
-                <span>
-                  Synchronized karaoke playback timeline &bull; Audio streaming engine foundation
-                </span>
-              </p>
-            </>
+            )
           ) : (
             /* Empty Stage Callout */
-            <div className="space-y-3 py-6">
+            <div className="space-y-3 py-6 text-center">
               <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 mx-auto flex items-center justify-center shadow-lg">
                 <Disc3 className="w-8 h-8 text-violet-400/80" />
               </div>
@@ -223,7 +343,7 @@ export function KaraokePlayer({
           </div>
         </div>
 
-        {/* Error overlay if playback encountered an error */}
+        {/* Error overlay if playback encountered a server error */}
         {status === 'error' && (
           <div
             data-testid="playback-error-banner"
@@ -252,13 +372,17 @@ export function KaraokePlayer({
       {/* Current Song Details Panel */}
       <CurrentSongPanel item={currentItem} isPlaying={isPlaying} />
 
-      {/* Authoritative Playback Controls */}
+      {/* Authoritative Playback Controls with Independent Backing Audio Controls */}
       <PlaybackControls
         status={status}
         currentPositionMs={currentPositionMs}
         durationMs={durationMs}
         canControlPlayback={canControlPlayback}
         isMutating={isMutating}
+        volume={volume}
+        isMuted={isMuted}
+        onVolumeChange={setVolume}
+        onToggleMute={toggleMute}
         onPlay={onPlay}
         onPause={onPause}
         onSkip={onSkip}

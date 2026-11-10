@@ -101,6 +101,18 @@ export function QueueItem({
                 item.requestedBy.displayName || item.requestedBy.username
               )}
             </span>
+            <span>&bull;</span>
+            {item.song.audioAvailability === 'audio_available' ? (
+              <span className="text-[10px] text-emerald-400 font-medium shrink-0">Audio</span>
+            ) : (
+              <span className="text-[10px] text-amber-400/80 font-medium shrink-0">Meta only</span>
+            )}
+            {item.song.lyricsAvailability === 'timed_available' && (
+              <>
+                <span>&bull;</span>
+                <span className="text-[10px] text-cyan-400 font-medium shrink-0">Lyrics</span>
+              </>
+            )}
           </div>
         </div>
       </div>

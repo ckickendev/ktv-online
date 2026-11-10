@@ -9,6 +9,8 @@ import {
   RotateCw,
   Square,
   Lock,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PlaybackStatus } from '@ktv/contracts';
@@ -19,6 +21,10 @@ interface PlaybackControlsProps {
   durationMs: number;
   canControlPlayback: boolean;
   isMutating?: boolean;
+  volume?: number;
+  isMuted?: boolean;
+  onVolumeChange?: (vol: number) => void;
+  onToggleMute?: () => void;
   onPlay: () => void;
   onPause: () => void;
   onSkip: () => void;
@@ -33,6 +39,10 @@ export function PlaybackControls({
   durationMs,
   canControlPlayback,
   isMutating = false,
+  volume = 0.8,
+  isMuted = false,
+  onVolumeChange,
+  onToggleMute,
   onPlay,
   onPause,
   onSkip,
@@ -85,7 +95,7 @@ export function PlaybackControls({
             title="Only the host or current active singer can control playback"
           >
             <Lock className="w-3 h-3 text-slate-400" />
-            Listener Mode (Host/Singer Only)
+            Listener Mode
           </span>
         )}
       </div>
@@ -156,19 +166,48 @@ export function PlaybackControls({
         </button>
       </div>
 
-      {/* Right: Status badge */}
-      <div className="flex items-center gap-1.5 text-xs text-slate-400">
-        <span
-          className={cn(
-            'w-2 h-2 rounded-full',
-            status === 'playing' && 'bg-emerald-400 animate-pulse',
-            status === 'paused' && 'bg-amber-400',
-            status === 'loading' && 'bg-cyan-400 animate-ping',
-            status === 'idle' && 'bg-slate-500',
-            status === 'error' && 'bg-rose-500'
-          )}
-        />
-        <span className="capitalize font-mono text-[11px] text-slate-300">{status}</span>
+      {/* Right: Backing Track Volume Slider & Status Badge */}
+      <div className="flex items-center gap-3">
+        {/* Independent Karaoke Backing Track Volume */}
+        <div className="flex items-center gap-1.5 bg-white/5 px-2.5 py-1 rounded-xl border border-white/5">
+          <button
+            type="button"
+            onClick={onToggleMute}
+            title={isMuted ? 'Unmute backing audio' : 'Mute backing audio'}
+            className="text-slate-400 hover:text-white transition-colors"
+          >
+            {isMuted || volume === 0 ? (
+              <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+            )}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={isMuted ? 0 : volume}
+            onChange={(e) => onVolumeChange?.(parseFloat(e.target.value))}
+            title={`Backing audio volume: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+            className="w-16 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-violet-400"
+          />
+        </div>
+
+        {/* Server Playback Status */}
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <span
+            className={cn(
+              'w-2 h-2 rounded-full',
+              status === 'playing' && 'bg-emerald-400 animate-pulse',
+              status === 'paused' && 'bg-amber-400',
+              status === 'loading' && 'bg-cyan-400 animate-ping',
+              status === 'idle' && 'bg-slate-500',
+              status === 'error' && 'bg-rose-500'
+            )}
+          />
+          <span className="capitalize font-mono text-[11px] text-slate-300">{status}</span>
+        </div>
       </div>
     </div>
   );

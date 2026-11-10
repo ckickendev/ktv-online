@@ -51,6 +51,30 @@ const SongSchema = new Schema<ISongDocument>(
       default: 'fixture_mock',
       index: true,
     },
+    audioAvailability: {
+      type: String,
+      enum: ['metadata_only', 'audio_available', 'audio_unavailable', 'restricted'],
+      default: 'metadata_only',
+      index: true,
+    },
+    lyricsAvailability: {
+      type: String,
+      enum: ['timed_available', 'text_only', 'unavailable'],
+      default: 'unavailable',
+      index: true,
+    },
+    licenseClassification: {
+      type: String,
+      enum: [
+        'licensed_commercial',
+        'royalty_free',
+        'public_domain',
+        'user_supplied_authorized',
+        'development_fixture',
+      ],
+      default: 'development_fixture',
+      index: true,
+    },
   },
   {
     timestamps: true,

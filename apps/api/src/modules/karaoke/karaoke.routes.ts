@@ -13,6 +13,29 @@ karaokeRoutes.get('/songs/search', optionalAuth, (req, res, next) => {
   karaokeController.searchSongs(req, res, next);
 });
 
+// Get song details by ID
+karaokeRoutes.get('/songs/:songId', optionalAuth, (req, res, next) => {
+  karaokeController.getSongById(req, res, next);
+});
+
+// Resolve playable audio source for a song
+karaokeRoutes.post('/songs/:songId/audio/resolve', optionalAuth, (req, res, next) => {
+  karaokeController.resolveAudioSource(req, res, next);
+});
+karaokeRoutes.get('/songs/:songId/audio/resolve', optionalAuth, (req, res, next) => {
+  karaokeController.resolveAudioSource(req, res, next);
+});
+
+// Stream audio content for a song
+karaokeRoutes.get('/songs/:songId/audio/stream', (req, res, next) => {
+  karaokeController.streamAudio(req, res, next);
+});
+
+// Get timed lyrics for a song
+karaokeRoutes.get('/songs/:songId/lyrics', optionalAuth, (req, res, next) => {
+  karaokeController.getLyrics(req, res, next);
+});
+
 // ==========================================
 // ROOM QUEUE
 // ==========================================

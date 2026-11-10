@@ -256,4 +256,50 @@ export interface ISongCatalogProvider {
 }
 ```
 
-The system uses `FixtureCatalogProvider` for development and testing with 12 royalty-free mock sample tracks. The domain architecture allows swapping in licensed commercial providers without modifying room queue logic or data models.
+The system uses `FixtureCatalogProvider` for development and testing with sample tracks. The domain architecture allows swapping in licensed commercial providers without modifying room queue logic or data models.
+
+---
+
+## 8. Audio Source Abstraction & Streaming Architecture (Sprint 2.5)
+
+### 8.1 Core Provider Interface
+
+Separates track catalog metadata from media stream resolution:
+
+```typescript
+export interface IKaraokeAudioSourceProvider {
+  readonly providerId: string;
+  supports(song: ISongDocument): boolean;
+  resolvePlayback(song: ISongDocument): Promise<ResolvedAudioSourceDto>;
+  getAudioStream?(song: ISongDocument): Promise<{
+    stream: NodeJS.ReadableStream;
+    contentLength: number;
+    mimeType: string;
+    isSeekable: boolean;
+  }>;
+}
+```
+
+### 8.2 Track Availability Semantics
+
+- `audio_available`: Valid, playable backing audio file exists. Eligible for playback.
+- `metadata_only`: Track details exist for catalog browsing, but no audio stream is attached. Attempting to start/play this track returns `SONG_AUDIO_UNAVAILABLE`.
+- `audio_unavailable`: Temporarily or permanently disabled.
+- `restricted`: Blocked due to licensing or room policy.
+
+### 8.3 Development Fixture Audio Streaming
+
+Development environments utilize an in-memory pure PCM stereo WAV 44.1kHz 16-bit procedural generator (`fixture-audio.generator.ts`), providing four authorized, royalty-free and public domain tracks (`fix_auld_lang_syne`, `fix_amazing_grace`, `fix_scarborough_fair`, `fix_synth_groove`) with full HTTP 206 Partial Content range streaming.
+
+---
+
+## 9. Synchronized Lyrics & Player Engine (Sprint 2.5)
+
+1. **Timed Lyrics Abstraction (`ILyricsProvider`)**: On-demand retrieval (`GET /api/v1/songs/:songId/lyrics`) decoupled from realtime WebSocket updates.
+2. **Deterministic Synchronization**: Active lyric lines and proportional progress sweeps are derived directly from the server-authoritative playback position (`currentPositionMs`).
+3. **Three-Tier Drift Correction**:
+   - $< 300$ ms: Ignored.
+   - $300 - 1500$ ms: Tempo adjustment (`playbackRate = 1.05 / 0.95`).
+   - $> 1500$ ms: Hard seek to server anchor.
+4. **Autoplay Handling**: Rejection on non-interacted browser tabs displays an accessible "Listen Now" unlock banner without corrupting server room state.
+5. **LiveKit Voice Decoupling**: Backing audio streams strictly through browser `HTMLAudioElement` and is never mixed into LiveKit microphone publishing tracks.

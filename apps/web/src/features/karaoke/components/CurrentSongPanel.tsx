@@ -44,7 +44,8 @@ export function CurrentSongPanel({ item, isPlaying = false, className }: Current
   }
 
   const { song, requestedBy } = item;
-  const isFixture = song.mediaAvailability === 'fixture_mock';
+  const isAudioAvailable = song.audioAvailability === 'audio_available';
+  const hasTimedLyrics = song.lyricsAvailability === 'timed_available';
 
   return (
     <div
@@ -80,15 +81,56 @@ export function CurrentSongPanel({ item, isPlaying = false, className }: Current
 
         {/* Title, Artist, & Requester Metadata */}
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-base font-bold text-white tracking-wide truncate">{song.title}</h3>
-            {isFixture && (
+            
+            {/* Audio Availability Badge */}
+            {isAudioAvailable ? (
               <span
-                data-testid="fixture-catalog-badge"
-                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/25 shrink-0"
-                title="Royalty-free development fixture track"
+                data-testid="audio-available-badge"
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0"
+                title="Authoritative backing audio track available"
               >
-                Fixture Track
+                Backing Audio
+              </span>
+            ) : (
+              <span
+                data-testid="audio-unavailable-badge"
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0"
+                title="Metadata only — no audio source attached"
+              >
+                Metadata Only
+              </span>
+            )}
+
+            {/* Timed Lyrics Badge */}
+            {hasTimedLyrics && (
+              <span
+                data-testid="lyrics-available-badge"
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0"
+                title="Synchronized timed lyrics available"
+              >
+                Timed Lyrics
+              </span>
+            )}
+
+            {/* License Classification Badge */}
+            {song.licenseClassification === 'development_fixture' && (
+              <span
+                data-testid="license-fixture-badge"
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 shrink-0"
+                title="Development Fixture Track"
+              >
+                Dev Fixture
+              </span>
+            )}
+            {song.licenseClassification === 'public_domain' && (
+              <span
+                data-testid="license-pd-badge"
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0"
+                title="Public Domain Track"
+              >
+                Public Domain
               </span>
             )}
           </div>
