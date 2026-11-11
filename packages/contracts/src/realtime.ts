@@ -112,6 +112,7 @@ export const SOCKET_EVENTS = {
     KARAOKE_PLAYBACK_COMMAND: 'karaoke:playback:command',
     KARAOKE_STATE_REQUEST: 'karaoke:state:request',
     KARAOKE_CLOCK_SYNC: 'karaoke:clock:sync',
+    STAGE_REACTION_SEND: 'stage:reaction:send',
   },
   SERVER: {
     PRESENCE_SNAPSHOT: 'room:presence:snapshot',
@@ -132,6 +133,7 @@ export const SOCKET_EVENTS = {
     KARAOKE_SNAPSHOT: 'karaoke:snapshot',
     KARAOKE_CLOCK_SYNC_RESPONSE: 'karaoke:clock:sync:response',
     KARAOKE_ERROR: 'karaoke:error',
+    STAGE_REACTION_NEW: 'stage:reaction:new',
     ERROR: 'error',
   },
 } as const;

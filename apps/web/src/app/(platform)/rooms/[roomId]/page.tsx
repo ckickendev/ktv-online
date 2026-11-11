@@ -45,7 +45,7 @@ import { useRoomState } from '@/hooks/use-room-state';
 import { useRoomChat } from '@/hooks/use-room-chat';
 import { useVoiceClient, VoiceControls } from '@/features/voice';
 import { useRoomAtmosphere } from '@/features/rooms/atmosphere';
-import { useKaraoke, KaraokePlayer, RoomSongQueue, SongSearchDialog } from '@/features/karaoke';
+import { useKaraoke, useStageReactions, KaraokePlayer, RoomSongQueue, SongSearchDialog } from '@/features/karaoke';
 import { cn } from '@/lib/utils';
 
 export default function RoomDetailPage() {
@@ -129,6 +129,19 @@ export default function RoomDetailPage() {
     isHost,
     isMember,
     roomStatus: room?.status,
+  });
+
+  // Real-time Stage Audience Reactions (Sprint 3.3)
+  const stageReactions = useStageReactions(roomId, {
+    enabled: Boolean(
+      roomId &&
+        isAuthenticated &&
+        viewer?.isMember &&
+        room?.status !== 'closed' &&
+        !stateIsKicked &&
+        !isKicked
+    ),
+    currentUserId: currentUser?.id,
   });
 
   // Authoritative LiveKit Voice speaking & connection detection for stage performer
@@ -622,6 +635,9 @@ export default function RoomDetailPage() {
             onOpenSearch={() => setIsSearchOpen(true)}
             onOpenEqSettings={handleOpenEqModal}
             atmosphereStyles={atmosphere.activeConfig.styles}
+            onSendReaction={stageReactions.sendReaction}
+            activeReactions={stageReactions.particles}
+            prefersReducedMotion={stageReactions.prefersReducedMotion}
           />
         </div>
 

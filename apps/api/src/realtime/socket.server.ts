@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { socketAuthMiddleware, AuthenticatedSocketData } from './socket.auth.js';
 import { registerRoomEvents, getRoomChannel } from './room.events.js';
 import { registerChatEvents } from './chat.events.js';
+import { registerStageReactionEvents } from './stage-reaction.events.js';
 import {
   registerKaraokeEvents,
   broadcastKaraokeQueueUpdated,
@@ -59,6 +60,9 @@ export function createSocketServer(
 
     // Register karaoke queue and playback event handlers
     registerKaraokeEvents(io, socket);
+
+    // Register ephemeral stage reactions
+    registerStageReactionEvents(io, socket);
   });
 
   ioInstance = io;

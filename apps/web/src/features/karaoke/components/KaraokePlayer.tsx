@@ -12,13 +12,14 @@ import {
   Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PlaybackStateDto, RoomQueueItemDto, RoomQueueRequesterDto } from '@ktv/contracts';
+import { PlaybackStateDto, RoomQueueItemDto, RoomQueueRequesterDto, StageReactionEmoji } from '@ktv/contracts';
 import { CurrentSongPanel, formatMsToTime } from './CurrentSongPanel';
 import { PlaybackControls } from './PlaybackControls';
 import { SingerTurnIndicator } from './SingerTurnIndicator';
 import { LyricsStage } from './LyricsStage';
 import { useKaraokeAudio } from '../hooks/use-karaoke-audio';
 import { KaraokeEqPreset } from '../services/karaoke-equalizer';
+import type { StageReactionParticle } from '../hooks/use-stage-reactions';
 
 interface KaraokePlayerProps {
   playback: PlaybackStateDto | undefined;
@@ -52,6 +53,9 @@ interface KaraokePlayerProps {
   onOpenSearch?: () => void;
   onOpenEqSettings?: () => void;
   currentEqPreset?: KaraokeEqPreset;
+  onSendReaction?: (emoji: StageReactionEmoji) => void;
+  activeReactions?: StageReactionParticle[];
+  prefersReducedMotion?: boolean;
   className?: string;
 }
 
@@ -81,6 +85,9 @@ export function KaraokePlayer({
   onOpenSearch,
   onOpenEqSettings,
   currentEqPreset,
+  onSendReaction,
+  activeReactions,
+  prefersReducedMotion,
   className,
 }: KaraokePlayerProps) {
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -148,6 +155,9 @@ export function KaraokePlayer({
         isSingerVoiceConnected={isSingerVoiceConnected}
         isSingerMuted={isSingerMuted}
         onOpenSearch={onOpenSearch}
+        onSendReaction={onSendReaction}
+        activeReactions={activeReactions}
+        prefersReducedMotion={prefersReducedMotion}
       />
 
       {/* Autoplay Blocked Notification Banner */}

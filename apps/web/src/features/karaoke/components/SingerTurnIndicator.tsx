@@ -4,7 +4,6 @@ import React, { useState, useCallback } from 'react';
 import Image from 'next/image';
 import {
   Mic,
-  MicOff,
   Sparkles,
   BellRing,
   Music2,
@@ -13,7 +12,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { RoomQueueItemDto, RoomQueueRequesterDto } from '@ktv/contracts';
+import { RoomQueueItemDto, RoomQueueRequesterDto, StageReactionEmoji } from '@ktv/contracts';
+import { StageReactionParticle } from '../hooks/use-stage-reactions';
 
 export interface SingerTurnIndicatorProps {
   isCurrentSinger: boolean;
@@ -30,15 +30,12 @@ export interface SingerTurnIndicatorProps {
   isSingerMuted?: boolean;
   onOpenSearch?: () => void;
   className?: string;
+  onSendReaction?: (emoji: StageReactionEmoji) => void;
+  activeReactions?: StageReactionParticle[];
+  prefersReducedMotion?: boolean;
 }
 
-interface FloatingParticle {
-  id: number;
-  emoji: string;
-  x: number; // percentage across container
-}
-
-const CHEER_EMOJIS = ['👏', '🔥', '❤️', '🎉', '🎤'];
+const CHEER_EMOJIS: StageReactionEmoji[] = ['👏', '🔥', '❤️', '🎉', '🎤'];
 
 export function SingerTurnIndicator({
   isCurrentSinger,
@@ -55,18 +52,39 @@ export function SingerTurnIndicator({
   isSingerMuted = false,
   onOpenSearch,
   className,
+  onSendReaction,
+  activeReactions,
+  prefersReducedMotion = false,
 }: SingerTurnIndicatorProps) {
-  const [particles, setParticles] = useState<FloatingParticle[]>([]);
+  const [localParticles, setLocalParticles] = useState<StageReactionParticle[]>([]);
 
-  const handleCheer = useCallback((emoji: string) => {
-    const id = Date.now() + Math.random();
-    const x = 30 + Math.random() * 40; // 30% to 70%
-    setParticles((prev) => [...prev.slice(-15), { id, emoji, x }]);
+  const handleCheer = useCallback(
+    (emoji: StageReactionEmoji) => {
+      if (onSendReaction) {
+        onSendReaction(emoji);
+      } else {
+        // Fallback local particle if not connected to shared reactions
+        const id = `local_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const x = 30 + Math.random() * 40;
+        const newParticle: StageReactionParticle = {
+          id,
+          emoji,
+          x,
+          senderName: 'You',
+          isSelf: true,
+        };
+        setLocalParticles((prev) => [...prev.slice(-15), newParticle]);
 
-    setTimeout(() => {
-      setParticles((prev) => prev.filter((p) => p.id !== id));
-    }, 2000);
-  }, []);
+        setTimeout(() => {
+          setLocalParticles((prev) => prev.filter((p) => p.id !== id));
+        }, 2000);
+      }
+    },
+    [onSendReaction]
+  );
+
+  const displayParticles = activeReactions ?? localParticles;
+  const latestParticle = displayParticles[displayParticles.length - 1];
 
   const effectiveSingerName =
     currentSinger?.displayName || currentSinger?.username || currentSingerName;
@@ -89,16 +107,36 @@ export function SingerTurnIndicator({
   return (
     <div className={cn('relative w-full overflow-hidden select-none', className)}>
       {/* Floating Stage Particles Overlay */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
-        {particles.map((particle) => (
-          <span
+      <div
+        className="absolute inset-0 pointer-events-none overflow-hidden z-20"
+        aria-hidden="true"
+      >
+        {displayParticles.map((particle) => (
+          <div
             key={particle.id}
             style={{ left: `${particle.x}%` }}
-            className="absolute bottom-1 text-2xl animate-float-fade"
+            className={cn(
+              'absolute bottom-2 flex flex-col items-center pointer-events-none select-none transition-transform',
+              prefersReducedMotion ? 'animate-pulse-fade' : 'animate-float-fade'
+            )}
           >
-            {particle.emoji}
-          </span>
+            <span className="text-2xl sm:text-3xl drop-shadow-md">
+              {particle.emoji}
+            </span>
+            {particle.senderName && !particle.isSelf && (
+              <span className="text-[10px] text-white/90 font-medium px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs border border-white/10 shadow-xs truncate max-w-[80px]">
+                {particle.senderName}
+              </span>
+            )}
+          </div>
         ))}
+      </div>
+
+      {/* Screen Reader Live Region for Audience Reactions */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {latestParticle
+          ? `${latestParticle.senderName} cheered with ${latestParticle.emoji}`
+          : ''}
       </div>
 
       {/* 1. YOU ARE ON STAGE (CURRENT SINGER VIEW) */}
@@ -149,19 +187,13 @@ export function SingerTurnIndicator({
                   <span className="text-sm font-bold text-white tracking-wide">
                     You are in the Spotlight!
                   </span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-violet-500/20 text-violet-300 border border-violet-500/30">
-                    Lead Vocal
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-500/30 text-violet-200 border border-violet-400/30">
+                    Lead Singer
                   </span>
                   {isSingerSpeaking && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse">
-                      <Radio className="w-2.5 h-2.5 text-emerald-400" />
-                      Live Audio
-                    </span>
-                  )}
-                  {isSingerMuted && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                      <MicOff className="w-2.5 h-2.5 text-rose-400" />
-                      Mic Muted
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      <Radio className="w-2.5 h-2.5 animate-pulse text-emerald-400" />
+                      Live
                     </span>
                   )}
                 </div>
@@ -173,7 +205,7 @@ export function SingerTurnIndicator({
               </div>
             </div>
 
-            {/* Next Up Teaser or Cheer Bar */}
+            {/* Next Up Teaser & Stage Cheers */}
             <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
               {nextUpItem && (
                 <div className="hidden lg:flex flex-col items-end text-right pr-2 border-r border-white/10">
@@ -183,14 +215,19 @@ export function SingerTurnIndicator({
                   </span>
                 </div>
               )}
-              <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10">
+              <div
+                role="toolbar"
+                aria-label="Stage cheer reactions"
+                className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10"
+              >
                 {CHEER_EMOJIS.map((emoji) => (
                   <button
                     key={emoji}
                     type="button"
                     onClick={() => handleCheer(emoji)}
-                    className="p-1 hover:bg-white/10 rounded-lg text-sm transition-transform active:scale-125"
+                    className="w-11 h-11 sm:w-8 sm:h-8 min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center hover:bg-white/15 rounded-xl text-lg sm:text-sm transition-all active:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
                     title={`Cheer with ${emoji}`}
+                    aria-label={`Cheer with ${emoji}`}
                   >
                     {emoji}
                   </button>
@@ -228,14 +265,19 @@ export function SingerTurnIndicator({
             </div>
 
             {/* Quick Cheer / Stage Audience Interaction */}
-            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 self-end sm:self-auto shrink-0">
+            <div
+              role="toolbar"
+              aria-label="Stage cheer reactions"
+              className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 self-end sm:self-auto shrink-0"
+            >
               {CHEER_EMOJIS.map((emoji) => (
                 <button
                   key={emoji}
                   type="button"
                   onClick={() => handleCheer(emoji)}
-                  className="p-1 hover:bg-white/10 rounded-lg text-sm transition-transform active:scale-125"
+                  className="w-11 h-11 sm:w-8 sm:h-8 min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center hover:bg-white/15 rounded-xl text-lg sm:text-sm transition-all active:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                   title={`Cheer with ${emoji}`}
+                  aria-label={`Cheer with ${emoji}`}
                 >
                   {emoji}
                 </button>
@@ -336,14 +378,19 @@ export function SingerTurnIndicator({
               )}
 
               {/* Cheer Pills */}
-              <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10">
+              <div
+                role="toolbar"
+                aria-label="Audience cheer reactions"
+                className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10"
+              >
                 {CHEER_EMOJIS.map((emoji) => (
                   <button
                     key={emoji}
                     type="button"
                     onClick={() => handleCheer(emoji)}
-                    className="p-1 hover:bg-white/10 rounded-lg text-sm transition-transform active:scale-125"
+                    className="w-11 h-11 sm:w-8 sm:h-8 min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center hover:bg-white/15 rounded-xl text-lg sm:text-sm transition-all active:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
                     title={`Cheer ${effectiveSingerName} with ${emoji}`}
+                    aria-label={`Cheer ${effectiveSingerName} with ${emoji}`}
                   >
                     {emoji}
                   </button>

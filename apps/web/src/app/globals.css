@@ -123,3 +123,32 @@ body {
 .animate-float-fade {
   animation: floatFade 1.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
+
+@keyframes pulseFade {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  80% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.animate-pulse-fade {
+  animation: pulseFade 1.8s ease-in-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-fade {
+    animation: pulseFade 1.8s ease-in-out forwards !important;
+  }
+}
