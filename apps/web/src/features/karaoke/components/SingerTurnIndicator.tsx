@@ -29,6 +29,8 @@ export interface SingerTurnIndicatorProps {
   isSingerSpeaking?: boolean;
   isSingerVoiceConnected?: boolean;
   isSingerMuted?: boolean;
+  durationMs?: number;
+  currentPositionMs?: number;
   onOpenSearch?: () => void;
   className?: string;
   onSendReaction?: (emoji: StageReactionEmoji) => void;
@@ -52,6 +54,8 @@ export function SingerTurnIndicator({
   isSingerSpeaking = false,
   isSingerVoiceConnected = false,
   isSingerMuted = false,
+  durationMs,
+  currentPositionMs,
   onOpenSearch,
   className,
   onSendReaction,
@@ -106,6 +110,10 @@ export function SingerTurnIndicator({
     nextUpItem?.requestedBy?.displayName ||
     nextUpItem?.requestedBy?.username ||
     null;
+
+  const isEndingSoon = Boolean(
+    durationMs && currentPositionMs && durationMs > 20000 && durationMs - currentPositionMs <= 15000
+  );
 
   return (
     <div className={cn('relative w-full overflow-hidden select-none', className)}>
@@ -199,6 +207,12 @@ export function SingerTurnIndicator({
                       Live
                     </span>
                   )}
+                  {isEndingSoon && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse">
+                      <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                      Wrapping Up
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-violet-200/80 mt-0.5 truncate">
                   {performerState === 'paused'
@@ -211,9 +225,14 @@ export function SingerTurnIndicator({
             {/* Next Up Teaser & Stage Cheers */}
             <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
               {nextUpItem && (
-                <div className="hidden lg:flex flex-col items-end text-right pr-2 border-r border-white/10">
-                  <span className="text-[10px] uppercase font-semibold text-slate-400">Up Next</span>
-                  <span className="text-xs font-medium text-slate-200 truncate max-w-[140px]">
+                <div className="hidden lg:flex flex-col items-end text-right pr-2 border-r border-white/10 max-w-[190px]">
+                  <span className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1 truncate w-full justify-end">
+                    <span>Up Next</span>
+                    <span className="text-slate-400 font-normal truncate">
+                      &bull; {nextUpItem.song.title}
+                    </span>
+                  </span>
+                  <span className="text-xs font-medium text-slate-200 truncate max-w-[160px]">
                     {nextSingerName || 'Next Performer'}
                   </span>
                 </div>
@@ -359,6 +378,12 @@ export function SingerTurnIndicator({
                       Singing
                     </span>
                   )}
+                  {isEndingSoon && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse">
+                      <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                      Wrapping Up
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5">
                   {isDedicatedSinger && currentRequester && (
@@ -383,9 +408,14 @@ export function SingerTurnIndicator({
             {/* Stage Audience Cheer Buttons & Up Next */}
             <div className="flex items-center gap-3 shrink-0 ml-auto sm:ml-0">
               {nextUpItem && (
-                <div className="hidden md:flex flex-col items-end text-right pr-2 border-r border-white/10">
-                  <span className="text-[10px] uppercase font-semibold text-slate-500">Up Next</span>
-                  <span className="text-xs text-slate-300 font-medium truncate max-w-[140px]">
+                <div className="hidden md:flex flex-col items-end text-right pr-2 border-r border-white/10 max-w-[190px]">
+                  <span className="text-[10px] uppercase font-semibold text-slate-500 flex items-center gap-1 truncate w-full justify-end">
+                    <span>Up Next</span>
+                    <span className="text-slate-400 font-normal truncate">
+                      &bull; {nextUpItem.song.title}
+                    </span>
+                  </span>
+                  <span className="text-xs text-slate-300 font-medium truncate max-w-[160px]">
                     {nextSingerName || 'Next Performer'}
                   </span>
                 </div>

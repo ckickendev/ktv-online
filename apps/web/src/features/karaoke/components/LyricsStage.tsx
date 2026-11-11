@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Music, Mic2 } from 'lucide-react';
+import { Music, Mic2, Activity } from 'lucide-react';
 import { SongLyricsDto, TimedLyricLine, LyricsFontSize } from '@ktv/contracts';
 import { karaokeApi } from '../api/karaoke-api';
 import { queryKeys } from '@/hooks/queries/query-keys';
@@ -13,6 +13,7 @@ export interface LyricsStageProps {
   currentPositionMs: number;
   isPlaying: boolean;
   fontSize?: LyricsFontSize;
+  onSwitchToVisualizer?: () => void;
   className?: string;
 }
 
@@ -68,10 +69,10 @@ const LyricLineRow = React.memo(
         className={cn(
           'transition-all duration-300 py-1.5 px-3 rounded-xl mx-auto max-w-2xl',
           isActive
-            ? cn('scale-105 font-black drop-shadow-md', activeTextClass)
+            ? cn('scale-105 font-black drop-shadow-md bg-black/30 backdrop-blur-xs shadow-xs', activeTextClass)
             : isPast
             ? cn('text-slate-500 font-medium opacity-40', inactiveTextClass)
-            : cn('text-slate-300/80 font-semibold opacity-75', inactiveTextClass)
+            : cn('text-slate-200 font-semibold opacity-75 drop-shadow-xs', inactiveTextClass)
         )}
       >
         {/* Active Karaoke Lyric with word-level timing or line-level progress sweep */}
@@ -178,6 +179,7 @@ export function LyricsStage({
   currentPositionMs,
   isPlaying,
   fontSize = 'normal',
+  onSwitchToVisualizer,
   className,
 }: LyricsStageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -264,7 +266,7 @@ export function LyricsStage({
     return (
       <div
         data-testid="lyrics-unavailable-state"
-        className={cn('flex flex-col items-center justify-center py-12 px-4 text-center gap-3', className)}
+        className={cn('flex flex-col items-center justify-center py-10 px-4 text-center gap-3', className)}
       >
         <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shadow-inner">
           <Mic2 className="w-6 h-6 text-slate-400" />
@@ -275,6 +277,17 @@ export function LyricsStage({
             Synchronized lyrics are not available for this track. Sing along with the backing audio!
           </p>
         </div>
+        {onSwitchToVisualizer && (
+          <button
+            type="button"
+            data-testid="switch-to-visualizer-btn"
+            onClick={onSwitchToVisualizer}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-600/20 hover:bg-violet-600/30 text-violet-200 border border-violet-500/30 text-xs font-semibold transition-all active:scale-95 mt-1"
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>Switch to Audio Wave Visualizer</span>
+          </button>
+        )}
       </div>
     );
   }

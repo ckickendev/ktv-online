@@ -10,6 +10,7 @@ import {
   Mic2,
   Activity,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -152,7 +153,14 @@ export function KaraokePlayer({
 
   const isPlaying = status === 'playing';
   const isPaused = status === 'paused';
-  const isIdle = status === 'idle' || status === 'ended';
+  const isPreparing =
+    status === 'loading' ||
+    performerState === 'preparing' ||
+    executionState === 'resolving_source' ||
+    executionState === 'loading';
+  const isEnded = status === 'ended' || performerState === 'ended';
+  const isEndingSoon = isPlaying && durationMs > 20000 && durationMs - currentPositionMs <= 15000;
+  const isIdle = status === 'idle' || isEnded;
 
   // Handle click on progress bar for seeking
   const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -185,6 +193,8 @@ export function KaraokePlayer({
         isSingerSpeaking={isSingerSpeaking}
         isSingerVoiceConnected={isSingerVoiceConnected}
         isSingerMuted={isSingerMuted}
+        durationMs={durationMs}
+        currentPositionMs={currentPositionMs}
         onOpenSearch={onOpenSearch}
         onSendReaction={onSendReaction}
         activeReactions={effectiveReactions}
@@ -272,20 +282,55 @@ export function KaraokePlayer({
         )}
 
         {/* Screen Top Status Bar */}
-        <div className="flex items-center justify-between text-xs text-slate-400 relative z-10">
-          <div className="flex items-center gap-2">
-            {isPlaying ? (
-              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/25 font-bold uppercase tracking-wider text-[10px]">
+        <div className="flex items-center justify-between text-xs text-slate-400 relative z-10 flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {isPreparing ? (
+              <span
+                data-testid="stage-status-preparing"
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/40 font-bold uppercase tracking-wider text-[10px]"
+              >
+                <Loader2 className="w-2.5 h-2.5 animate-spin text-violet-400" />
+                PREPARING
+              </span>
+            ) : isPlaying ? (
+              <span
+                data-testid="stage-status-on-air"
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/25 font-bold uppercase tracking-wider text-[10px]"
+              >
                 <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
                 ON AIR
               </span>
             ) : isPaused ? (
-              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/25 font-bold uppercase tracking-wider text-[10px]">
+              <span
+                data-testid="stage-status-paused"
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/25 font-bold uppercase tracking-wider text-[10px]"
+              >
                 PAUSED
               </span>
+            ) : isEnded ? (
+              <span
+                data-testid="stage-status-ended"
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-white/10 font-bold uppercase tracking-wider text-[10px]"
+              >
+                SONG ENDED
+              </span>
             ) : (
-              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/5 font-semibold text-[10px]">
+              <span
+                data-testid="stage-status-standby"
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/5 font-semibold text-[10px]"
+              >
                 STANDBY
+              </span>
+            )}
+
+            {isEndingSoon && (
+              <span
+                data-testid="stage-status-ending"
+                className="hidden xs:flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/35 font-bold uppercase tracking-wider text-[9px] animate-pulse"
+                title="Performance concluding soon"
+              >
+                <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                ENDING SOON
               </span>
             )}
 
@@ -298,6 +343,11 @@ export function KaraokePlayer({
               <span className="flex items-center gap-1 text-[11px] text-amber-300 font-medium">
                 <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
                 Buffering...
+              </span>
+            ) : isPreparing ? (
+              <span className="flex items-center gap-1 text-[11px] text-violet-300 font-medium">
+                <Loader2 className="w-3 h-3 animate-spin text-violet-400" />
+                Loading track...
               </span>
             ) : null}
 
@@ -369,6 +419,7 @@ export function KaraokePlayer({
                 currentPositionMs={currentPositionMs}
                 isPlaying={isPlaying}
                 fontSize={lyricsFontSize}
+                onSwitchToVisualizer={() => setStageView('visualizer')}
                 className="max-h-[220px]"
               />
             ) : (

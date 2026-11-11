@@ -150,6 +150,7 @@ export function RoomChatPanel({
           const isMe = currentUserId && message.senderId === currentUserId;
           const isSystem = message.messageType === 'system';
           const isMsgHost = message.senderRole === 'host';
+          const isMsgMod = (message.senderRole as string) === 'moderator';
 
           if (isSystem) {
             return (
@@ -178,7 +179,7 @@ export function RoomChatPanel({
                 <span
                   className={cn(
                     'font-medium',
-                    isMsgHost ? 'text-amber-400' : isMe ? 'text-pink-400' : 'text-slate-300'
+                    isMsgHost ? 'text-amber-400' : isMsgMod ? 'text-sky-400' : isMe ? 'text-pink-400' : 'text-slate-300'
                   )}
                 >
                   {message.senderUsername}
@@ -186,6 +187,11 @@ export function RoomChatPanel({
                 {isMsgHost && (
                   <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[9px] px-1 py-0.2 rounded font-semibold">
                     HOST
+                  </span>
+                )}
+                {isMsgMod && (
+                  <span className="bg-sky-500/10 text-sky-400 border border-sky-500/30 text-[9px] px-1 py-0.2 rounded font-semibold">
+                    MOD
                   </span>
                 )}
                 <span className="text-slate-500 text-[10px]">

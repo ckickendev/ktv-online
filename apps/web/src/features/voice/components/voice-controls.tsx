@@ -30,6 +30,7 @@ export interface VoiceControlsProps {
   audioDevices?: VoiceDevice[];
   activeDeviceId?: string | null;
   isRoomMember: boolean;
+  isServerMuted?: boolean;
   onJoinVoice: () => Promise<void>;
   onLeaveVoice: () => Promise<void>;
   onToggleMute: () => Promise<void>;
@@ -64,6 +65,7 @@ export function VoiceControls({
   audioDevices = [],
   activeDeviceId = null,
   isRoomMember,
+  isServerMuted = false,
   onJoinVoice,
   onLeaveVoice,
   onToggleMute,
@@ -141,19 +143,28 @@ export function VoiceControls({
             <button
               type="button"
               data-testid="voice-mute-toggle"
-              onClick={onToggleMute}
+              onClick={isServerMuted ? undefined : onToggleMute}
+              disabled={isServerMuted}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-sm ${
-                isMuted
+                isServerMuted
+                  ? 'bg-rose-950/60 border border-rose-500/40 text-rose-300 cursor-not-allowed opacity-90'
+                  : isMuted
                   ? 'bg-rose-600/90 hover:bg-rose-500 text-white shadow-rose-900/30'
                   : isSpeaking
                   ? 'bg-emerald-500 hover:bg-emerald-400 text-white ring-2 ring-emerald-400/50 shadow-emerald-900/40'
                   : 'bg-emerald-600/90 hover:bg-emerald-500 text-white'
               }`}
-              title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+              title={
+                isServerMuted
+                  ? 'Your microphone has been muted by room moderation.'
+                  : isMuted
+                  ? 'Unmute microphone'
+                  : 'Mute microphone'
+              }
             >
-              {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+              <MicOff className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">
-                {isMuted ? 'Muted' : isSpeaking ? 'Speaking...' : 'Mic Active'}
+                {isServerMuted ? 'Muted by Mod' : isMuted ? 'Muted' : isSpeaking ? 'Speaking...' : 'Mic Active'}
               </span>
             </button>
 
@@ -259,17 +270,27 @@ export function VoiceControls({
               <button
                 type="button"
                 data-testid="voice-mute-toggle"
-                onClick={onToggleMute}
+                onClick={isServerMuted ? undefined : onToggleMute}
+                disabled={isServerMuted}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all shadow-md ${
-                  isMuted
+                  isServerMuted
+                    ? 'bg-rose-950/60 border border-rose-500/40 text-rose-300 cursor-not-allowed opacity-90'
+                    : isMuted
                     ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
                     : isSpeaking
                     ? 'bg-emerald-500 hover:bg-emerald-400 text-white ring-2 ring-emerald-400/50 shadow-emerald-500/30'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
                 }`}
+                title={
+                  isServerMuted
+                    ? 'Your microphone has been muted by room moderation.'
+                    : isMuted
+                    ? 'Unmute microphone'
+                    : 'Mute microphone'
+                }
               >
-                {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                <span>{isMuted ? 'Muted' : isSpeaking ? 'Speaking...' : 'Mic Active'}</span>
+                <MicOff className="w-4 h-4" />
+                <span>{isServerMuted ? 'Muted by Mod' : isMuted ? 'Muted' : isSpeaking ? 'Speaking...' : 'Mic Active'}</span>
               </button>
 
               {/* Leave Voice Button */}

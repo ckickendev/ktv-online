@@ -25,6 +25,7 @@ import {
   MicOff,
   Paintbrush,
   Info,
+  Loader2,
 } from 'lucide-react';
 import { RoomStatusBadge } from '@/components/shared/room-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -486,6 +487,7 @@ export default function RoomDetailPage() {
               audioDevices={voice.audioDevices}
               activeDeviceId={voice.activeDeviceId}
               isRoomMember={isMember}
+              isServerMuted={Boolean(viewer?.isMuted)}
               onJoinVoice={voice.joinVoice}
               onLeaveVoice={voice.leaveVoice}
               onToggleMute={voice.toggleMute}
@@ -719,6 +721,23 @@ export default function RoomDetailPage() {
                     Lounge Full
                   </button>
                 </div>
+              ) : room.isLocked ? (
+                <div
+                  data-testid="room-locked-notice"
+                  className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-300 flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>This lounge has been locked by the host and is not accepting new participants.</span>
+                  </div>
+                  <button
+                    disabled
+                    data-testid="join-room-button-locked"
+                    className="px-4 py-2 rounded-xl bg-white/5 text-slate-500 text-xs font-semibold cursor-not-allowed border border-white/5 shrink-0"
+                  >
+                    Lounge Locked
+                  </button>
+                </div>
               ) : !isAuthenticated ? (
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-xs text-slate-400">
@@ -931,36 +950,67 @@ export default function RoomDetailPage() {
       </main>
 
       {/* Mobile Fixed Bottom Navigation Dock (Workstream B Mobile Architecture) */}
-      <nav aria-label="Mobile lounge dock" className="lg:hidden fixed bottom-0 inset-x-0 bg-[#0b0e19]/95 backdrop-blur-xl border-t border-white/10 px-3 py-2 z-30 flex items-center justify-around pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl">
+      <nav aria-label="Mobile lounge dock" className="lg:hidden fixed bottom-0 inset-x-0 bg-[#0b0e19]/95 backdrop-blur-xl border-t border-white/10 px-3 py-1.5 z-30 flex items-center justify-around pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl">
         {/* Quick Mic Mute / Voice Connect */}
         <button
           type="button"
-          onClick={voice.isConnected ? voice.toggleMute : voice.joinVoice}
-          disabled={!isMember || voice.isConnecting}
+          data-testid="mobile-dock-voice-btn"
+          onClick={() => {
+            if (!voice.isConnected) {
+              voice.joinVoice();
+            } else if (!viewer?.isMuted) {
+              voice.toggleMute();
+            }
+          }}
+          disabled={!isMember || voice.isConnecting || Boolean(voice.isConnected && viewer?.isMuted)}
           className={cn(
-            'flex flex-col items-center gap-1 p-1.5 rounded-xl text-[10px] font-semibold transition-all',
+            'flex flex-col items-center justify-center gap-1 min-h-[44px] min-w-[44px] p-1 rounded-xl text-[10px] font-semibold transition-all',
             voice.isConnected
-              ? voice.isMuted
+              ? viewer?.isMuted
+                ? 'text-rose-400 opacity-90'
+                : voice.isMuted
                 ? 'text-rose-400'
                 : voice.isSpeaking
                 ? 'text-emerald-300 animate-pulse'
                 : 'text-emerald-400'
               : 'text-slate-400'
           )}
+          title={
+            viewer?.isMuted
+              ? 'Microphone muted by room moderation'
+              : voice.isConnected
+              ? voice.isMuted
+                ? 'Unmute mic'
+                : 'Mute mic'
+              : 'Join voice'
+          }
         >
-          {voice.isConnected ? (
-            voice.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />
+          {voice.isConnecting ? (
+            <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+          ) : voice.isConnected ? (
+            viewer?.isMuted || voice.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />
           ) : (
             <PhoneCall className="w-5 h-5" />
           )}
-          <span>{voice.isConnected ? (voice.isMuted ? 'Muted' : 'Speaking') : 'Voice'}</span>
+          <span>
+            {voice.isConnecting
+              ? 'Connecting'
+              : voice.isConnected
+              ? viewer?.isMuted
+                ? 'Muted (Mod)'
+                : voice.isMuted
+                ? 'Muted'
+                : 'Speaking'
+              : 'Voice'}
+          </span>
         </button>
 
         {/* Queue Drawer Button */}
         <button
           type="button"
+          data-testid="mobile-dock-queue-btn"
           onClick={() => setMobileDrawer('queue')}
-          className="flex flex-col items-center gap-1 p-1.5 text-slate-300 relative text-[10px] font-semibold"
+          className="flex flex-col items-center justify-center gap-1 min-h-[44px] min-w-[44px] p-1 text-slate-300 relative text-[10px] font-semibold"
         >
           <div className="relative">
             <ListMusic className="w-5 h-5" />
@@ -976,8 +1026,9 @@ export default function RoomDetailPage() {
         {/* Chat Drawer Button */}
         <button
           type="button"
+          data-testid="mobile-dock-chat-btn"
           onClick={() => setMobileDrawer('chat')}
-          className="flex flex-col items-center gap-1 p-1.5 text-slate-300 relative text-[10px] font-semibold"
+          className="flex flex-col items-center justify-center gap-1 min-h-[44px] min-w-[44px] p-1 text-slate-300 relative text-[10px] font-semibold"
         >
           <div className="relative">
             <MessageSquare className="w-5 h-5" />
@@ -993,8 +1044,9 @@ export default function RoomDetailPage() {
         {/* People Drawer Button */}
         <button
           type="button"
+          data-testid="mobile-dock-people-btn"
           onClick={() => setMobileDrawer('people')}
-          className="flex flex-col items-center gap-1 p-1.5 text-slate-300 relative text-[10px] font-semibold"
+          className="flex flex-col items-center justify-center gap-1 min-h-[44px] min-w-[44px] p-1 text-slate-300 relative text-[10px] font-semibold"
         >
           <div className="relative">
             <Users className="w-5 h-5" />
@@ -1010,8 +1062,9 @@ export default function RoomDetailPage() {
         {/* Activity Drawer Button */}
         <button
           type="button"
+          data-testid="mobile-dock-activity-btn"
           onClick={() => setMobileDrawer('activities')}
-          className="flex flex-col items-center gap-1 p-1.5 text-slate-300 text-[10px] font-semibold"
+          className="flex flex-col items-center justify-center gap-1 min-h-[44px] min-w-[44px] p-1 text-slate-300 text-[10px] font-semibold"
         >
           <Activity className="w-5 h-5" />
           <span>Activity</span>
@@ -1028,7 +1081,7 @@ export default function RoomDetailPage() {
           />
 
           {/* Drawer Panel */}
-          <div className="relative w-full max-h-[85vh] bg-[#0c1020] border-t border-white/15 rounded-t-3xl shadow-2xl flex flex-col p-4 z-10 animate-in slide-in-from-bottom duration-200 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="relative w-full max-h-[85vh] bg-[#0c1020] border-t border-white/15 rounded-t-3xl shadow-2xl flex flex-col p-4 z-10 animate-in slide-in-from-bottom duration-200 overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom))]">
             {/* Drawer Header & Handle */}
             <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-3 shrink-0">
               <div className="flex items-center gap-2">
