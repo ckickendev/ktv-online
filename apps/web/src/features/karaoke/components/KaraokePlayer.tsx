@@ -12,11 +12,12 @@ import {
   Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PlaybackStateDto, RoomQueueItemDto, RoomQueueRequesterDto, StageReactionEmoji } from '@ktv/contracts';
+import { PlaybackStateDto, RoomQueueItemDto, RoomQueueRequesterDto, StageReactionEmoji, GiftNewPayload } from '@ktv/contracts';
 import { CurrentSongPanel, formatMsToTime } from './CurrentSongPanel';
 import { PlaybackControls } from './PlaybackControls';
 import { SingerTurnIndicator } from './SingerTurnIndicator';
 import { LyricsStage } from './LyricsStage';
+import { StageGiftOverlay } from './StageGiftOverlay';
 import { useKaraokeAudio } from '../hooks/use-karaoke-audio';
 import { KaraokeEqPreset } from '../services/karaoke-equalizer';
 import type { StageReactionParticle } from '../hooks/use-stage-reactions';
@@ -56,6 +57,8 @@ interface KaraokePlayerProps {
   onSendReaction?: (emoji: StageReactionEmoji) => void;
   activeReactions?: StageReactionParticle[];
   prefersReducedMotion?: boolean;
+  activeGifts?: GiftNewPayload[];
+  onOpenGiftSelector?: () => void;
   className?: string;
 }
 
@@ -88,6 +91,8 @@ export function KaraokePlayer({
   onSendReaction,
   activeReactions,
   prefersReducedMotion,
+  activeGifts,
+  onOpenGiftSelector,
   className,
 }: KaraokePlayerProps) {
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -158,6 +163,7 @@ export function KaraokePlayer({
         onSendReaction={onSendReaction}
         activeReactions={activeReactions}
         prefersReducedMotion={prefersReducedMotion}
+        onOpenGiftSelector={onOpenGiftSelector}
       />
 
       {/* Autoplay Blocked Notification Banner */}
@@ -228,6 +234,14 @@ export function KaraokePlayer({
         <div className="absolute -bottom-24 -right-24 w-72 h-72 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
         {atmosphereStyles && (
           <div className={cn('absolute inset-0 pointer-events-none opacity-40', atmosphereStyles.ambientGlow)} />
+        )}
+
+        {/* Stage Virtual Gifts Celebration Overlay (Sprint 3.4) */}
+        {activeGifts && activeGifts.length > 0 && (
+          <StageGiftOverlay
+            activeGifts={activeGifts}
+            prefersReducedMotion={prefersReducedMotion}
+          />
         )}
 
         {/* Screen Top Status Bar */}

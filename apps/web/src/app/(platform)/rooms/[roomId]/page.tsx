@@ -45,7 +45,15 @@ import { useRoomState } from '@/hooks/use-room-state';
 import { useRoomChat } from '@/hooks/use-room-chat';
 import { useVoiceClient, VoiceControls } from '@/features/voice';
 import { useRoomAtmosphere } from '@/features/rooms/atmosphere';
-import { useKaraoke, useStageReactions, KaraokePlayer, RoomSongQueue, SongSearchDialog } from '@/features/karaoke';
+import {
+  useKaraoke,
+  useStageReactions,
+  useVirtualGifts,
+  KaraokePlayer,
+  RoomSongQueue,
+  SongSearchDialog,
+  GiftSelectorDialog,
+} from '@/features/karaoke';
 import { cn } from '@/lib/utils';
 
 export default function RoomDetailPage() {
@@ -133,6 +141,20 @@ export default function RoomDetailPage() {
 
   // Real-time Stage Audience Reactions (Sprint 3.3)
   const stageReactions = useStageReactions(roomId, {
+    enabled: Boolean(
+      roomId &&
+        isAuthenticated &&
+        viewer?.isMember &&
+        room?.status !== 'closed' &&
+        !stateIsKicked &&
+        !isKicked
+    ),
+    currentUserId: currentUser?.id,
+  });
+
+  // Real-time Virtual Gifts & Performer Appreciation (Sprint 3.4)
+  const [isGiftSelectorOpen, setIsGiftSelectorOpen] = useState(false);
+  const virtualGifts = useVirtualGifts(roomId, {
     enabled: Boolean(
       roomId &&
         isAuthenticated &&
@@ -638,6 +660,8 @@ export default function RoomDetailPage() {
             onSendReaction={stageReactions.sendReaction}
             activeReactions={stageReactions.particles}
             prefersReducedMotion={stageReactions.prefersReducedMotion}
+            activeGifts={virtualGifts.activeGifts}
+            onOpenGiftSelector={() => setIsGiftSelectorOpen(true)}
           />
         </div>
 
@@ -1014,6 +1038,19 @@ export default function RoomDetailPage() {
           onResetPreview={atmosphere.clearPreview}
         />
       )}
+
+      {/* Virtual Gift Selector Dialog (Sprint 3.4) */}
+      <GiftSelectorDialog
+        isOpen={isGiftSelectorOpen}
+        onClose={() => setIsGiftSelectorOpen(false)}
+        currentPerformer={karaoke.currentSinger}
+        currentSongTitle={karaoke.currentItem?.song?.title}
+        isCurrentSinger={karaoke.isCurrentSinger}
+        isSending={virtualGifts.isSending}
+        sendError={virtualGifts.sendError}
+        onSendGift={virtualGifts.sendGift}
+        onClearError={virtualGifts.clearError}
+      />
     </div>
   );
 }

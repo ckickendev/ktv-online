@@ -6,3 +6,5 @@ export * from './RoomSongQueue';
 export * from './QueueItem';
 export * from './SongSearchDialog';
 export * from './LyricsStage';
+export * from './GiftSelectorDialog';
+export * from './StageGiftOverlay';

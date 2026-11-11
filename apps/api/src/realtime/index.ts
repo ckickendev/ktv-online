@@ -5,3 +5,5 @@ export * from './room.events.js';
 export * from './karaoke.events.js';
 export * from './stage-reaction.events.js';
 export * from './stage-reaction.limiter.js';
+export * from './gift.events.js';
+export * from './gift.limiter.js';

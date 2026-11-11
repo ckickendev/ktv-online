@@ -10,6 +10,7 @@ import {
   Radio,
   Pause,
   Loader2,
+  Gift,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { RoomQueueItemDto, RoomQueueRequesterDto, StageReactionEmoji } from '@ktv/contracts';
@@ -33,6 +34,7 @@ export interface SingerTurnIndicatorProps {
   onSendReaction?: (emoji: StageReactionEmoji) => void;
   activeReactions?: StageReactionParticle[];
   prefersReducedMotion?: boolean;
+  onOpenGiftSelector?: () => void;
 }
 
 const CHEER_EMOJIS: StageReactionEmoji[] = ['👏', '🔥', '❤️', '🎉', '🎤'];
@@ -55,6 +57,7 @@ export function SingerTurnIndicator({
   onSendReaction,
   activeReactions,
   prefersReducedMotion = false,
+  onOpenGiftSelector,
 }: SingerTurnIndicatorProps) {
   const [localParticles, setLocalParticles] = useState<StageReactionParticle[]>([]);
 
@@ -282,6 +285,17 @@ export function SingerTurnIndicator({
                   {emoji}
                 </button>
               ))}
+              {onOpenGiftSelector && (
+                <button
+                  type="button"
+                  onClick={onOpenGiftSelector}
+                  className="w-11 h-11 sm:w-8 sm:h-8 min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center hover:bg-pink-500/20 text-pink-300 hover:text-pink-200 rounded-xl transition-all active:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400 border border-pink-500/30 ml-0.5"
+                  title="Send a virtual gift to the current performer"
+                  aria-label="Send a virtual gift to the current performer"
+                >
+                  <Gift className="w-4 h-4 text-pink-300" />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -395,6 +409,17 @@ export function SingerTurnIndicator({
                     {emoji}
                   </button>
                 ))}
+                {onOpenGiftSelector && (
+                  <button
+                    type="button"
+                    onClick={onOpenGiftSelector}
+                    className="w-11 h-11 sm:w-8 sm:h-8 min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center hover:bg-pink-500/20 text-pink-300 hover:text-pink-200 rounded-xl transition-all active:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400 border border-pink-500/30 ml-0.5"
+                    title={`Send a virtual gift to ${effectiveSingerName}`}
+                    aria-label={`Send a virtual gift to ${effectiveSingerName}`}
+                  >
+                    <Gift className="w-4 h-4 text-pink-300" />
+                  </button>
+                )}
               </div>
             </div>
           </div>

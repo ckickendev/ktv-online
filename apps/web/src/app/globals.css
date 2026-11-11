@@ -152,3 +152,59 @@ body {
     animation: pulseFade 1.8s ease-in-out forwards !important;
   }
 }
+
+/* Virtual Gifts Stage Celebration Animations */
+@keyframes giftBannerEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(-24px) scale(0.92);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  85% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.96);
+  }
+}
+
+.animate-gift-banner {
+  animation: giftBannerEnter 4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes giftParticleFloat {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.5) rotate(0deg);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-30px) scale(1.15) rotate(5deg);
+  }
+  80% {
+    opacity: 0.95;
+    transform: translateY(-120px) scale(1) rotate(-5deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-170px) scale(0.85) rotate(10deg);
+  }
+}
+
+.animate-gift-particle {
+  animation: giftParticleFloat 3.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-gift-banner {
+    animation: pulseFade 4s ease-in-out forwards !important;
+  }
+  .animate-gift-particle {
+    animation: pulseFade 3.5s ease-in-out forwards !important;
+  }
+}
