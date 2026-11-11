@@ -1,5 +1,5 @@
 import { Document } from 'mongoose';
-import { UserRole, UserStatus } from '@ktv/contracts';
+import { UserRole, UserStatus, UserPreferencesDto } from '@ktv/contracts';
 
 export interface IUser {
   username: string;
@@ -8,6 +8,7 @@ export interface IUser {
   avatar?: string | null;
   role: UserRole;
   status: UserStatus;
+  preferences?: UserPreferencesDto;
   createdAt: Date;
   updatedAt: Date;
 }

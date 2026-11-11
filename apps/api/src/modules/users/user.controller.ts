@@ -53,6 +53,32 @@ export class UserController {
       next(error);
     }
   }
+
+  async getPreferences(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        sendError(res, 'Unauthorized', 401);
+        return;
+      }
+      const preferences = await userService.getPreferences(req.user.id);
+      sendSuccess(res, preferences, 'User preferences retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updatePreferences(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        sendError(res, 'Unauthorized', 401);
+        return;
+      }
+      const updatedPreferences = await userService.updatePreferences(req.user.id, req.body);
+      sendSuccess(res, updatedPreferences, 'User preferences updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const userController = new UserController();

@@ -16,18 +16,21 @@ import {
   Users,
   Compass,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { RoomCard } from '@/components/shared/room-card';
 import { RoomCardSkeleton } from '@/components/shared/room-card-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { useRooms } from '@/hooks/queries/use-rooms';
+import { useUserPreferences } from '@/hooks/queries/use-user-preferences';
 import {
   RoomCategory,
   RoomStatus,
   RoomType,
   RoomAvailability,
   RoomSortBy,
+  RoomAtmospherePreset,
 } from '@ktv/contracts';
 
 const CATEGORIES: { id: RoomCategory; label: string }[] = [
@@ -38,6 +41,15 @@ const CATEGORIES: { id: RoomCategory; label: string }[] = [
   { id: 'ballad', label: 'Ballads & Acoustic' },
   { id: 'hiphop', label: 'Hip-Hop & Rap' },
   { id: 'rnb', label: 'R&B / Soul' },
+];
+
+const ATMOSPHERE_OPTIONS: { id: string; label: string }[] = [
+  { id: 'all', label: 'All Atmosphere Vibes' },
+  { id: 'neon_stage', label: 'Tokyo Neon Stage' },
+  { id: 'midnight_lounge', label: 'Midnight Cyberpunk' },
+  { id: 'cozy_acoustic', label: 'Cozy Acoustic' },
+  { id: 'classic_karaoke', label: 'Classic Disco' },
+  { id: 'minimal_studio', label: 'Midnight Jazz' },
 ];
 
 const ROOM_STYLES: { id: string; label: string }[] = [
@@ -72,12 +84,15 @@ function RoomDiscoveryContent() {
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
 
+  const { preferences: userPreferences } = useUserPreferences();
+
   // Read URL parameters
   const initialSearch = searchParams.get('search') || '';
   const initialCategory = (searchParams.get('category') as RoomCategory) || 'all';
   const initialRoomType = searchParams.get('roomType') || 'all';
   const initialStatus = searchParams.get('status') || 'all';
   const initialAvailability = (searchParams.get('availability') as RoomAvailability) || 'all';
+  const initialAtmosphere = searchParams.get('atmospherePreset') || 'all';
   const initialSortBy = (searchParams.get('sortBy') as RoomSortBy) || 'newest';
   const initialPage = Math.max(1, Number(searchParams.get('page')) || 1);
 
@@ -88,6 +103,23 @@ function RoomDiscoveryContent() {
   useEffect(() => {
     setSearchInput(initialSearch);
   }, [initialSearch]);
+
+  // User personalized top genre match for quick discovery
+  const userTopGenreCategory = useMemo(() => {
+    if (!userPreferences?.preferredGenres?.length) return null;
+    const genreMap: Record<string, RoomCategory> = {
+      pop: 'pop',
+      ballad: 'ballad',
+      rock: 'rock',
+      rap: 'hiphop',
+      rnb: 'rnb',
+      anime: 'anime',
+    };
+    for (const g of userPreferences.preferredGenres) {
+      if (genreMap[g]) return genreMap[g];
+    }
+    return null;
+  }, [userPreferences?.preferredGenres]);
 
   // URL State Updater Helper
   const updateUrlParams = useCallback(
@@ -144,6 +176,13 @@ function RoomDiscoveryContent() {
     updateUrlParams({ status: status === 'all' ? undefined : (status as RoomStatus), page: 1 });
   };
 
+  const handleAtmosphereChange = (atmospherePreset: string) => {
+    updateUrlParams({
+      atmospherePreset: atmospherePreset === 'all' ? undefined : atmospherePreset,
+      page: 1,
+    });
+  };
+
   const handleSortChange = (sortBy: RoomSortBy) => {
     updateUrlParams({ sortBy: sortBy === 'newest' ? undefined : sortBy, page: 1 });
   };
@@ -167,6 +206,10 @@ function RoomDiscoveryContent() {
       roomType: initialRoomType === 'all' ? undefined : (initialRoomType as RoomType),
       status: initialStatus === 'all' ? undefined : (initialStatus as RoomStatus),
       availability: initialAvailability === 'all' ? undefined : initialAvailability,
+      atmospherePreset:
+        initialAtmosphere === 'all'
+          ? undefined
+          : (initialAtmosphere as RoomAtmospherePreset),
       sortBy: initialSortBy,
       page: initialPage,
       limit: 12,
@@ -177,6 +220,7 @@ function RoomDiscoveryContent() {
       initialRoomType,
       initialStatus,
       initialAvailability,
+      initialAtmosphere,
       initialSortBy,
       initialPage,
     ]
@@ -241,6 +285,15 @@ function RoomDiscoveryContent() {
       });
     }
 
+    if (initialAtmosphere !== 'all') {
+      const at = ATMOSPHERE_OPTIONS.find((a) => a.id === initialAtmosphere);
+      list.push({
+        key: 'atmosphere',
+        label: `Vibe: ${at?.label || initialAtmosphere}`,
+        onRemove: () => updateUrlParams({ atmospherePreset: undefined, page: 1 }),
+      });
+    }
+
     return list;
   }, [
     initialSearch,
@@ -248,6 +301,7 @@ function RoomDiscoveryContent() {
     initialRoomType,
     initialAvailability,
     initialStatus,
+    initialAtmosphere,
     updateUrlParams,
   ]);
 
@@ -386,6 +440,20 @@ function RoomDiscoveryContent() {
                   </option>
                 ))}
               </select>
+
+              {/* Atmosphere Preset Filter */}
+              <select
+                aria-label="Filter by Atmosphere"
+                value={initialAtmosphere}
+                onChange={(e) => handleAtmosphereChange(e.target.value)}
+                className="bg-[#090c15] border border-white/10 text-xs text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500 cursor-pointer"
+              >
+                {ATMOSPHERE_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {hasActiveFilters && (
@@ -401,6 +469,19 @@ function RoomDiscoveryContent() {
 
         {/* Category Navigation Pills */}
         <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-6 scrollbar-none">
+          {userTopGenreCategory && (
+            <button
+              onClick={() => handleCategoryChange(userTopGenreCategory)}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border flex items-center gap-1.5 ${
+                initialCategory === userTopGenreCategory
+                  ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white border-violet-500 shadow-md shadow-violet-600/30'
+                  : 'bg-violet-950/40 text-violet-300 hover:text-white border-violet-500/30 hover:border-violet-500/50'
+              }`}
+            >
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              <span>For You</span>
+            </button>
+          )}
           {CATEGORIES.map((cat) => {
             const isSelected = initialCategory === cat.id;
             return (

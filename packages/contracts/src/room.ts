@@ -96,6 +96,8 @@ export const RoomQuerySchema = PaginationQuerySchema.extend({
   visibility: RoomVisibilitySchema.optional(),
   availability: RoomAvailabilitySchema.optional(),
   sortBy: RoomSortBySchema.optional(),
+  atmospherePreset: RoomAtmospherePresetSchema.optional(),
+  preferredOnly: z.coerce.boolean().optional(),
 });
 
 export type RoomQueryDto = z.infer<typeof RoomQuerySchema>;

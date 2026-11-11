@@ -45,6 +45,7 @@ import { useRoomState } from '@/hooks/use-room-state';
 import { useRoomChat } from '@/hooks/use-room-chat';
 import { useVoiceClient, VoiceControls } from '@/features/voice';
 import { useRoomAtmosphere } from '@/features/rooms/atmosphere';
+import { useUserPreferences } from '@/hooks/queries/use-user-preferences';
 import {
   useKaraoke,
   useStageReactions,
@@ -165,6 +166,9 @@ export default function RoomDetailPage() {
     ),
     currentUserId: currentUser?.id,
   });
+
+  // Personal Karaoke Viewing Preferences (Sprint 3.5)
+  const { preferences: userPreferences } = useUserPreferences();
 
   // Authoritative LiveKit Voice speaking & connection detection for stage performer
   const currentSingerId = karaoke.currentSinger?.id || karaoke.currentSingerId;
@@ -662,6 +666,10 @@ export default function RoomDetailPage() {
             prefersReducedMotion={stageReactions.prefersReducedMotion}
             activeGifts={virtualGifts.activeGifts}
             onOpenGiftSelector={() => setIsGiftSelectorOpen(true)}
+            lyricsFontSize={userPreferences.lyricsFontSize}
+            visualEffectsIntensity={userPreferences.visualEffectsIntensity}
+            showReactions={userPreferences.showReactions}
+            showGifts={userPreferences.showGifts}
           />
         </div>
 

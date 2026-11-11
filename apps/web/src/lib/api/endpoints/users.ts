@@ -1,5 +1,10 @@
 import { apiClient } from '../client';
-import { CreateUserDto, UserDto } from '@ktv/contracts';
+import {
+  CreateUserDto,
+  UserDto,
+  UserPreferencesDto,
+  UpdateUserPreferencesDto,
+} from '@ktv/contracts';
 
 export const userApi = {
   async register(payload: CreateUserDto): Promise<UserDto> {
@@ -11,5 +16,13 @@ export const userApi = {
 
   async getProfile(userId: string): Promise<UserDto> {
     return apiClient.get<UserDto>(`/users/${userId}`);
+  },
+
+  async getPreferences(): Promise<UserPreferencesDto> {
+    return apiClient.get<UserPreferencesDto>('/users/me/preferences');
+  },
+
+  async updatePreferences(data: UpdateUserPreferencesDto): Promise<UserPreferencesDto> {
+    return apiClient.patch<UserPreferencesDto>('/users/me/preferences', data);
   },
 };

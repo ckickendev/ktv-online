@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { UserPreferencesDtoSchema } from './preferences.js';
 
 export const UserRoleSchema = z.enum(['admin', 'user', 'moderator']);
 export type UserRole = z.infer<typeof UserRoleSchema>;
@@ -13,6 +14,7 @@ export const UserDtoSchema = z.object({
   avatar: z.string().url().optional().nullable(),
   role: UserRoleSchema,
   status: UserStatusSchema,
+  preferences: UserPreferencesDtoSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

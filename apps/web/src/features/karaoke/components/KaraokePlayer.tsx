@@ -12,7 +12,15 @@ import {
   Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PlaybackStateDto, RoomQueueItemDto, RoomQueueRequesterDto, StageReactionEmoji, GiftNewPayload } from '@ktv/contracts';
+import {
+  PlaybackStateDto,
+  RoomQueueItemDto,
+  RoomQueueRequesterDto,
+  StageReactionEmoji,
+  GiftNewPayload,
+  LyricsFontSize,
+  VisualEffectsIntensity,
+} from '@ktv/contracts';
 import { CurrentSongPanel, formatMsToTime } from './CurrentSongPanel';
 import { PlaybackControls } from './PlaybackControls';
 import { SingerTurnIndicator } from './SingerTurnIndicator';
@@ -59,6 +67,10 @@ interface KaraokePlayerProps {
   prefersReducedMotion?: boolean;
   activeGifts?: GiftNewPayload[];
   onOpenGiftSelector?: () => void;
+  lyricsFontSize?: LyricsFontSize;
+  visualEffectsIntensity?: VisualEffectsIntensity;
+  showReactions?: boolean;
+  showGifts?: boolean;
   className?: string;
 }
 
@@ -93,10 +105,24 @@ export function KaraokePlayer({
   prefersReducedMotion,
   activeGifts,
   onOpenGiftSelector,
+  lyricsFontSize = 'normal',
+  visualEffectsIntensity = 'full',
+  showReactions = true,
+  showGifts = true,
   className,
 }: KaraokePlayerProps) {
   const progressBarRef = useRef<HTMLDivElement>(null);
   const [stageView, setStageView] = useState<'lyrics' | 'visualizer'>('lyrics');
+
+  // Personal Viewing Preferences: Filter reactions/gifts and intensity for current viewer
+  const effectiveReactions = !showReactions
+    ? []
+    : visualEffectsIntensity === 'minimal'
+    ? []
+    : visualEffectsIntensity === 'reduced'
+    ? activeReactions?.slice(-5)
+    : activeReactions;
+  const effectiveGifts = !showGifts ? [] : activeGifts;
 
   // Authoritative Audio Engine Hook
   const {
@@ -161,7 +187,7 @@ export function KaraokePlayer({
         isSingerMuted={isSingerMuted}
         onOpenSearch={onOpenSearch}
         onSendReaction={onSendReaction}
-        activeReactions={activeReactions}
+        activeReactions={effectiveReactions}
         prefersReducedMotion={prefersReducedMotion}
         onOpenGiftSelector={onOpenGiftSelector}
       />
@@ -237,10 +263,11 @@ export function KaraokePlayer({
         )}
 
         {/* Stage Virtual Gifts Celebration Overlay (Sprint 3.4) */}
-        {activeGifts && activeGifts.length > 0 && (
+        {effectiveGifts && effectiveGifts.length > 0 && (
           <StageGiftOverlay
-            activeGifts={activeGifts}
+            activeGifts={effectiveGifts}
             prefersReducedMotion={prefersReducedMotion}
+            visualEffectsIntensity={visualEffectsIntensity}
           />
         )}
 
@@ -341,6 +368,7 @@ export function KaraokePlayer({
                 songId={currentItem.song.id}
                 currentPositionMs={currentPositionMs}
                 isPlaying={isPlaying}
+                fontSize={lyricsFontSize}
                 className="max-h-[220px]"
               />
             ) : (

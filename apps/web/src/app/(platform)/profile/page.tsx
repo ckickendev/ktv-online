@@ -16,6 +16,7 @@ import {
 import { PageContainer } from '@/components/layout/page-container';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { ProtectedRoute } from '@/components/auth/protected-route';
+import { PersonalPreferencesCard } from '@/components/profile/personal-preferences-card';
 import { useAuth } from '@/hooks/use-auth';
 
 export default function ProfilePage() {
@@ -123,6 +124,9 @@ export default function ProfilePage() {
             <p className="text-[11px] text-slate-400">Top Genre</p>
           </div>
         </div>
+
+        {/* Personal Karaoke Experience Preferences (Sprint 3.5) */}
+        <PersonalPreferencesCard />
 
         {/* History and Hardware Preferences */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">

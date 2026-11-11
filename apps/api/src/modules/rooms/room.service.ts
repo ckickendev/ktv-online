@@ -105,6 +105,10 @@ export class RoomService {
       filter.roomType = query.roomType;
     }
 
+    if (query.atmospherePreset) {
+      filter.atmospherePreset = query.atmospherePreset;
+    }
+
     if (query.availability === 'available') {
       filter.$expr = { $lt: ['$currentParticipantsCount', '$capacity'] };
       if (!filter.status) {

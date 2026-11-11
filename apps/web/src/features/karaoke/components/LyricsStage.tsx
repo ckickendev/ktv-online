@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Music, Mic2 } from 'lucide-react';
-import { SongLyricsDto, TimedLyricLine } from '@ktv/contracts';
+import { SongLyricsDto, TimedLyricLine, LyricsFontSize } from '@ktv/contracts';
 import { karaokeApi } from '../api/karaoke-api';
 import { queryKeys } from '@/hooks/queries/query-keys';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,7 @@ export interface LyricsStageProps {
   songId: string | null;
   currentPositionMs: number;
   isPlaying: boolean;
+  fontSize?: LyricsFontSize;
   className?: string;
 }
 
@@ -22,6 +23,7 @@ interface LyricLineRowProps {
   isPast: boolean;
   isPlaying: boolean;
   currentPositionMs: number;
+  fontSize?: LyricsFontSize;
 }
 
 /**
@@ -31,7 +33,7 @@ interface LyricLineRowProps {
  */
 const LyricLineRow = React.memo(
   React.forwardRef<HTMLDivElement, LyricLineRowProps>(function LyricLineRow(
-    { line, index, isActive, isPast, isPlaying, currentPositionMs },
+    { line, index, isActive, isPast, isPlaying, currentPositionMs, fontSize = 'normal' },
     ref
   ) {
     const hasWordTiming = Boolean(line.words && line.words.length > 0);
@@ -44,6 +46,20 @@ const LyricLineRow = React.memo(
       lineProgress = Math.min(100, Math.max(0, (elapsedInLine / lineDuration) * 100));
     }
 
+    const activeTextClass =
+      fontSize === 'compact'
+        ? 'text-base sm:text-xl'
+        : fontSize === 'large'
+        ? 'text-xl sm:text-3xl'
+        : 'text-lg sm:text-2xl';
+
+    const inactiveTextClass =
+      fontSize === 'compact'
+        ? 'text-xs sm:text-sm'
+        : fontSize === 'large'
+        ? 'text-base sm:text-lg'
+        : 'text-sm sm:text-base';
+
     return (
       <div
         key={line.id || index}
@@ -52,10 +68,10 @@ const LyricLineRow = React.memo(
         className={cn(
           'transition-all duration-300 py-1.5 px-3 rounded-xl mx-auto max-w-2xl',
           isActive
-            ? 'scale-105 font-black text-lg sm:text-2xl drop-shadow-md'
+            ? cn('scale-105 font-black drop-shadow-md', activeTextClass)
             : isPast
-            ? 'text-slate-500 font-medium text-sm sm:text-base opacity-40'
-            : 'text-slate-300/80 font-semibold text-sm sm:text-base opacity-75'
+            ? cn('text-slate-500 font-medium opacity-40', inactiveTextClass)
+            : cn('text-slate-300/80 font-semibold opacity-75', inactiveTextClass)
         )}
       >
         {/* Active Karaoke Lyric with word-level timing or line-level progress sweep */}
@@ -140,8 +156,13 @@ const LyricLineRow = React.memo(
     if (!prev.isActive && !next.isActive && prev.isPast === next.isPast) {
       return true;
     }
-    // If active or past state transitioned, must re-render
-    if (prev.isActive !== next.isActive || prev.isPast !== next.isPast || prev.isPlaying !== next.isPlaying) {
+    // If active or past state transitioned, or font size changed, must re-render
+    if (
+      prev.isActive !== next.isActive ||
+      prev.isPast !== next.isPast ||
+      prev.isPlaying !== next.isPlaying ||
+      prev.fontSize !== next.fontSize
+    ) {
       return false;
     }
     // If active line, re-render only when currentPositionMs changed
@@ -156,6 +177,7 @@ export function LyricsStage({
   songId,
   currentPositionMs,
   isPlaying,
+  fontSize = 'normal',
   className,
 }: LyricsStageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -284,6 +306,7 @@ export function LyricsStage({
             isPast={isPast}
             isPlaying={isPlaying}
             currentPositionMs={isActive ? currentPositionMs : 0}
+            fontSize={fontSize}
           />
         );
       })}

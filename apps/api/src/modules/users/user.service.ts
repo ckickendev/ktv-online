@@ -1,7 +1,13 @@
 import bcrypt from 'bcrypt';
 import { UserModel } from './user.model.js';
 import { IUserDocument } from './user.types.js';
-import { CreateUserDto, UpdateUserDto } from '@ktv/contracts';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  UserPreferencesDto,
+  UpdateUserPreferencesDto,
+  DEFAULT_USER_PREFERENCES,
+} from '@ktv/contracts';
 
 import { authService } from '../auth/auth.service.js';
 
@@ -46,6 +52,64 @@ export class UserService {
     }
 
     return updated;
+  }
+
+  async getPreferences(userId: string): Promise<UserPreferencesDto> {
+    const user = await UserModel.findById(userId).select('preferences').exec();
+    if (!user || !user.preferences) {
+      return DEFAULT_USER_PREFERENCES;
+    }
+    return {
+      preferredGenres: (user.preferences.preferredGenres && user.preferences.preferredGenres.length > 0)
+        ? (user.preferences.preferredGenres as UserPreferencesDto['preferredGenres'])
+        : DEFAULT_USER_PREFERENCES.preferredGenres,
+      preferredLanguages: (user.preferences.preferredLanguages && user.preferences.preferredLanguages.length > 0)
+        ? (user.preferences.preferredLanguages as UserPreferencesDto['preferredLanguages'])
+        : DEFAULT_USER_PREFERENCES.preferredLanguages,
+      participationStyle: user.preferences.participationStyle || DEFAULT_USER_PREFERENCES.participationStyle,
+      lyricsFontSize: user.preferences.lyricsFontSize || DEFAULT_USER_PREFERENCES.lyricsFontSize,
+      visualEffectsIntensity: user.preferences.visualEffectsIntensity || DEFAULT_USER_PREFERENCES.visualEffectsIntensity,
+      showReactions: user.preferences.showReactions ?? DEFAULT_USER_PREFERENCES.showReactions,
+      showGifts: user.preferences.showGifts ?? DEFAULT_USER_PREFERENCES.showGifts,
+    };
+  }
+
+  async updatePreferences(
+    userId: string,
+    data: UpdateUserPreferencesDto
+  ): Promise<UserPreferencesDto> {
+    const updateObj: Record<string, unknown> = {};
+    if (data.preferredGenres !== undefined) updateObj['preferences.preferredGenres'] = data.preferredGenres;
+    if (data.preferredLanguages !== undefined) updateObj['preferences.preferredLanguages'] = data.preferredLanguages;
+    if (data.participationStyle !== undefined) updateObj['preferences.participationStyle'] = data.participationStyle;
+    if (data.lyricsFontSize !== undefined) updateObj['preferences.lyricsFontSize'] = data.lyricsFontSize;
+    if (data.visualEffectsIntensity !== undefined) updateObj['preferences.visualEffectsIntensity'] = data.visualEffectsIntensity;
+    if (data.showReactions !== undefined) updateObj['preferences.showReactions'] = data.showReactions;
+    if (data.showGifts !== undefined) updateObj['preferences.showGifts'] = data.showGifts;
+
+    const updated = await UserModel.findByIdAndUpdate(
+      userId,
+      { $set: updateObj },
+      { new: true, runValidators: true }
+    ).exec();
+
+    if (!updated || !updated.preferences) {
+      return DEFAULT_USER_PREFERENCES;
+    }
+
+    return {
+      preferredGenres: (updated.preferences.preferredGenres && updated.preferences.preferredGenres.length > 0)
+        ? (updated.preferences.preferredGenres as UserPreferencesDto['preferredGenres'])
+        : DEFAULT_USER_PREFERENCES.preferredGenres,
+      preferredLanguages: (updated.preferences.preferredLanguages && updated.preferences.preferredLanguages.length > 0)
+        ? (updated.preferences.preferredLanguages as UserPreferencesDto['preferredLanguages'])
+        : DEFAULT_USER_PREFERENCES.preferredLanguages,
+      participationStyle: updated.preferences.participationStyle || DEFAULT_USER_PREFERENCES.participationStyle,
+      lyricsFontSize: updated.preferences.lyricsFontSize || DEFAULT_USER_PREFERENCES.lyricsFontSize,
+      visualEffectsIntensity: updated.preferences.visualEffectsIntensity || DEFAULT_USER_PREFERENCES.visualEffectsIntensity,
+      showReactions: updated.preferences.showReactions ?? DEFAULT_USER_PREFERENCES.showReactions,
+      showGifts: updated.preferences.showGifts ?? DEFAULT_USER_PREFERENCES.showGifts,
+    };
   }
 }
 

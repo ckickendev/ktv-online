@@ -4,17 +4,19 @@ import React from 'react';
 import Image from 'next/image';
 import { Mic, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { GiftNewPayload, getGiftDefinition } from '@ktv/contracts';
+import { GiftNewPayload, getGiftDefinition, VisualEffectsIntensity } from '@ktv/contracts';
 
 export interface StageGiftOverlayProps {
   activeGifts: GiftNewPayload[];
   prefersReducedMotion?: boolean;
+  visualEffectsIntensity?: VisualEffectsIntensity;
   className?: string;
 }
 
 export function StageGiftOverlay({
   activeGifts,
   prefersReducedMotion = false,
+  visualEffectsIntensity = 'full',
   className,
 }: StageGiftOverlayProps) {
   if (activeGifts.length === 0) return null;
@@ -130,9 +132,9 @@ export function StageGiftOverlay({
             </div>
 
             {/* Celebratory Floating Gift Particles Across the Stage */}
-            {!prefersReducedMotion && (
+            {!prefersReducedMotion && visualEffectsIntensity !== 'minimal' && (
               <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                {[...Array(6)].map((_, i) => {
+                {[...Array(visualEffectsIntensity === 'reduced' ? 2 : 6)].map((_, i) => {
                   const leftPercentage = 15 + ((i * 14 + 7) % 70); // 15% - 85%
                   const delaySec = (i * 0.2).toFixed(2);
                   return (

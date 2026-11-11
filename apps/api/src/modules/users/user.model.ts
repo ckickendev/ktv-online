@@ -39,6 +39,39 @@ const UserSchema = new Schema<IUserDocument>(
       default: 'active',
       index: true,
     },
+    preferences: {
+      preferredGenres: {
+        type: [String],
+        default: ['pop'],
+      },
+      preferredLanguages: {
+        type: [String],
+        default: ['vi', 'en'],
+      },
+      participationStyle: {
+        type: String,
+        enum: ['singing', 'audience', 'both'],
+        default: 'both',
+      },
+      lyricsFontSize: {
+        type: String,
+        enum: ['compact', 'normal', 'large'],
+        default: 'normal',
+      },
+      visualEffectsIntensity: {
+        type: String,
+        enum: ['full', 'reduced', 'minimal'],
+        default: 'full',
+      },
+      showReactions: {
+        type: Boolean,
+        default: true,
+      },
+      showGifts: {
+        type: Boolean,
+        default: true,
+      },
+    },
   },
   {
     timestamps: true,
