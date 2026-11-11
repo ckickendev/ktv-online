@@ -89,7 +89,7 @@ export class RoomService {
     if (!Types.ObjectId.isValid(id)) {
       return null;
     }
-    return RoomModel.findById(id).populate('ownerId', 'username avatar').exec();
+    return RoomModel.findById(id).populate('ownerId', 'username displayName avatar').exec();
   }
 
   async findRooms(query: RoomQueryDto): Promise<{ items: IRoomDocument[]; total: number }> {
@@ -145,7 +145,7 @@ export class RoomService {
         .sort(sortQuery)
         .skip(skip)
         .limit(limit)
-        .populate('ownerId', 'username avatar')
+        .populate('ownerId', 'username displayName avatar')
         .exec(),
       RoomModel.countDocuments(filter).exec(),
     ]);
@@ -192,7 +192,7 @@ export class RoomService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate('ownerId', 'username avatar')
+        .populate('ownerId', 'username displayName avatar')
         .exec(),
       RoomModel.countDocuments(filter).exec(),
     ]);
@@ -226,7 +226,7 @@ export class RoomService {
       },
       { new: true, runValidators: true }
     )
-      .populate('ownerId', 'username avatar')
+      .populate('ownerId', 'username displayName avatar')
       .exec();
 
     if (updatedRoom) {
@@ -264,7 +264,7 @@ export class RoomService {
       },
       { new: true, runValidators: true }
     )
-      .populate('ownerId', 'username avatar')
+      .populate('ownerId', 'username displayName avatar')
       .exec();
 
     if (room) {
@@ -340,7 +340,7 @@ export class RoomService {
       userId: userObjectId,
       status: 'active',
     })
-      .populate('userId', 'username avatar role')
+      .populate('userId', 'username displayName avatar role')
       .exec();
 
     if (existingMembership) {
@@ -425,7 +425,7 @@ export class RoomService {
           });
 
           membership = await RoomMembershipModel.findById(created._id)
-            .populate('userId', 'username avatar role')
+            .populate('userId', 'username displayName avatar role')
             .exec();
         } catch (createErr: unknown) {
           // If concurrent create raced and succeeded, rollback our reserved capacity increment
@@ -439,7 +439,7 @@ export class RoomService {
             userId: userObjectId,
             status: 'active',
           })
-            .populate('userId', 'username avatar role')
+            .populate('userId', 'username displayName avatar role')
             .exec();
 
           if (activeMem) {
@@ -455,7 +455,7 @@ export class RoomService {
         ).exec();
 
         const activeMem = await RoomMembershipModel.findById(existingDoc._id)
-          .populate('userId', 'username avatar role')
+          .populate('userId', 'username displayName avatar role')
           .exec();
 
         return { success: true, membership: activeMem || existingDoc, alreadyJoined: true };
@@ -478,7 +478,7 @@ export class RoomService {
           },
           { new: true }
         )
-          .populate('userId', 'username avatar role')
+          .populate('userId', 'username displayName avatar role')
           .exec();
 
         if (!reactivated) {
@@ -489,7 +489,7 @@ export class RoomService {
           ).exec();
 
           const activeMem = await RoomMembershipModel.findById(existingDoc._id)
-            .populate('userId', 'username avatar role')
+            .populate('userId', 'username displayName avatar role')
             .exec();
 
           return { success: true, membership: activeMem || existingDoc, alreadyJoined: true };
@@ -533,6 +533,21 @@ export class RoomService {
         },
         finalVersion
       );
+
+      // Record activity
+      try {
+        const memUser = (membership as any)?.userId;
+        const memberUsername = memUser?.displayName || memUser?.username || 'Member';
+        const memberAvatar = memUser?.avatar ?? null;
+        await chatService.recordActivity(
+          roomId,
+          'member_joined',
+          { id: userId, username: memberUsername, avatar: memberAvatar, role: membership!.role },
+          `${memberUsername} joined the lounge`
+        );
+      } catch {
+        // Non-blocking
+      }
 
       return { success: true, membership: membership!, alreadyJoined: false };
     } catch (err: unknown) {
@@ -578,7 +593,9 @@ export class RoomService {
         },
       },
       { new: true }
-    ).exec();
+    )
+      .populate('userId', 'username displayName avatar role')
+      .exec();
 
     if (!updatedMembership) {
       return { success: false, error: 'NOT_A_MEMBER' };
@@ -591,7 +608,9 @@ export class RoomService {
       { new: true }
     ).exec();
 
-    const username = (updatedMembership.userId as any)?.username || 'Member';
+    const memberObj = updatedMembership.userId as any;
+    const username = memberObj?.displayName || memberObj?.username || 'Member';
+    const avatar = memberObj?.avatar ?? null;
     if (updatedRoom) {
       publishRoomStateEvent(
         roomId,
@@ -603,6 +622,18 @@ export class RoomService {
         },
         updatedRoom.stateVersion
       );
+    }
+
+    // Record activity
+    try {
+      await chatService.recordActivity(
+        roomId,
+        'member_left',
+        { id: userId, username, avatar, role: updatedMembership.role },
+        `${username} left the lounge`
+      );
+    } catch {
+      // Non-blocking
     }
 
     // Invalidate/disconnect active LiveKit voice session for leaving user
@@ -665,7 +696,7 @@ export class RoomService {
       roomId: roomObjectId,
       status: 'active',
     })
-      .populate('userId', 'username avatar role')
+      .populate('userId', 'username displayName avatar role')
       .sort({ joinedAt: 1 })
       .exec();
 
@@ -681,7 +712,7 @@ export class RoomService {
       userId: new Types.ObjectId(userId),
       status: 'active',
     })
-      .populate('userId', 'username avatar role')
+      .populate('userId', 'username displayName avatar role')
       .exec();
   }
 
@@ -704,7 +735,7 @@ export class RoomService {
         .limit(limit)
         .populate({
           path: 'roomId',
-          populate: { path: 'ownerId', select: 'username avatar' },
+          populate: { path: 'ownerId', select: 'username displayName avatar' },
         })
         .exec(),
       RoomMembershipModel.countDocuments(filter).exec(),
@@ -739,7 +770,7 @@ export class RoomService {
     const hostObjectId = new Types.ObjectId(hostUserId);
     const targetObjectId = new Types.ObjectId(targetUserId);
 
-    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
+    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username displayName avatar').exec();
     if (!room) {
       return { success: false, error: 'ROOM_NOT_FOUND' };
     }
@@ -812,7 +843,7 @@ export class RoomService {
       },
       { new: true }
     )
-      .populate('userId', 'username avatar')
+      .populate('userId', 'username displayName avatar role')
       .exec();
 
     if (!updatedMembership) {
@@ -826,8 +857,13 @@ export class RoomService {
       { new: true }
     ).exec();
 
-    const hostUsername = isOwner ? ((room.ownerId as any).username || 'Host') : 'Moderator';
-    const targetUsername = (updatedMembership.userId as any)?.username || 'Member';
+    const hostUsername = isOwner
+      ? ((room.ownerId as any).displayName || (room.ownerId as any).username || 'Host')
+      : 'Moderator';
+    const targetUsername =
+      (updatedMembership.userId as any)?.displayName ||
+      (updatedMembership.userId as any)?.username ||
+      'Member';
 
     if (updatedRoom) {
       publishRoomStateEvent(
@@ -1461,7 +1497,7 @@ export class RoomService {
     const roomObjectId = new Types.ObjectId(roomId);
 
     // Initial check for room existence
-    const initialRoom = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
+    const initialRoom = await RoomModel.findById(roomObjectId).populate('ownerId', 'username displayName avatar').exec();
     if (!initialRoom) {
       return { success: false, error: 'ROOM_NOT_FOUND' };
     }
@@ -1514,7 +1550,7 @@ export class RoomService {
     let verifiedVersion = initialRoom.stateVersion || 1;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const r1 = await RoomModel.findById(roomObjectId).populate('ownerId', 'username avatar').exec();
+      const r1 = await RoomModel.findById(roomObjectId).populate('ownerId', 'username displayName avatar').exec();
       if (!r1) {
         return { success: false, error: 'ROOM_NOT_FOUND' };
       }
@@ -1524,7 +1560,7 @@ export class RoomService {
         roomId: roomObjectId,
         status: 'active',
       })
-        .populate('userId', 'username avatar role')
+        .populate('userId', 'username displayName avatar role')
         .sort({ joinedAt: 1 })
         .exec();
 

@@ -368,12 +368,12 @@ export class KaraokeService {
       ? new Types.ObjectId(dto.singerId)
       : userObjectId;
 
-    const user = await UserModel.findById(userObjectId).select('username').exec();
+    const user = await UserModel.findById(userObjectId).select('username displayName avatar').exec();
     const singerUser = singerObjectId.equals(userObjectId)
       ? user
-      : await UserModel.findById(singerObjectId).select('username').exec();
+      : await UserModel.findById(singerObjectId).select('username displayName avatar').exec();
     const performerDisplayName =
-      singerUser?.username || user?.username || (membership.role === 'host' ? 'Host' : 'Singer');
+      singerUser?.displayName || singerUser?.username || user?.displayName || user?.username || (membership.role === 'host' ? 'Host' : 'Singer');
 
     // Direct stage activation if room playback is idle, no item is playing, and song has available audio
     if (!hasActivePlaying && playbackState.status === 'idle' && song.audioAvailability === 'audio_available') {
@@ -1063,8 +1063,8 @@ export class KaraokeService {
         })
           .sort({ position: 1, addedAt: 1 })
           .populate('songId')
-          .populate('requestedBy', 'username displayName')
-          .populate('singer', 'username displayName')
+          .populate('requestedBy', 'username displayName avatar')
+          .populate('singer', 'username displayName avatar')
           .session(session || null)
           .exec();
 
@@ -1130,8 +1130,8 @@ export class KaraokeService {
           { new: true, session: session || undefined }
         )
           .populate('songId')
-          .populate('requestedBy', 'username displayName')
-          .populate('singer', 'username displayName')
+          .populate('requestedBy', 'username displayName avatar')
+          .populate('singer', 'username displayName avatar')
           .exec();
 
         if (claimed) {
