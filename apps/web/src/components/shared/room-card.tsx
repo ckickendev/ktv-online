@@ -1,17 +1,37 @@
 import React from 'react';
 import Link from 'next/link';
-import { Users, Music, Crown, Sparkles, ArrowRight, ShieldCheck } from 'lucide-react';
+import {
+  Users,
+  Music,
+  Crown,
+  Sparkles,
+  ArrowRight,
+  ShieldCheck,
+  Eye,
+  Loader2,
+  Disc3,
+} from 'lucide-react';
 import { RoomDto } from '@ktv/contracts';
+import { ATMOSPHERE_PRESETS } from '@/features/rooms/atmosphere';
 import { RoomStatusBadge } from './room-status-badge';
 import { UserAvatar } from './user-avatar';
 import { cn } from '@/lib/utils';
 
-interface RoomCardProps {
+export interface RoomCardProps {
   room: RoomDto;
   className?: string;
+  onPreview?: (room: RoomDto) => void;
+  onQuickJoin?: (room: RoomDto) => void;
+  isJoining?: boolean;
 }
 
-export function RoomCard({ room, className }: RoomCardProps) {
+export function RoomCard({
+  room,
+  className,
+  onPreview,
+  onQuickJoin,
+  isJoining = false,
+}: RoomCardProps) {
   const isVip = room.roomType === 'vip';
   const isParty = room.roomType === 'party';
   const isClosed = room.status === 'closed';
@@ -19,6 +39,10 @@ export function RoomCard({ room, className }: RoomCardProps) {
 
   const hostUsername = room.host?.username || 'Lounge Host';
   const hostAvatar = room.host?.avatar;
+
+  const atmosphereConfig = room.atmospherePreset
+    ? ATMOSPHERE_PRESETS[room.atmospherePreset]
+    : ATMOSPHERE_PRESETS.midnight_lounge;
 
   return (
     <div
@@ -40,11 +64,23 @@ export function RoomCard({ room, className }: RoomCardProps) {
       />
 
       <div>
-        {/* Top bar with category & status badges */}
+        {/* Top bar with category, atmosphere & status badges */}
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[11px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-300">
               {room.category}
+            </span>
+
+            {/* Atmosphere Vibe Indicator */}
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full border',
+                atmosphereConfig.styles.badgeClass
+              )}
+              title={`Atmosphere: ${atmosphereConfig.name}`}
+            >
+              <Disc3 className="w-2.5 h-2.5 text-cyan-400" />
+              <span>{atmosphereConfig.name}</span>
             </span>
 
             {isVip && (
@@ -57,18 +93,17 @@ export function RoomCard({ room, className }: RoomCardProps) {
                 <Sparkles className="w-3 h-3" /> Party
               </span>
             )}
-            {!isVip && !isParty && (
-              <span className="text-[11px] font-medium tracking-wide text-slate-400 px-1.5 py-0.5 rounded bg-white/[0.03]">
-                Standard
-              </span>
-            )}
           </div>
 
           <RoomStatusBadge status={room.status} />
         </div>
 
         {/* Room Title */}
-        <h3 className="font-semibold text-lg text-white group-hover:text-violet-300 transition-colors line-clamp-1 mb-1">
+        <h3
+          onClick={() => onPreview?.(room)}
+          className="font-semibold text-lg text-white group-hover:text-violet-300 transition-colors line-clamp-1 mb-1 cursor-pointer"
+          title="Click to preview room"
+        >
           {room.name}
         </h3>
 
@@ -115,11 +150,11 @@ export function RoomCard({ room, className }: RoomCardProps) {
         </div>
       </div>
 
-      {/* Footer bar: Occupancy, Availability indicator & View Lounge action */}
-      <div className="flex items-center justify-between pt-3 border-t border-white/5">
-        <div className="flex items-center gap-2.5">
+      {/* Footer bar: Occupancy, Availability indicator & Dual Actions */}
+      <div className="flex items-center justify-between pt-3 border-t border-white/5 gap-2">
+        <div className="flex items-center gap-2">
           {/* Singer occupancy count */}
-          <div className="flex items-center gap-1.5 text-xs text-slate-300">
+          <div className="flex items-center gap-1 text-xs text-slate-300">
             <Users className="w-3.5 h-3.5 text-violet-400" />
             <span className="font-semibold text-white">{room.currentParticipantsCount}</span>
             <span className="text-slate-500">/</span>
@@ -128,30 +163,77 @@ export function RoomCard({ room, className }: RoomCardProps) {
 
           {/* Availability pill */}
           {isClosed ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
               <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
               Closed
             </span>
           ) : isFull ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
               Full
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              Available
+              Open
             </span>
           )}
         </div>
 
-        <Link
-          href={`/rooms/${room.id}`}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white shadow-sm hover:shadow-violet-500/25 transition-all group/btn"
-        >
-          <span>View Lounge</span>
-          <ArrowRight className="w-3 h-3 group-hover/btn:translate-x-0.5 transition-transform" />
-        </Link>
+        {/* Dual Actions: Preview & Join */}
+        <div className="flex items-center gap-1.5">
+          {onPreview && (
+            <button
+              type="button"
+              onClick={() => onPreview(room)}
+              className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 transition-colors focus:outline-none focus:ring-1 focus:ring-violet-400"
+              title="Preview room details"
+              aria-label={`Preview ${room.name}`}
+            >
+              <Eye className="w-3.5 h-3.5 text-slate-400" />
+              <span className="hidden sm:inline">Preview</span>
+            </button>
+          )}
+
+          {onQuickJoin ? (
+            <button
+              type="button"
+              onClick={() => onQuickJoin(room)}
+              disabled={isClosed || isFull || isJoining}
+              className={cn(
+                'inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg text-white shadow-sm transition-all group/btn',
+                isClosed || isFull
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5'
+                  : 'bg-violet-600 hover:bg-violet-500 shadow-violet-500/25 active:scale-95'
+              )}
+              aria-label={`Join ${room.name}`}
+            >
+              {isJoining ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Joining...</span>
+                </>
+              ) : isClosed ? (
+                <span>Closed</span>
+              ) : isFull ? (
+                <span>Full</span>
+              ) : (
+                <>
+                  <span>Join</span>
+                  <ArrowRight className="w-3 h-3 group-hover/btn:translate-x-0.5 transition-transform" />
+                </>
+              )}
+            </button>
+          ) : (
+            <Link
+              href={`/rooms/${room.id}`}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white shadow-sm hover:shadow-violet-500/25 transition-all group/btn"
+            >
+              <span>View Lounge</span>
+              <ArrowRight className="w-3 h-3 group-hover/btn:translate-x-0.5 transition-transform" />
+            </Link>
+          )}
+        </div>
       </div>
     </div>
   );

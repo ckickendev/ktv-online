@@ -17,14 +17,21 @@ import {
   Compass,
   Loader2,
   Sparkles,
+  Radio,
+  Clock,
+  Sparkle,
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { RoomCard } from '@/components/shared/room-card';
 import { RoomCardSkeleton } from '@/components/shared/room-card-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { RoomPreviewDialog } from '@/components/rooms/room-preview-dialog';
 import { useRooms } from '@/hooks/queries/use-rooms';
+import { useJoinRoom } from '@/hooks/queries/use-room';
+import { useAuth } from '@/hooks/use-auth';
 import { useUserPreferences } from '@/hooks/queries/use-user-preferences';
 import {
+  RoomDto,
   RoomCategory,
   RoomStatus,
   RoomType,
@@ -84,7 +91,15 @@ function RoomDiscoveryContent() {
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
 
+  const { isAuthenticated } = useAuth();
   const { preferences: userPreferences } = useUserPreferences();
+  const joinMutation = useJoinRoom();
+
+  // Preview & Joining State
+  const [previewRoom, setPreviewRoom] = useState<RoomDto | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   // Read URL parameters
   const initialSearch = searchParams.get('search') || '';
@@ -193,10 +208,58 @@ function RoomDiscoveryContent() {
 
   const handleClearAllFilters = () => {
     setSearchInput('');
+    setJoinError(null);
     startTransition(() => {
       router.replace(pathname, { scroll: false });
     });
   };
+
+  // Preview Handlers
+  const handleOpenPreview = useCallback((room: RoomDto) => {
+    setJoinError(null);
+    setPreviewRoom(room);
+    setIsPreviewOpen(true);
+  }, []);
+
+  const handleClosePreview = useCallback(() => {
+    setIsPreviewOpen(false);
+  }, []);
+
+  // Quick Join Handler (Authoritative join mutation with error feedback)
+  const handleQuickJoin = useCallback(
+    async (room: RoomDto) => {
+      setJoinError(null);
+      if (!isAuthenticated) {
+        router.push(`/login?redirect=/rooms/${room.id}`);
+        return;
+      }
+
+      setJoiningRoomId(room.id);
+      try {
+        await joinMutation.mutateAsync(room.id);
+        router.push(`/rooms/${room.id}`);
+      } catch (err: unknown) {
+        let message = 'Unable to join lounge. Please try again.';
+        if (err && typeof err === 'object') {
+          const apiErr = err as { message?: string; status?: number; error?: string };
+          if (apiErr.status === 409 || apiErr.message?.includes('capacity') || apiErr.error === 'ROOM_FULL') {
+            message = 'This lounge is currently at maximum capacity.';
+          } else if (apiErr.status === 400 || apiErr.message?.includes('closed') || apiErr.error === 'ROOM_CLOSED') {
+            message = 'This lounge is closed and is no longer accepting new singers.';
+          } else if (apiErr.status === 403 || apiErr.message?.includes('removed') || apiErr.error === 'FORBIDDEN_KICKED') {
+            message = 'You were removed from this lounge by the host and cannot rejoin.';
+          } else if (apiErr.status === 403 || apiErr.message?.includes('private') || apiErr.error === 'PRIVATE_ROOM') {
+            message = 'This lounge is private. Only invited guests may enter.';
+          } else if (apiErr.message) {
+            message = apiErr.message;
+          }
+        }
+        setJoinError(message);
+        setJoiningRoomId(null);
+      }
+    },
+    [isAuthenticated, joinMutation, router]
+  );
 
   // Active query parameters for API call
   const queryFilters = useMemo(
@@ -315,13 +378,13 @@ function RoomDiscoveryContent() {
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-300 text-xs font-semibold uppercase tracking-wider mb-3">
               <Compass className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Social Karaoke Lobby</span>
+              <span>Social Karaoke Lounge Lobby</span>
             </div>
             <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
               Discover Your Next Stage
             </h1>
             <p className="text-sm sm:text-base text-slate-400 mt-2 max-w-xl">
-              Find a lounge, meet new singers, and make tonight unforgettable.
+              Preview live lounges, find your people, and step into the spotlight.
             </p>
           </div>
 
@@ -354,7 +417,7 @@ function RoomDiscoveryContent() {
                 type="text"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Search rooms, music moods, or karaoke lounges..."
+                placeholder="Search lounges, music moods, or singer rooms..."
                 className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-[#090c15] border border-white/10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 transition-colors"
               />
               {isFetching && (
@@ -380,7 +443,7 @@ function RoomDiscoveryContent() {
                 aria-label="Sort Lounges"
                 value={initialSortBy}
                 onChange={(e) => handleSortChange(e.target.value as RoomSortBy)}
-                className="bg-[#090c15] border border-white/10 text-xs text-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-violet-500 cursor-pointer w-full md:w-auto"
+                className="w-full md:w-auto bg-[#090c15] border border-white/10 text-xs text-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-violet-500 cursor-pointer"
               >
                 {SORT_OPTIONS.map((opt) => (
                   <option key={opt.id} value={opt.id}>
@@ -391,10 +454,10 @@ function RoomDiscoveryContent() {
             </div>
           </div>
 
-          {/* Filter Toolbar Controls */}
-          <div className="pt-3 border-t border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              <div className="flex items-center gap-1.5 text-slate-400 mr-1">
+          {/* Secondary Filter Controls Toolbar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400 mr-1">
                 <SlidersHorizontal className="w-3.5 h-3.5 text-violet-400" />
                 <span className="font-medium">Filters:</span>
               </div>
@@ -467,8 +530,9 @@ function RoomDiscoveryContent() {
           </div>
         </div>
 
-        {/* Category Navigation Pills */}
+        {/* Quick Discovery Category Presets & Category Navigation Pills */}
         <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-6 scrollbar-none">
+          {/* Quick Preset: For You */}
           {userTopGenreCategory && (
             <button
               onClick={() => handleCategoryChange(userTopGenreCategory)}
@@ -482,6 +546,51 @@ function RoomDiscoveryContent() {
               <span>For You</span>
             </button>
           )}
+
+          {/* Quick Preset: Singing Now */}
+          <button
+            onClick={() => handleStatusChange(initialStatus === 'singing' ? 'all' : 'singing')}
+            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border flex items-center gap-1.5 ${
+              initialStatus === 'singing'
+                ? 'bg-rose-600 text-white border-rose-500 shadow-md shadow-rose-600/30'
+                : 'bg-white/5 text-slate-400 hover:text-white border-white/5 hover:border-white/15'
+            }`}
+          >
+            <Radio className="w-3 h-3 text-rose-400" />
+            <span>Singing Now</span>
+          </button>
+
+          {/* Quick Preset: Open Slots */}
+          <button
+            onClick={() =>
+              handleAvailabilityChange(initialAvailability === 'available' ? 'all' : 'available')
+            }
+            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border flex items-center gap-1.5 ${
+              initialAvailability === 'available'
+                ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-600/30'
+                : 'bg-white/5 text-slate-400 hover:text-white border-white/5 hover:border-white/15'
+            }`}
+          >
+            <Sparkle className="w-3 h-3 text-emerald-400" />
+            <span>Open Slots</span>
+          </button>
+
+          {/* Quick Preset: Recently Created */}
+          <button
+            onClick={() => handleSortChange(initialSortBy === 'newest' ? 'popular' : 'newest')}
+            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border flex items-center gap-1.5 ${
+              initialSortBy === 'newest'
+                ? 'bg-violet-600 text-white border-violet-500 shadow-md shadow-violet-600/30'
+                : 'bg-white/5 text-slate-400 hover:text-white border-white/5 hover:border-white/15'
+            }`}
+          >
+            <Clock className="w-3 h-3 text-cyan-400" />
+            <span>Recently Created</span>
+          </button>
+
+          <div className="w-[1px] h-4 bg-white/10 shrink-0 mx-1" />
+
+          {/* Genre Category Pills */}
           {CATEGORIES.map((cat) => {
             const isSelected = initialCategory === cat.id;
             return (
@@ -519,6 +628,26 @@ function RoomDiscoveryContent() {
                 </button>
               </span>
             ))}
+          </div>
+        )}
+
+        {/* Global Join Error Alert */}
+        {joinError && (
+          <div
+            data-testid="discovery-join-error-banner"
+            className="p-3.5 mb-6 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs sm:text-sm flex items-center justify-between gap-3 animate-in fade-in"
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{joinError}</span>
+            </div>
+            <button
+              onClick={() => setJoinError(null)}
+              className="p-1 hover:bg-rose-500/20 rounded-lg text-rose-300 hover:text-white transition-colors"
+              aria-label="Dismiss error"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 
@@ -560,7 +689,13 @@ function RoomDiscoveryContent() {
         ) : rooms.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {rooms.map((room) => (
-              <RoomCard key={room.id} room={room} />
+              <RoomCard
+                key={room.id}
+                room={room}
+                onPreview={handleOpenPreview}
+                onQuickJoin={handleQuickJoin}
+                isJoining={joiningRoomId === room.id}
+              />
             ))}
           </div>
         ) : (
@@ -619,6 +754,17 @@ function RoomDiscoveryContent() {
             </button>
           </div>
         )}
+
+        {/* Room Preview Modal Dialog */}
+        <RoomPreviewDialog
+          room={previewRoom}
+          isOpen={isPreviewOpen}
+          onClose={handleClosePreview}
+          onJoin={handleQuickJoin}
+          isJoining={previewRoom ? joiningRoomId === previewRoom.id : false}
+          isAuthenticated={isAuthenticated}
+          joinError={joinError}
+        />
       </PageContainer>
     </div>
   );
