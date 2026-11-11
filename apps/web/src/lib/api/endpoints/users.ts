@@ -2,6 +2,8 @@ import { apiClient } from '../client';
 import {
   CreateUserDto,
   UserDto,
+  UpdateProfileDto,
+  PublicUserProfileDto,
   UserPreferencesDto,
   UpdateUserPreferencesDto,
 } from '@ktv/contracts';
@@ -16,6 +18,14 @@ export const userApi = {
 
   async getProfile(userId: string): Promise<UserDto> {
     return apiClient.get<UserDto>(`/users/${userId}`);
+  },
+
+  async getPublicProfile(userId: string): Promise<PublicUserProfileDto> {
+    return apiClient.get<PublicUserProfileDto>(`/users/${userId}`);
+  },
+
+  async updateProfile(data: UpdateProfileDto): Promise<UserDto> {
+    return apiClient.patch<UserDto>('/users/me', data);
   },
 
   async getPreferences(): Promise<UserPreferencesDto> {

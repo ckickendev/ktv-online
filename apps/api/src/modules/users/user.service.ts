@@ -4,6 +4,8 @@ import { IUserDocument } from './user.types.js';
 import {
   CreateUserDto,
   UpdateUserDto,
+  UpdateProfileDto,
+  PublicUserProfileDto,
   UserPreferencesDto,
   UpdateUserPreferencesDto,
   DEFAULT_USER_PREFERENCES,
@@ -52,6 +54,45 @@ export class UserService {
     }
 
     return updated;
+  }
+
+  async updateProfile(userId: string, data: UpdateProfileDto): Promise<IUserDocument | null> {
+    const updateObj: Record<string, unknown> = {};
+    if (data.displayName !== undefined) {
+      updateObj.displayName = data.displayName ? data.displayName.trim() : null;
+    }
+    if (data.bio !== undefined) {
+      updateObj.bio = data.bio ? data.bio.trim() : null;
+    }
+    if (data.avatar !== undefined) {
+      updateObj.avatar = data.avatar ? data.avatar.trim() : null;
+    }
+
+    return UserModel.findByIdAndUpdate(
+      userId,
+      { $set: updateObj },
+      { new: true, runValidators: true }
+    ).exec();
+  }
+
+  async getPublicProfile(userId: string): Promise<PublicUserProfileDto | null> {
+    const user = await UserModel.findById(userId).exec();
+    if (!user) {
+      return null;
+    }
+
+    return {
+      id: user._id.toString(),
+      username: user.username,
+      displayName: user.displayName ?? null,
+      avatar: user.avatar ?? null,
+      bio: user.bio ?? null,
+      role: user.role,
+      createdAt: user.createdAt.toISOString(),
+      favoriteGenres: user.preferences?.preferredGenres,
+      favoriteLanguages: user.preferences?.preferredLanguages,
+      participationStyle: user.preferences?.participationStyle,
+    };
   }
 
   async getPreferences(userId: string): Promise<UserPreferencesDto> {

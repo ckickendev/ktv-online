@@ -22,6 +22,7 @@ export const queryKeys = {
   users: {
     all: ['users'] as const,
     profile: (id: string) => [...queryKeys.users.all, 'profile', id] as const,
+    publicProfile: (id: string) => [...queryKeys.users.all, 'publicProfile', id] as const,
     preferences: () => [...queryKeys.users.all, 'preferences'] as const,
   },
   chat: {

@@ -7,7 +7,9 @@ export interface CurrentUserDto {
   id: string;
   username: string;
   role: string;
+  displayName?: string | null;
   avatar?: string | null;
+  bio?: string | null;
 }
 
 export const authApi = {

@@ -37,7 +37,7 @@ export function RoomCard({
   const isClosed = room.status === 'closed';
   const isFull = !isClosed && room.currentParticipantsCount >= room.capacity;
 
-  const hostUsername = room.host?.username || 'Lounge Host';
+  const hostName = room.host?.displayName || room.host?.username || 'Lounge Host';
   const hostAvatar = room.host?.avatar;
 
   const atmosphereConfig = room.atmospherePreset
@@ -110,14 +110,14 @@ export function RoomCard({
         {/* Host attribution */}
         <div className="flex items-center gap-2 mb-2.5">
           <UserAvatar
-            name={hostUsername}
+            name={hostName}
             avatarUrl={hostAvatar}
             size="sm"
             className="w-5 h-5 text-[10px]"
           />
           <span className="text-xs text-slate-400 truncate flex items-center gap-1">
             <span>Hosted by</span>
-            <span className="text-slate-200 font-medium">{hostUsername}</span>
+            <span className="text-slate-200 font-medium">{hostName}</span>
             {isVip && <ShieldCheck className="w-3 h-3 text-amber-400 inline" />}
           </span>
         </div>

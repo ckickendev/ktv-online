@@ -94,6 +94,7 @@ const RoomSchema = new Schema<IRoomDocument>(
               _id?: unknown;
               id?: unknown;
               username: string;
+              displayName?: string | null;
               avatar?: string | null;
             };
             const hostId =
@@ -101,6 +102,7 @@ const RoomSchema = new Schema<IRoomDocument>(
             ret.host = {
               id: hostId,
               username: hostUser.username,
+              displayName: hostUser.displayName ?? null,
               avatar: hostUser.avatar ?? null,
             };
             ret.ownerId = hostId;

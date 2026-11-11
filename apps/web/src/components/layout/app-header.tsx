@@ -93,9 +93,14 @@ export function AppHeader() {
                 className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/5 transition-colors group"
                 title="View Profile"
               >
-                <UserAvatar name={user?.username || 'Singer'} status="online" size="sm" />
+                <UserAvatar
+                  name={user?.displayName || user?.username || 'Singer'}
+                  avatarUrl={user?.avatar}
+                  status="online"
+                  size="sm"
+                />
                 <span className="text-xs font-semibold text-slate-300 group-hover:text-white hidden xl:inline">
-                  {user?.username}
+                  {user?.displayName || user?.username}
                 </span>
               </Link>
 
@@ -130,7 +135,12 @@ export function AppHeader() {
         <div className="md:hidden flex items-center gap-2">
           {isAuthenticated && (
             <Link href="/profile">
-              <UserAvatar name={user?.username || 'Singer'} status="online" size="sm" />
+              <UserAvatar
+                name={user?.displayName || user?.username || 'Singer'}
+                avatarUrl={user?.avatar}
+                status="online"
+                size="sm"
+              />
             </Link>
           )}
           <button

@@ -21,7 +21,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const payload = verifyAccessToken(token);
 
     // Verify user exists and status is active in database
-    const user = await UserModel.findById(payload.sub).select('status role username').exec();
+    const user = await UserModel.findById(payload.sub)
+      .select('status role username displayName avatar bio')
+      .exec();
     if (!user) {
       sendError(res, 'User account no longer exists', 401);
       return;
@@ -35,6 +37,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.user = {
       id: user._id.toString(),
       username: user.username,
+      displayName: user.displayName ?? null,
+      avatar: user.avatar ?? null,
+      bio: user.bio ?? null,
       role: user.role as UserRole,
     };
 
@@ -78,11 +83,16 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
 
   try {
     const payload = verifyAccessToken(token);
-    const user = await UserModel.findById(payload.sub).select('status role username').exec();
+    const user = await UserModel.findById(payload.sub)
+      .select('status role username displayName avatar bio')
+      .exec();
     if (user && user.status === 'active') {
       req.user = {
         id: user._id.toString(),
         username: user.username,
+        displayName: user.displayName ?? null,
+        avatar: user.avatar ?? null,
+        bio: user.bio ?? null,
         role: user.role as UserRole,
       };
     }

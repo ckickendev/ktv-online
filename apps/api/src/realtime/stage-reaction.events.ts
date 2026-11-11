@@ -119,6 +119,7 @@ export function registerStageReactionEvents(
           sender: {
             id: user.id,
             username: user.username,
+            displayName: user.displayName || user.username,
             avatar: user.avatar,
           },
           timestamp: new Date().toISOString(),

@@ -57,6 +57,7 @@ const RoomMembershipSchema = new Schema<IRoomMembershipDocument>(
               _id?: unknown;
               id?: unknown;
               username: string;
+              displayName?: string | null;
               avatar?: string | null;
             };
             const userIdStr =
@@ -64,6 +65,7 @@ const RoomMembershipSchema = new Schema<IRoomMembershipDocument>(
             ret.user = {
               id: userIdStr,
               username: userDoc.username,
+              displayName: userDoc.displayName ?? null,
               avatar: userDoc.avatar ?? null,
             };
             ret.userId = userIdStr;

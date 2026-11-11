@@ -16,9 +16,9 @@ export interface GenerateVoiceTokenParams {
   user: {
     id: string;
     username: string;
-    displayName?: string;
-    avatar?: string;
-    avatarUrl?: string;
+    displayName?: string | null;
+    avatar?: string | null;
+    avatarUrl?: string | null;
     familyId?: string;
   };
   tabId?: string;

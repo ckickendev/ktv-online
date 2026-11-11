@@ -39,6 +39,7 @@ export function registerChatEvents(io: Server, socket: Socket<any, any, any, Aut
           {
             id: user.id,
             username: user.username,
+            displayName: user.displayName,
             avatar: user.avatar,
           },
           content,

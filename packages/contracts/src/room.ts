@@ -25,6 +25,7 @@ export type RoomAtmospherePreset = z.infer<typeof RoomAtmospherePresetSchema>;
 export const HostDtoSchema = z.object({
   id: z.string(),
   username: z.string(),
+  displayName: z.string().nullable().optional(),
   avatar: z.string().nullable().optional(),
 });
 export type HostDto = z.infer<typeof HostDtoSchema>;

@@ -160,7 +160,7 @@ export function RoomIdentityDialog({
                 {host?.avatar ? (
                   <Image
                     src={host.avatar}
-                    alt={host.username}
+                    alt={host.displayName || host.username}
                     fill
                     className="object-cover"
                     sizes="32px"
@@ -173,7 +173,7 @@ export function RoomIdentityDialog({
               <div className="min-w-0">
                 <span className="text-[10px] uppercase font-semibold text-slate-400 block">Host</span>
                 <span className="text-xs font-bold text-white truncate block">
-                  {host?.username || 'Lounge Host'}
+                  {host?.displayName || host?.username || 'Lounge Host'}
                 </span>
               </div>
             </div>

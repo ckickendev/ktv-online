@@ -18,6 +18,7 @@ export type SendStageReactionPayload = z.infer<typeof SendStageReactionPayloadSc
 export const StageReactionSenderSchema = z.object({
   id: z.string(),
   username: z.string(),
+  displayName: z.string().nullable().optional(),
   avatar: z.string().nullable().optional(),
 });
 export type StageReactionSender = z.infer<typeof StageReactionSenderSchema>;

@@ -8,6 +8,7 @@ export interface AuthenticatedSocketData {
   user: {
     id: string;
     username: string;
+    displayName?: string | null;
     role: UserRole;
     avatar?: string | null;
     familyId?: string;
@@ -44,7 +45,9 @@ export async function socketAuthMiddleware(
     const payload = verifyAccessToken(token);
 
     // Validate user in MongoDB and verify active status
-    const user = await UserModel.findById(payload.sub).select('status role username avatar').exec();
+    const user = await UserModel.findById(payload.sub)
+      .select('status role username displayName avatar')
+      .exec();
     if (!user) {
       logger.warn({ sub: payload.sub, socketId: socket.id }, 'Socket connection rejected: User not found');
       const err = new Error('User account no longer exists');
@@ -66,6 +69,7 @@ export async function socketAuthMiddleware(
     socket.data.user = {
       id: user._id.toString(),
       username: user.username,
+      displayName: user.displayName ?? null,
       role: user.role as UserRole,
       avatar: user.avatar ?? null,
       familyId: payload.familyId,

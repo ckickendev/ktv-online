@@ -53,7 +53,7 @@ export function RoomPreviewDialog({
   const isVip = room.roomType === 'vip';
   const isParty = room.roomType === 'party';
 
-  const hostUsername = room.host?.username || 'Lounge Host';
+  const hostName = room.host?.displayName || room.host?.username || 'Lounge Host';
   const hostAvatar = room.host?.avatar;
 
   const atmosphereConfig = room.atmospherePreset
@@ -143,14 +143,14 @@ export function RoomPreviewDialog({
             </h2>
             <div className="flex items-center gap-2 mt-2">
               <UserAvatar
-                name={hostUsername}
+                name={hostName}
                 avatarUrl={hostAvatar}
                 size="sm"
                 className="w-5 h-5 text-[10px]"
               />
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <span>Hosted by</span>
-                <span className="text-slate-200 font-medium">{hostUsername}</span>
+                <span className="text-slate-200 font-medium">{hostName}</span>
                 {isVip && <ShieldCheck className="w-3 h-3 text-amber-400 inline" />}
               </span>
             </div>

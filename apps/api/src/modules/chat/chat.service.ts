@@ -79,7 +79,7 @@ export class ChatService {
    */
   async sendMessage(
     roomId: string,
-    user: { id: string; username: string; avatar?: string | null },
+    user: { id: string; username: string; displayName?: string | null; avatar?: string | null },
     content: string,
     clientMessageId?: string
   ): Promise<SendMessageResult> {
@@ -157,7 +157,7 @@ export class ChatService {
       const messageDoc = await RoomMessageModel.create({
         roomId: roomObjectId,
         senderId: userObjectId,
-        senderUsername: user.username,
+        senderUsername: user.displayName || user.username,
         senderAvatar: user.avatar ?? null,
         senderRole,
         content: trimmedContent,

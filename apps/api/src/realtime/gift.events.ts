@@ -206,7 +206,7 @@ export function registerGiftEvents(
           sender: {
             id: user.id,
             username: user.username,
-            displayName: user.username,
+            displayName: user.displayName || user.username,
             avatar: user.avatar,
           },
           recipient: {

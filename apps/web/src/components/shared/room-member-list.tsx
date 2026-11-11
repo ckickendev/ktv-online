@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Crown, Users, RefreshCw, AlertCircle, UserX, Mic, MicOff, Mic2 } from 'lucide-react';
 import { UserAvatar } from './user-avatar';
+import { UserProfileModal } from '../profile/user-profile-modal';
 import { useRoomMembers } from '@/hooks/queries/use-room';
 import { cn } from '@/lib/utils';
 import { RoomMembershipDto } from '@ktv/contracts';
@@ -39,6 +40,8 @@ export function RoomMemberList({
   const isError = propMembers ? false : queryResult.isError;
   const error = propMembers ? null : queryResult.error;
   const isFetching = propMembers ? false : queryResult.isFetching;
+
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const handleRefresh = () => {
     if (propOnRefresh) {
@@ -169,6 +172,7 @@ export function RoomMemberList({
             .map((m) => {
               const isCurrentUser = Boolean(currentUserId && m.userId === currentUserId);
               const username = m.user?.username ?? 'Member';
+              const displayName = m.user?.displayName || username;
               const isOnline = onlineUserIds ? onlineUserIds.has(m.userId) : true;
               const userSessions = voiceParticipants
                 ? voiceParticipants.filter((p) => p.userId === m.userId)
@@ -180,7 +184,7 @@ export function RoomMemberList({
 
               const isSinger = Boolean(
                 (currentSingerUserId && m.userId === currentSingerUserId) ||
-                (currentSingerName && username === currentSingerName)
+                (currentSingerName && (username === currentSingerName || displayName === currentSingerName))
               );
 
               return (
@@ -197,9 +201,14 @@ export function RoomMemberList({
                   )}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUserId(m.userId)}
+                      className="relative shrink-0 text-left transition-transform hover:scale-105"
+                      title={`View ${displayName}'s profile`}
+                    >
                       <UserAvatar
-                        name={username}
+                        name={displayName}
                         avatarUrl={m.user?.avatar}
                         size="sm"
                         status={isOnline ? 'online' : 'offline'}
@@ -210,12 +219,22 @@ export function RoomMemberList({
                       {isSpeaking && (
                         <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-black animate-pulse" />
                       )}
-                    </div>
+                    </button>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-semibold text-slate-200 truncate">
-                          {username}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedUserId(m.userId)}
+                          className="text-xs font-semibold text-slate-200 hover:text-white hover:underline truncate text-left"
+                          title={`View ${displayName}'s profile`}
+                        >
+                          {displayName}
+                        </button>
+                        {m.user?.displayName && (
+                          <span className="text-[10px] text-slate-400 truncate">
+                            @{m.user.username}
+                          </span>
+                        )}
                         {isCurrentUser && (
                           <span className="text-[10px] text-cyan-400 font-medium">(You)</span>
                         )}
@@ -300,6 +319,12 @@ export function RoomMemberList({
       <div className="pt-3 border-t border-white/5 mt-3 text-[10px] text-slate-500 text-center">
         {onlineUserIds ? 'Live Presence Connected' : 'Refreshed snapshot • Non-realtime'}
       </div>
+
+      <UserProfileModal
+        userId={selectedUserId}
+        isOpen={Boolean(selectedUserId)}
+        onClose={() => setSelectedUserId(null)}
+      />
     </div>
   );
 }

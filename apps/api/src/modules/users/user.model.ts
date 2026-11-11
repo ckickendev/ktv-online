@@ -12,6 +12,12 @@ const UserSchema = new Schema<IUserDocument>(
       minlength: 3,
       maxlength: 30,
     },
+    displayName: {
+      type: String,
+      trim: true,
+      default: null,
+      maxlength: 32,
+    },
     email: {
       type: String,
       required: true,
@@ -26,6 +32,12 @@ const UserSchema = new Schema<IUserDocument>(
     avatar: {
       type: String,
       default: null,
+    },
+    bio: {
+      type: String,
+      trim: true,
+      default: null,
+      maxlength: 160,
     },
     role: {
       type: String,

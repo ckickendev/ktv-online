@@ -133,7 +133,7 @@ export type QueueItemStatus = z.infer<typeof QueueItemStatusSchema>;
 export const RoomQueueRequesterDtoSchema = z.object({
   id: z.string(),
   username: z.string(),
-  displayName: z.string().optional(),
+  displayName: z.string().nullable().optional(),
   avatar: z.string().nullable().optional(),
 });
 export type RoomQueueRequesterDto = z.infer<typeof RoomQueueRequesterDtoSchema>;

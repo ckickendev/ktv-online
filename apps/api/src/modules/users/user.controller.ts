@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { Types } from 'mongoose';
 import { userService } from './user.service.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
-import { CreateUserDto } from '@ktv/contracts';
+import { CreateUserDto, UpdateProfileDto } from '@ktv/contracts';
 
 export class UserController {
   async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -13,19 +13,44 @@ export class UserController {
         return;
       }
 
+      // Security: Third parties receive sanitized public profile without email or private UI settings
+      if (!req.user || req.user.id !== userId) {
+        const publicProfile = await userService.getPublicProfile(userId);
+        if (!publicProfile) {
+          sendError(res, 'User not found', 404);
+          return;
+        }
+        sendSuccess(res, publicProfile, 'User profile retrieved successfully');
+        return;
+      }
+
       const user = await userService.findById(userId);
       if (!user) {
         sendError(res, 'User not found', 404);
         return;
       }
 
-      const userJson = user.toJSON() as Record<string, unknown>;
-      // Security: Do not expose email to third parties unless viewing own profile
-      if (!req.user || req.user.id !== userId) {
-        delete userJson.email;
+      sendSuccess(res, user.toJSON(), 'User retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        sendError(res, 'Unauthorized', 401);
+        return;
       }
 
-      sendSuccess(res, userJson, 'User retrieved successfully');
+      const data = req.body as UpdateProfileDto;
+      const updatedUser = await userService.updateProfile(req.user.id, data);
+      if (!updatedUser) {
+        sendError(res, 'User not found', 404);
+        return;
+      }
+
+      sendSuccess(res, updatedUser.toJSON(), 'Profile updated successfully');
     } catch (error) {
       next(error);
     }
