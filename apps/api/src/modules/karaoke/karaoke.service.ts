@@ -531,10 +531,10 @@ export class KaraokeService {
       throw new Error('QUEUE_ITEM_NOT_FOUND');
     }
 
-    // 3. Authorization: requester or host
+    // 3. Authorization: requester, host, or moderator
     const isRequester = item.requestedBy.toString() === userId;
-    const isHost = membership.role === 'host';
-    if (!isRequester && !isHost) {
+    const isHostOrMod = membership.role === 'host' || membership.role === 'moderator';
+    if (!isRequester && !isHostOrMod) {
       throw new Error('FORBIDDEN_UNAUTHORIZED_REMOVE');
     }
 
@@ -603,17 +603,17 @@ export class KaraokeService {
       throw new Error('FORBIDDEN_ROOM_CLOSED');
     }
 
-    // 2. Verify host role
+    // 2. Verify host or moderator role
     const membership = await RoomMembershipModel.findOne({
       roomId: roomObjectId,
       userId: userObjectId,
       status: 'active',
-      role: 'host',
+      role: { $in: ['host', 'moderator'] },
       kickedAt: null,
     }).exec();
 
     if (!membership) {
-      throw new Error('FORBIDDEN_HOST_ONLY');
+      throw new Error('FORBIDDEN_NOT_AUTHORIZED');
     }
 
     // 3. Topology Guard (Option A): Standalone MongoDB cannot guarantee multi-document atomicity for reorder
@@ -771,8 +771,8 @@ export class KaraokeService {
       throw new Error('STALE_PLAYBACK_VERSION');
     }
 
-    // 5. Role authorization: host has full control; current singer may control their own active track
-    let isAuthorized = membership.role === 'host';
+    // 5. Role authorization: host or moderator has full control; current singer may control their own active track
+    let isAuthorized = membership.role === 'host' || membership.role === 'moderator';
     if (!isAuthorized && playbackState.currentQueueItemId) {
       const currentItem = await RoomQueueItemModel.findById(playbackState.currentQueueItemId).exec();
       if (currentItem && currentItem.requestedBy.toString() === userId) {
@@ -904,7 +904,7 @@ export class KaraokeService {
         const adv = await this.advanceToNextTrack(roomId, {
           expectedPlaybackVersion: playbackState.playbackVersion,
           expectedCurrentQueueItemId: playbackState.currentQueueItemId?.toString() || null,
-          reason: membership.role === 'host' ? 'host_skip' : 'singer_skip',
+          reason: membership.role === 'host' ? 'host_skip' : membership.role === 'moderator' ? 'moderator_skip' : 'singer_skip',
         });
         if (adv) return adv;
         break;

@@ -524,7 +524,11 @@ export class RoomController {
             sendError(res, 'Cannot kick from a closed room', 400);
             return;
           case 'FORBIDDEN_NOT_HOST':
-            sendError(res, 'Only the room host can remove members', 403);
+          case 'FORBIDDEN_NOT_AUTHORIZED':
+            sendError(res, 'Only the room host or a moderator can remove members', 403);
+            return;
+          case 'MODERATOR_CANNOT_KICK_MODERATOR':
+            sendError(res, 'Moderators cannot remove other moderators', 403);
             return;
           case 'CANNOT_KICK_SELF':
             sendError(res, 'Host cannot remove themselves from the room', 400);
@@ -542,6 +546,194 @@ export class RoomController {
       }
 
       sendSuccess(res, null, 'Member was removed from the room');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateMemberRole(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id: roomId, userId: targetUserId } = req.params;
+      const hostUserId = req.user?.id;
+      const { role } = req.body;
+
+      if (!hostUserId) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      if (!roomId || !targetUserId) {
+        sendError(res, 'Room ID and User ID are required', 400);
+        return;
+      }
+
+      const result = await roomService.updateMemberRole(roomId, hostUserId, targetUserId, role);
+
+      if (!result.success) {
+        switch (result.error) {
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'ROOM_CLOSED':
+            sendError(res, 'Cannot change roles in a closed room', 400);
+            return;
+          case 'FORBIDDEN_NOT_HOST':
+            sendError(res, 'Only the room host can assign or revoke moderator roles', 403);
+            return;
+          case 'CANNOT_CHANGE_HOST_ROLE':
+            sendError(res, 'Cannot change the role of the room host', 400);
+            return;
+          case 'NOT_A_MEMBER':
+            sendError(res, 'Target user is not an active member of this room', 404);
+            return;
+          default:
+            sendError(res, 'Failed to update member role', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, result.membership?.toJSON(), 'Member role updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async muteMember(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id: roomId, userId: targetUserId } = req.params;
+      const actorUserId = req.user?.id;
+      const { isMuted, reason } = req.body;
+
+      if (!actorUserId) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      if (!roomId || !targetUserId) {
+        sendError(res, 'Room ID and User ID are required', 400);
+        return;
+      }
+
+      const result = await roomService.muteMember(roomId, actorUserId, targetUserId, isMuted, reason);
+
+      if (!result.success) {
+        switch (result.error) {
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'ROOM_CLOSED':
+            sendError(res, 'Cannot moderate in a closed room', 400);
+            return;
+          case 'FORBIDDEN_NOT_AUTHORIZED':
+            sendError(res, 'Only the room host or a moderator can mute participants', 403);
+            return;
+          case 'CANNOT_MUTE_SELF':
+            sendError(res, 'Cannot mute yourself through moderation', 400);
+            return;
+          case 'CANNOT_MUTE_HOST':
+            sendError(res, 'Cannot mute the room host', 400);
+            return;
+          case 'MODERATOR_CANNOT_MUTE_MODERATOR':
+            sendError(res, 'Moderators cannot mute other moderators', 403);
+            return;
+          case 'NOT_A_MEMBER':
+            sendError(res, 'Target user is not an active member of this room', 404);
+            return;
+          default:
+            sendError(res, 'Failed to update member voice mute state', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, result.membership?.toJSON(), isMuted ? 'Participant voice muted' : 'Participant voice unmuted');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async transferHost(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id: roomId } = req.params;
+      const currentHostId = req.user?.id;
+      const { newHostUserId } = req.body;
+
+      if (!currentHostId) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      if (!roomId || !newHostUserId) {
+        sendError(res, 'Room ID and new host user ID are required', 400);
+        return;
+      }
+
+      const result = await roomService.transferHost(roomId, currentHostId, newHostUserId);
+
+      if (!result.success) {
+        switch (result.error) {
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'ROOM_CLOSED':
+            sendError(res, 'Cannot transfer ownership of a closed room', 400);
+            return;
+          case 'FORBIDDEN_NOT_HOST':
+            sendError(res, 'Only the current room host can transfer ownership', 403);
+            return;
+          case 'CANNOT_TRANSFER_TO_SELF':
+            sendError(res, 'You are already the host of this room', 400);
+            return;
+          case 'TARGET_NOT_ACTIVE_MEMBER':
+            sendError(res, 'New host must be an active member of the room', 400);
+            return;
+          default:
+            sendError(res, 'Failed to transfer host ownership', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, result.room?.toJSON(), 'Room ownership transferred successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async setRoomLock(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id: roomId } = req.params;
+      const hostUserId = req.user?.id;
+      const { isLocked } = req.body;
+
+      if (!hostUserId) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      if (!roomId || typeof isLocked !== 'boolean') {
+        sendError(res, 'Room ID and isLocked boolean are required', 400);
+        return;
+      }
+
+      const result = await roomService.setRoomLock(roomId, hostUserId, isLocked);
+
+      if (!result.success) {
+        switch (result.error) {
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'ROOM_CLOSED':
+            sendError(res, 'Cannot lock a closed room', 400);
+            return;
+          case 'FORBIDDEN_NOT_HOST':
+            sendError(res, 'Only the room host can lock or unlock the room', 403);
+            return;
+          default:
+            sendError(res, 'Failed to update room lock status', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, result.room?.toJSON(), isLocked ? 'Room locked successfully' : 'Room unlocked successfully');
     } catch (error) {
       next(error);
     }

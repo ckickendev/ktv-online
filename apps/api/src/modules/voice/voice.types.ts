@@ -21,5 +21,6 @@ export interface GenerateVoiceTokenOptions {
   participantIdentity: string;
   name?: string;
   metadata?: VoiceParticipantMetadata;
+  canPublish?: boolean;
   ttlSeconds?: number;
 }

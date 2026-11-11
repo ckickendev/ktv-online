@@ -111,7 +111,13 @@ export const RoomActivityTypeSchema = z.enum([
   'member_joined',
   'member_left',
   'member_kicked',
+  'member_role_updated',
+  'member_muted',
+  'member_unmuted',
   'room_settings_updated',
+  'room_host_transferred',
+  'room_locked',
+  'room_unlocked',
   'room_closed',
 ]);
 export type RoomActivityType = z.infer<typeof RoomActivityTypeSchema>;

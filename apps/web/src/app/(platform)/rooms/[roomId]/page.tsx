@@ -17,6 +17,8 @@ import {
   Settings,
   Sparkles,
   Lock,
+  Unlock,
+  Shield,
   Activity,
   X,
   PhoneCall,
@@ -32,13 +34,20 @@ import { LeaveRoomDialog } from '@/components/rooms/leave-room-dialog';
 import { RoomChatPanel } from '@/components/chat/room-chat-panel';
 import { RoomActivityTimeline } from '@/components/chat/room-activity-timeline';
 import { KickMemberDialog } from '@/components/rooms/kick-member-dialog';
+import { TransferHostDialog } from '@/components/rooms/transfer-host-dialog';
 import { RoomIdentityDialog } from '@/components/rooms/room-identity-dialog';
 import { RoomCustomizationDialog } from '@/components/rooms/room-customization-dialog';
 import {
   useJoinRoom,
   useLeaveRoom,
 } from '@/hooks/queries/use-room';
-import { useUpdateRoom } from '@/hooks/queries/use-room-mutations';
+import {
+  useUpdateRoom,
+  useUpdateMemberRole,
+  useMuteMember,
+  useTransferHost,
+  useSetRoomLock,
+} from '@/hooks/queries/use-room-mutations';
 import { useKickMember } from '@/hooks/queries/use-chat';
 import { useAuth } from '@/hooks/use-auth';
 import { useRoomState } from '@/hooks/use-room-state';
@@ -129,13 +138,28 @@ export default function RoomDetailPage() {
   const [kickTarget, setKickTarget] = useState<{ userId: string; username: string } | null>(null);
   const kickMutation = useKickMember(roomId);
 
+  const [transferTarget, setTransferTarget] = useState<{
+    userId: string;
+    username: string;
+    displayName?: string | null;
+  } | null>(null);
+
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const isMember = Boolean(viewer?.isMember);
   const isHost = isMember && viewer?.role === 'host';
+  const isModerator = isMember && viewer?.role === 'moderator';
+
+  // Sprint 3.8 Moderation Mutations
+  const updateRoleMutation = useUpdateMemberRole(roomId);
+  const muteMemberMutation = useMuteMember(roomId);
+  const transferHostMutation = useTransferHost(roomId);
+  const setRoomLockMutation = useSetRoomLock(roomId);
+
   const karaoke = useKaraoke(roomId, {
     enabled: Boolean(roomId),
     currentUserId: currentUser?.id,
     isHost,
+    isModerator,
     isMember,
     roomStatus: room?.status,
   });
@@ -222,6 +246,56 @@ export default function RoomDetailPage() {
     }
   };
 
+  const handleToggleLock = async () => {
+    if (!room) return;
+    try {
+      await setRoomLockMutation.mutateAsync(!room.isLocked);
+      refreshState();
+    } catch (err: unknown) {
+      console.error('Failed to toggle room lock:', err);
+    }
+  };
+
+  const handleMuteMember = async (targetUserId: string, _username: string, shouldMute: boolean) => {
+    try {
+      await muteMemberMutation.mutateAsync({
+        userId: targetUserId,
+        isMuted: shouldMute,
+      });
+      refreshState();
+    } catch (err: unknown) {
+      console.error(`Failed to ${shouldMute ? 'mute' : 'unmute'} member:`, err);
+    }
+  };
+
+  const handleUpdateRole = async (targetUserId: string, _username: string, newRole: 'moderator' | 'member') => {
+    try {
+      await updateRoleMutation.mutateAsync({
+        userId: targetUserId,
+        role: newRole,
+      });
+      refreshState();
+    } catch (err: unknown) {
+      console.error(`Failed to update role to ${newRole}:`, err);
+    }
+  };
+
+  const handleTransferHost = (targetUserId: string, targetUsername: string, displayName?: string | null) => {
+    setTransferTarget({ userId: targetUserId, username: targetUsername, displayName });
+  };
+
+  const handleConfirmTransferHost = async () => {
+    if (!transferTarget) return;
+    try {
+      await transferHostMutation.mutateAsync({ newHostUserId: transferTarget.userId });
+      setTransferTarget(null);
+      refreshState();
+    } catch (err: unknown) {
+      console.error('Failed to transfer host ownership:', err);
+      throw err;
+    }
+  };
+
   if (isRoomLoading) {
     return (
       <div className="flex-1 flex items-center justify-center py-20 bg-[#07090f]">
@@ -298,6 +372,16 @@ export default function RoomDetailPage() {
                   <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 </button>
                 <RoomStatusBadge status={room.status} />
+                {room.isLocked && (
+                  <span
+                    data-testid="room-locked-indicator"
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-300 bg-rose-500/10 border border-rose-500/30 px-1.5 py-0.5 rounded-md shrink-0"
+                    title="Lounge is locked to new participants"
+                  >
+                    <Lock className="w-2.5 h-2.5 text-rose-400" />
+                    Locked
+                  </span>
+                )}
                 {isPrivate && (
                   <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-md shrink-0">
                     <Lock className="w-2.5 h-2.5" />
@@ -432,6 +516,22 @@ export default function RoomDetailPage() {
                     </span>
                     <button
                       type="button"
+                      data-testid="toggle-room-lock-button"
+                      onClick={handleToggleLock}
+                      disabled={setRoomLockMutation.isPending}
+                      className={cn(
+                        'flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all active:scale-95',
+                        room.isLocked
+                          ? 'bg-rose-500/20 text-rose-200 border-rose-500/40 hover:bg-rose-500/30'
+                          : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
+                      )}
+                      title={room.isLocked ? 'Unlock lounge to allow new participants' : 'Lock lounge to prevent new participants from joining'}
+                    >
+                      {room.isLocked ? <Lock className="w-3.5 h-3.5 text-rose-400" /> : <Unlock className="w-3.5 h-3.5 text-slate-400" />}
+                      <span className="hidden md:inline">{room.isLocked ? 'Unlock' : 'Lock'}</span>
+                    </button>
+                    <button
+                      type="button"
                       data-testid="customize-atmosphere-button"
                       onClick={() => setIsCustomizationOpen(true)}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 text-violet-200 text-xs font-semibold border border-violet-500/30 transition-all active:scale-95"
@@ -450,17 +550,28 @@ export default function RoomDetailPage() {
                     </Link>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    data-testid="leave-room-button"
-                    onClick={() => setIsLeaveDialogOpen(true)}
-                    disabled={leaveMutation.isPending}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-medium border border-rose-500/30 transition-colors disabled:opacity-50"
-                    title="Leave karaoke room"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Leave Lounge</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {isModerator && (
+                      <span
+                        data-testid="moderator-status-indicator"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-sky-500/10 text-sky-300 border border-sky-500/30"
+                      >
+                        <Shield className="w-3.5 h-3.5 fill-sky-300" />
+                        Mod
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="leave-room-button"
+                      onClick={() => setIsLeaveDialogOpen(true)}
+                      disabled={leaveMutation.isPending}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-medium border border-rose-500/30 transition-colors disabled:opacity-50"
+                      title="Leave karaoke room"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Leave Lounge</span>
+                    </button>
+                  </div>
                 )}
               </div>
             ) : null}
@@ -520,6 +631,21 @@ export default function RoomDetailPage() {
           >
             Return to Lobby
           </button>
+        </div>
+      )}
+
+      {/* Muted by Moderation Notification Banner */}
+      {viewer?.isMuted && !effectiveIsKicked && (
+        <div
+          data-testid="viewer-muted-banner"
+          className="bg-amber-500/20 border-b border-amber-500/40 px-4 py-2.5 flex items-center justify-between text-xs text-amber-200"
+        >
+          <div className="flex items-center gap-2">
+            <MicOff className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Microphone Muted:</strong> You have been muted by room moderation. You cannot speak until unmuted by the host or a moderator.
+            </span>
+          </div>
         </div>
       )}
 
@@ -745,7 +871,7 @@ export default function RoomDetailPage() {
                   queue={karaoke.queue}
                   currentItem={karaoke.currentItem}
                   currentUserId={currentUser?.id}
-                  isHost={Boolean(isHost)}
+                  isHost={Boolean(isHost || isModerator)}
                   canAddSongs={karaoke.canAddSongs}
                   isMutating={karaoke.isMutating}
                   onRemove={karaoke.removeFromQueue}
@@ -781,7 +907,11 @@ export default function RoomDetailPage() {
                   members={members}
                   onlineUserIds={onlineUserIds}
                   isHost={isHost}
+                  isModerator={isModerator}
                   onKickMember={(userId, username) => setKickTarget({ userId, username })}
+                  onMuteMember={handleMuteMember}
+                  onUpdateRole={handleUpdateRole}
+                  onTransferHost={handleTransferHost}
                   onRefresh={refreshState}
                   voiceParticipants={voice.participants}
                   currentSingerName={karaoke.currentSingerName}
@@ -928,7 +1058,7 @@ export default function RoomDetailPage() {
                   queue={karaoke.queue}
                   currentItem={karaoke.currentItem}
                   currentUserId={currentUser?.id}
-                  isHost={Boolean(isHost)}
+                  isHost={Boolean(isHost || isModerator)}
                   canAddSongs={karaoke.canAddSongs}
                   isMutating={karaoke.isMutating}
                   onRemove={karaoke.removeFromQueue}
@@ -962,9 +1092,16 @@ export default function RoomDetailPage() {
                   members={members}
                   onlineUserIds={onlineUserIds}
                   isHost={isHost}
+                  isModerator={isModerator}
                   onKickMember={(userId, username) => {
                     setMobileDrawer(null);
                     setKickTarget({ userId, username });
+                  }}
+                  onMuteMember={handleMuteMember}
+                  onUpdateRole={handleUpdateRole}
+                  onTransferHost={(userId, username, displayName) => {
+                    setMobileDrawer(null);
+                    handleTransferHost(userId, username, displayName);
                   }}
                   onRefresh={refreshState}
                   voiceParticipants={voice.participants}
@@ -1004,6 +1141,18 @@ export default function RoomDetailPage() {
         }}
         onCancel={() => setKickTarget(null)}
       />
+
+      {/* Transfer Host Confirmation Dialog */}
+      {isHost && (
+        <TransferHostDialog
+          isOpen={Boolean(transferTarget)}
+          targetUsername={transferTarget?.username || ''}
+          targetDisplayName={transferTarget?.displayName}
+          isTransferring={transferHostMutation.isPending}
+          onConfirm={handleConfirmTransferHost}
+          onCancel={() => setTransferTarget(null)}
+        />
+      )}
 
       {/* Song Search & Queue Dialog */}
       <SongSearchDialog

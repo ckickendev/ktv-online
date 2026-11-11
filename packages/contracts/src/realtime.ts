@@ -95,6 +95,43 @@ export const PresenceUpdatedPayloadSchema = z.object({
 });
 export type PresenceUpdatedPayload = z.infer<typeof PresenceUpdatedPayloadSchema>;
 
+export const MemberRoleUpdatedPayloadSchema = z.object({
+  roomId: z.string(),
+  userId: z.string(),
+  role: z.enum(['host', 'moderator', 'member']),
+  updatedBy: z.string(),
+  correlationId: z.string().optional(),
+});
+export type MemberRoleUpdatedPayload = z.infer<typeof MemberRoleUpdatedPayloadSchema>;
+
+export const MemberMutedPayloadSchema = z.object({
+  roomId: z.string(),
+  userId: z.string(),
+  isMuted: z.boolean(),
+  mutedBy: z.string(),
+  reason: z.string().optional(),
+  correlationId: z.string().optional(),
+});
+export type MemberMutedPayload = z.infer<typeof MemberMutedPayloadSchema>;
+
+export const RoomLockUpdatedPayloadSchema = z.object({
+  roomId: z.string(),
+  isLocked: z.boolean(),
+  updatedBy: z.string(),
+  correlationId: z.string().optional(),
+});
+export type RoomLockUpdatedPayload = z.infer<typeof RoomLockUpdatedPayloadSchema>;
+
+export const RoomHostTransferredPayloadSchema = z.object({
+  roomId: z.string(),
+  previousHostId: z.string(),
+  newHostId: z.string(),
+  newHostUsername: z.string(),
+  newHostDisplayName: z.string().nullable().optional(),
+  correlationId: z.string().optional(),
+});
+export type RoomHostTransferredPayload = z.infer<typeof RoomHostTransferredPayloadSchema>;
+
 // Event Names Constants
 export const SOCKET_EVENTS = {
   CLIENT: {
@@ -121,6 +158,10 @@ export const SOCKET_EVENTS = {
     ROOM_STATE_EVENT: 'room:state:event',
     MEMBER_JOINED: 'room:member:joined',
     MEMBER_LEFT: 'room:member:left',
+    MEMBER_ROLE_UPDATED: 'room:member:role-updated',
+    MEMBER_MUTED: 'room:member:muted',
+    ROOM_LOCK_UPDATED: 'room:lock:updated',
+    ROOM_HOST_TRANSFERRED: 'room:host:transferred',
     ROOM_CLOSED: 'room:closed',
     PRESENCE_UPDATED: 'presence:updated',
     CHAT_MESSAGE_NEW: 'chat:message:new',

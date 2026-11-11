@@ -43,6 +43,7 @@ export const RoomDtoSchema = z.object({
   currentParticipantsCount: z.number().int().nonnegative().default(0),
   category: RoomCategorySchema.default('all'),
   isChatEnabled: z.boolean().default(true).optional(),
+  isLocked: z.boolean().default(false).optional(),
   atmospherePreset: RoomAtmospherePresetSchema.default('midnight_lounge').optional(),
   stateVersion: z.number().int().positive().default(1).optional(),
   currentSongTitle: z.string().optional().nullable(),
@@ -64,6 +65,7 @@ export const CreateRoomSchema = z.object({
   capacity: z.coerce.number().int().min(2).max(50).default(10),
   category: RoomCategorySchema.default('all'),
   isChatEnabled: z.boolean().default(true).optional(),
+  isLocked: z.boolean().default(false).optional(),
   atmospherePreset: RoomAtmospherePresetSchema.default('midnight_lounge').optional(),
 });
 
@@ -77,6 +79,7 @@ export const UpdateRoomSchema = z.object({
   status: RoomStatusSchema.optional(),
   category: RoomCategorySchema.optional(),
   isChatEnabled: z.boolean().optional(),
+  isLocked: z.boolean().optional(),
   atmospherePreset: RoomAtmospherePresetSchema.optional(),
   expectedStateVersion: z.number().int().positive().optional(),
 });
@@ -103,7 +106,7 @@ export const RoomQuerySchema = PaginationQuerySchema.extend({
 
 export type RoomQueryDto = z.infer<typeof RoomQuerySchema>;
 
-export const RoomMembershipRoleSchema = z.enum(['host', 'member']);
+export const RoomMembershipRoleSchema = z.enum(['host', 'moderator', 'member']);
 export type RoomMembershipRole = z.infer<typeof RoomMembershipRoleSchema>;
 
 export const RoomMembershipStatusSchema = z.enum(['active', 'left']);
@@ -116,6 +119,8 @@ export const RoomMembershipDtoSchema = z.object({
   user: HostDtoSchema.optional(),
   role: RoomMembershipRoleSchema,
   status: RoomMembershipStatusSchema,
+  isMuted: z.boolean().default(false).optional(),
+  mutedAt: z.string().datetime().nullable().optional(),
   joinedAt: z.string().datetime(),
   leftAt: z.string().datetime().nullable().optional(),
 });
@@ -129,4 +134,26 @@ export const RoomMyMembershipDtoSchema = z.object({
 });
 
 export type RoomMyMembershipDto = z.infer<typeof RoomMyMembershipDtoSchema>;
+
+// Moderation & Host Management Schemas
+export const UpdateMemberRoleSchema = z.object({
+  role: z.enum(['moderator', 'member']),
+});
+export type UpdateMemberRoleDto = z.infer<typeof UpdateMemberRoleSchema>;
+
+export const MuteMemberSchema = z.object({
+  isMuted: z.boolean(),
+  reason: z.string().trim().max(200).optional(),
+});
+export type MuteMemberDto = z.infer<typeof MuteMemberSchema>;
+
+export const TransferHostSchema = z.object({
+  newHostUserId: z.string().min(1, 'Target new host user ID is required'),
+});
+export type TransferHostDto = z.infer<typeof TransferHostSchema>;
+
+export const LockRoomSchema = z.object({
+  isLocked: z.boolean(),
+});
+export type LockRoomDto = z.infer<typeof LockRoomSchema>;
 

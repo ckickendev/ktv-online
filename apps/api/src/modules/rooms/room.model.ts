@@ -60,6 +60,10 @@ const RoomSchema = new Schema<IRoomDocument>(
       type: Boolean,
       default: true,
     },
+    isLocked: {
+      type: Boolean,
+      default: false,
+    },
     atmospherePreset: {
       type: String,
       enum: ['midnight_lounge', 'neon_stage', 'cozy_acoustic', 'minimal_studio', 'classic_karaoke'],
@@ -88,6 +92,7 @@ const RoomSchema = new Schema<IRoomDocument>(
         ret.id = ret._id ? (ret._id as { toString(): string }).toString() : undefined;
         ret.stateVersion = typeof ret.stateVersion === 'number' ? ret.stateVersion : 1;
         ret.atmospherePreset = ret.atmospherePreset || 'midnight_lounge';
+        ret.isLocked = Boolean(ret.isLocked);
         if (ret.ownerId && typeof ret.ownerId === 'object') {
           if ('username' in ret.ownerId) {
             const hostUser = ret.ownerId as {

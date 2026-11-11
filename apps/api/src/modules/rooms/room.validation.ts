@@ -1,1 +1,9 @@
-export { CreateRoomSchema, UpdateRoomSchema, RoomQuerySchema } from '@ktv/contracts';
+export {
+  CreateRoomSchema,
+  UpdateRoomSchema,
+  RoomQuerySchema,
+  UpdateMemberRoleSchema,
+  MuteMemberSchema,
+  TransferHostSchema,
+  LockRoomSchema,
+} from '@ktv/contracts';

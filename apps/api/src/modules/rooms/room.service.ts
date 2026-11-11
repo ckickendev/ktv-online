@@ -11,6 +11,7 @@ import {
   RoomSnapshotDto,
   RoomMembershipDto,
   RoomStateVersionDto,
+  SOCKET_EVENTS,
 } from '@ktv/contracts';
 import { chatService } from '../chat/chat.service.js';
 import { evictKickedMember } from '../../realtime/socket.server.js';
@@ -20,6 +21,7 @@ import { RoomReconciliationService } from './room-reconciliation.service.js';
 import { voiceService } from '../voice/voice.service.js';
 import { karaokeService } from '../karaoke/karaoke.service.js';
 import { getSocketServer } from '../../realtime/socket.server.js';
+import { getRoomChannel } from '../../realtime/room.events.js';
 import {
   broadcastKaraokeQueueUpdated,
   broadcastKaraokePlaybackUpdated,
@@ -48,6 +50,7 @@ export type JoinRoomResult =
         | 'ROOM_NOT_FOUND'
         | 'ROOM_CLOSED'
         | 'ROOM_FULL'
+        | 'ROOM_LOCKED'
         | 'PRIVATE_ROOM'
         | 'JOIN_FAILED'
         | 'FORBIDDEN_KICKED';
@@ -65,6 +68,8 @@ export type KickMemberResult =
         | 'ROOM_NOT_FOUND'
         | 'ROOM_CLOSED'
         | 'FORBIDDEN_NOT_HOST'
+        | 'FORBIDDEN_NOT_AUTHORIZED'
+        | 'MODERATOR_CANNOT_KICK_MODERATOR'
         | 'CANNOT_KICK_SELF'
         | 'CANNOT_KICK_HOST'
         | 'NOT_A_MEMBER'
@@ -340,6 +345,11 @@ export class RoomService {
 
     if (existingMembership) {
       return { success: true, membership: existingMembership, alreadyJoined: true };
+    }
+
+    // 2a. Room lock check: locked rooms reject new entries from non-owners
+    if (room.isLocked && room.ownerId.toString() !== userId) {
+      return { success: false, error: 'ROOM_LOCKED' };
     }
 
     // 2b. Moderation check: Kicked users cannot rejoin unless reinstated by host
@@ -742,11 +752,23 @@ export class RoomService {
       ? (room.ownerId as any)._id.toString()
       : room.ownerId.toString();
 
-    if (hostOwnerIdStr !== hostUserId) {
-      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    // Verify actor permissions (Host or Moderator)
+    const isOwner = hostOwnerIdStr === hostUserId;
+    let actorRole: 'host' | 'moderator' | 'member' = isOwner ? 'host' : 'member';
+
+    if (!isOwner) {
+      const actorMembership = await RoomMembershipModel.findOne({
+        roomId: roomObjectId,
+        userId: hostObjectId,
+        status: 'active',
+      }).exec();
+      if (!actorMembership || (actorMembership.role !== 'host' && actorMembership.role !== 'moderator')) {
+        return { success: false, error: 'FORBIDDEN_NOT_AUTHORIZED' };
+      }
+      actorRole = actorMembership.role;
     }
 
-    // A host cannot kick another host or room owner
+    // A host cannot be removed from the room
     if (targetUserId === hostOwnerIdStr) {
       return { success: false, error: 'CANNOT_KICK_HOST' };
     }
@@ -764,6 +786,11 @@ export class RoomService {
 
     if (targetMembership.role === 'host') {
       return { success: false, error: 'CANNOT_KICK_HOST' };
+    }
+
+    // A moderator cannot remove another moderator
+    if (actorRole === 'moderator' && targetMembership.role === 'moderator') {
+      return { success: false, error: 'MODERATOR_CANNOT_KICK_MODERATOR' };
     }
 
     // Atomically transition target membership to 'left' with kicked metadata
@@ -799,7 +826,7 @@ export class RoomService {
       { new: true }
     ).exec();
 
-    const hostUsername = (room.ownerId as any).username || 'Host';
+    const hostUsername = isOwner ? ((room.ownerId as any).username || 'Host') : 'Moderator';
     const targetUsername = (updatedMembership.userId as any)?.username || 'Member';
 
     if (updatedRoom) {
@@ -809,7 +836,7 @@ export class RoomService {
         {
           userId: targetUserId,
           username: targetUsername,
-          reason: reason || 'Removed by host',
+          reason: reason || (isOwner ? 'Removed by host' : 'Removed by moderator'),
           kickedBy: hostUserId,
           currentParticipantsCount: updatedRoom.currentParticipantsCount,
         },
@@ -822,10 +849,10 @@ export class RoomService {
       await chatService.recordActivity(
         roomId,
         'member_kicked',
-        { id: hostUserId, username: hostUsername, role: 'host' },
-        `${targetUsername} was removed from the room by the host`,
+        { id: hostUserId, username: hostUsername, role: actorRole },
+        `${targetUsername} was removed from the room by ${isOwner ? 'the host' : 'a moderator'}`,
         { id: targetUserId, username: targetUsername },
-        { reason: reason || 'Removed by host' }
+        { reason: reason || (isOwner ? 'Removed by host' : 'Removed by moderator') }
       );
     } catch {
       // Non-blocking
@@ -911,6 +938,489 @@ export class RoomService {
     );
 
     return { success: true };
+  }
+
+  /**
+   * Assign or revoke moderator role for an active room participant. Host-only action.
+   */
+  async updateMemberRole(
+    roomId: string,
+    hostUserId: string,
+    targetUserId: string,
+    newRole: 'moderator' | 'member'
+  ): Promise<{ success: boolean; error?: string; membership?: IRoomMembershipDocument }> {
+    if (
+      !Types.ObjectId.isValid(roomId) ||
+      !Types.ObjectId.isValid(hostUserId) ||
+      !Types.ObjectId.isValid(targetUserId)
+    ) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    if (hostUserId === targetUserId) {
+      return { success: false, error: 'CANNOT_CHANGE_HOST_ROLE' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const targetObjectId = new Types.ObjectId(targetUserId);
+
+    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username displayName avatar').exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    if (room.status === 'closed') {
+      return { success: false, error: 'ROOM_CLOSED' };
+    }
+
+    const hostOwnerIdStr = (room.ownerId as any)._id
+      ? (room.ownerId as any)._id.toString()
+      : room.ownerId.toString();
+
+    if (hostOwnerIdStr !== hostUserId) {
+      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    }
+
+    if (targetUserId === hostOwnerIdStr) {
+      return { success: false, error: 'CANNOT_CHANGE_HOST_ROLE' };
+    }
+
+    // Target must be an active member
+    const targetMembership = await RoomMembershipModel.findOne({
+      roomId: roomObjectId,
+      userId: targetObjectId,
+      status: 'active',
+    }).populate('userId', 'username displayName avatar').exec();
+
+    if (!targetMembership) {
+      return { success: false, error: 'NOT_A_MEMBER' };
+    }
+
+    if (targetMembership.role === newRole) {
+      return { success: true, membership: targetMembership };
+    }
+
+    // Update role and advance stateVersion
+    targetMembership.role = newRole;
+    await targetMembership.save();
+
+    const updatedRoom = await RoomModel.findByIdAndUpdate(
+      roomObjectId,
+      { $inc: { stateVersion: 1 } },
+      { new: true }
+    ).exec();
+
+    const version = updatedRoom?.stateVersion || room.stateVersion + 1;
+    const targetUsername = (targetMembership.userId as any)?.username || 'Member';
+    const hostUsername = (room.ownerId as any)?.username || 'Host';
+
+    // Publish room state event
+    await publishRoomStateEvent(
+      roomId,
+      'member.role.updated',
+      {
+        userId: targetUserId,
+        username: targetUsername,
+        role: newRole,
+        updatedBy: hostUserId,
+      },
+      version
+    );
+
+    // Emit typed Socket.IO event
+    const io = getSocketServer();
+    if (io) {
+      io.to(getRoomChannel(roomId)).emit(SOCKET_EVENTS.SERVER.MEMBER_ROLE_UPDATED, {
+        roomId,
+        userId: targetUserId,
+        role: newRole,
+        updatedBy: hostUserId,
+      });
+    }
+
+    // Record activity
+    try {
+      await chatService.recordActivity(
+        roomId,
+        'member_role_updated',
+        { id: hostUserId, username: hostUsername, role: 'host' },
+        newRole === 'moderator'
+          ? `${targetUsername} was promoted to Lounge Moderator`
+          : `${targetUsername} was demoted to Lounge Member`,
+        { id: targetUserId, username: targetUsername },
+        { newRole }
+      );
+    } catch {
+      // Non-blocking
+    }
+
+    return { success: true, membership: targetMembership };
+  }
+
+  /**
+   * Server-authoritatively mute or unmute a participant's voice publishing permissions.
+   * Host or Moderator action.
+   */
+  async muteMember(
+    roomId: string,
+    actorUserId: string,
+    targetUserId: string,
+    isMuted: boolean,
+    reason?: string
+  ): Promise<{ success: boolean; error?: string; membership?: IRoomMembershipDocument }> {
+    if (
+      !Types.ObjectId.isValid(roomId) ||
+      !Types.ObjectId.isValid(actorUserId) ||
+      !Types.ObjectId.isValid(targetUserId)
+    ) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    if (actorUserId === targetUserId) {
+      return { success: false, error: 'CANNOT_MUTE_SELF' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const actorObjectId = new Types.ObjectId(actorUserId);
+    const targetObjectId = new Types.ObjectId(targetUserId);
+
+    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username displayName avatar').exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    if (room.status === 'closed') {
+      return { success: false, error: 'ROOM_CLOSED' };
+    }
+
+    const hostOwnerIdStr = (room.ownerId as any)._id
+      ? (room.ownerId as any)._id.toString()
+      : room.ownerId.toString();
+
+    // Verify actor role (Host or Moderator)
+    const isOwner = hostOwnerIdStr === actorUserId;
+    let actorRole: 'host' | 'moderator' | 'member' = isOwner ? 'host' : 'member';
+
+    if (!isOwner) {
+      const actorMembership = await RoomMembershipModel.findOne({
+        roomId: roomObjectId,
+        userId: actorObjectId,
+        status: 'active',
+      }).exec();
+      if (!actorMembership || (actorMembership.role !== 'host' && actorMembership.role !== 'moderator')) {
+        return { success: false, error: 'FORBIDDEN_NOT_AUTHORIZED' };
+      }
+      actorRole = actorMembership.role;
+    }
+
+    // Host cannot be muted by anyone
+    if (targetUserId === hostOwnerIdStr) {
+      return { success: false, error: 'CANNOT_MUTE_HOST' };
+    }
+
+    // Target must be active member
+    const targetMembership = await RoomMembershipModel.findOne({
+      roomId: roomObjectId,
+      userId: targetObjectId,
+      status: 'active',
+    }).populate('userId', 'username displayName avatar').exec();
+
+    if (!targetMembership) {
+      return { success: false, error: 'NOT_A_MEMBER' };
+    }
+
+    if (targetMembership.role === 'host') {
+      return { success: false, error: 'CANNOT_MUTE_HOST' };
+    }
+
+    // Moderator cannot mute another moderator
+    if (actorRole === 'moderator' && targetMembership.role === 'moderator') {
+      return { success: false, error: 'MODERATOR_CANNOT_MUTE_MODERATOR' };
+    }
+
+    // Update mute state
+    targetMembership.isMuted = isMuted;
+    targetMembership.mutedAt = isMuted ? new Date() : null;
+    targetMembership.mutedBy = isMuted ? actorObjectId : null;
+    await targetMembership.save();
+
+    // Enforce LiveKit server track mute and permission updates
+    await voiceService.muteLiveKitParticipant(roomId, targetUserId, isMuted);
+
+    const updatedRoom = await RoomModel.findByIdAndUpdate(
+      roomObjectId,
+      { $inc: { stateVersion: 1 } },
+      { new: true }
+    ).exec();
+
+    const version = updatedRoom?.stateVersion || room.stateVersion + 1;
+    const targetUsername = (targetMembership.userId as any)?.username || 'Member';
+    const actorUsername = isOwner ? (room.ownerId as any)?.username : 'Moderator';
+
+    // Publish room state event
+    await publishRoomStateEvent(
+      roomId,
+      isMuted ? 'member.muted' : 'member.unmuted',
+      {
+        userId: targetUserId,
+        username: targetUsername,
+        isMuted,
+        mutedBy: actorUserId,
+        reason: reason || (isMuted ? 'Muted by room moderation' : 'Unmuted'),
+      },
+      version
+    );
+
+    // Emit typed Socket.IO event
+    const io = getSocketServer();
+    if (io) {
+      io.to(getRoomChannel(roomId)).emit(SOCKET_EVENTS.SERVER.MEMBER_MUTED, {
+        roomId,
+        userId: targetUserId,
+        isMuted,
+        mutedBy: actorUserId,
+        reason,
+      });
+    }
+
+    // Record activity
+    try {
+      await chatService.recordActivity(
+        roomId,
+        isMuted ? 'member_muted' : 'member_unmuted',
+        { id: actorUserId, username: actorUsername, role: actorRole },
+        isMuted
+          ? `${targetUsername}'s microphone was muted by ${actorRole === 'host' ? 'the host' : 'a moderator'}`
+          : `${targetUsername}'s microphone was unmuted`,
+        { id: targetUserId, username: targetUsername },
+        { isMuted, reason }
+      );
+    } catch {
+      // Non-blocking
+    }
+
+    return { success: true, membership: targetMembership };
+  }
+
+  /**
+   * Concurrency-safe Host Ownership Transfer. Host-only action.
+   */
+  async transferHost(
+    roomId: string,
+    currentHostId: string,
+    newHostUserId: string
+  ): Promise<{ success: boolean; error?: string; room?: IRoomDocument }> {
+    if (
+      !Types.ObjectId.isValid(roomId) ||
+      !Types.ObjectId.isValid(currentHostId) ||
+      !Types.ObjectId.isValid(newHostUserId)
+    ) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    if (currentHostId === newHostUserId) {
+      return { success: false, error: 'CANNOT_TRANSFER_TO_SELF' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const currentHostObjectId = new Types.ObjectId(currentHostId);
+    const newHostObjectId = new Types.ObjectId(newHostUserId);
+
+    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username displayName avatar').exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    if (room.status === 'closed') {
+      return { success: false, error: 'ROOM_CLOSED' };
+    }
+
+    const hostOwnerIdStr = (room.ownerId as any)._id
+      ? (room.ownerId as any)._id.toString()
+      : room.ownerId.toString();
+
+    if (hostOwnerIdStr !== currentHostId) {
+      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    }
+
+    // Target must be active member
+    const targetMembership = await RoomMembershipModel.findOne({
+      roomId: roomObjectId,
+      userId: newHostObjectId,
+      status: 'active',
+    }).populate('userId', 'username displayName avatar').exec();
+
+    if (!targetMembership) {
+      return { success: false, error: 'TARGET_NOT_ACTIVE_MEMBER' };
+    }
+
+    // Atomic room ownership transfer
+    const updatedRoom = await RoomModel.findOneAndUpdate(
+      { _id: roomObjectId, ownerId: currentHostObjectId },
+      { $set: { ownerId: newHostObjectId }, $inc: { stateVersion: 1 } },
+      { new: true }
+    ).populate('ownerId', 'username displayName avatar').exec();
+
+    if (!updatedRoom) {
+      return { success: false, error: 'TRANSFER_FAILED_CONCURRENT_CHANGE' };
+    }
+
+    // Promote new host membership
+    targetMembership.role = 'host';
+    await targetMembership.save();
+
+    // Demote previous host membership to member
+    await RoomMembershipModel.updateOne(
+      { roomId: roomObjectId, userId: currentHostObjectId, status: 'active' },
+      { $set: { role: 'member' } }
+    ).exec();
+
+    const version = updatedRoom.stateVersion;
+    const previousHostUsername = (room.ownerId as any)?.username || 'Host';
+    const newHostUsername = (targetMembership.userId as any)?.username || 'Member';
+    const newHostDisplayName = (targetMembership.userId as any)?.displayName ?? null;
+
+    // Publish room state event
+    await publishRoomStateEvent(
+      roomId,
+      'room.host.transferred',
+      {
+        previousHostId: currentHostId,
+        newHostId: newHostUserId,
+        newHostUsername,
+        newHostDisplayName,
+      },
+      version
+    );
+
+    // Also publish room.updated so host object updates in client snapshot
+    await publishRoomStateEvent(
+      roomId,
+      'room.updated',
+      {
+        ownerId: newHostUserId,
+        host: {
+          id: newHostUserId,
+          username: newHostUsername,
+          displayName: newHostDisplayName,
+          avatar: (targetMembership.userId as any)?.avatar ?? null,
+        },
+      },
+      version
+    );
+
+    // Emit typed Socket.IO event
+    const io = getSocketServer();
+    if (io) {
+      io.to(getRoomChannel(roomId)).emit(SOCKET_EVENTS.SERVER.ROOM_HOST_TRANSFERRED, {
+        roomId,
+        previousHostId: currentHostId,
+        newHostId: newHostUserId,
+        newHostUsername,
+        newHostDisplayName,
+      });
+    }
+
+    // Record activity
+    try {
+      await chatService.recordActivity(
+        roomId,
+        'room_host_transferred',
+        { id: currentHostId, username: previousHostUsername, role: 'host' },
+        `${previousHostUsername} transferred Lounge Host ownership to ${newHostUsername}`,
+        { id: newHostUserId, username: newHostUsername },
+        { previousHostId: currentHostId, newHostId: newHostUserId }
+      );
+    } catch {
+      // Non-blocking
+    }
+
+    return { success: true, room: updatedRoom };
+  }
+
+  /**
+   * Toggle room lock state. When locked, non-member entries are rejected. Host-only action.
+   */
+  async setRoomLock(
+    roomId: string,
+    hostUserId: string,
+    isLocked: boolean
+  ): Promise<{ success: boolean; error?: string; room?: IRoomDocument }> {
+    if (!Types.ObjectId.isValid(roomId) || !Types.ObjectId.isValid(hostUserId)) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const hostObjectId = new Types.ObjectId(hostUserId);
+
+    const room = await RoomModel.findById(roomObjectId).populate('ownerId', 'username displayName avatar').exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    if (room.status === 'closed') {
+      return { success: false, error: 'ROOM_CLOSED' };
+    }
+
+    const hostOwnerIdStr = (room.ownerId as any)._id
+      ? (room.ownerId as any)._id.toString()
+      : room.ownerId.toString();
+
+    if (hostOwnerIdStr !== hostUserId) {
+      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    }
+
+    const updatedRoom = await RoomModel.findOneAndUpdate(
+      { _id: roomObjectId, ownerId: hostObjectId },
+      { $set: { isLocked }, $inc: { stateVersion: 1 } },
+      { new: true }
+    ).populate('ownerId', 'username displayName avatar').exec();
+
+    if (!updatedRoom) {
+      return { success: false, error: 'LOCK_FAILED' };
+    }
+
+    const version = updatedRoom.stateVersion;
+    const hostUsername = (room.ownerId as any)?.username || 'Host';
+
+    // Publish room state event
+    await publishRoomStateEvent(
+      roomId,
+      'room.lock.updated',
+      {
+        isLocked,
+        updatedBy: hostUserId,
+      },
+      version
+    );
+
+    // Emit typed Socket.IO event
+    const io = getSocketServer();
+    if (io) {
+      io.to(getRoomChannel(roomId)).emit(SOCKET_EVENTS.SERVER.ROOM_LOCK_UPDATED, {
+        roomId,
+        isLocked,
+        updatedBy: hostUserId,
+      });
+    }
+
+    // Record activity
+    try {
+      await chatService.recordActivity(
+        roomId,
+        isLocked ? 'room_locked' : 'room_unlocked',
+        { id: hostUserId, username: hostUsername, role: 'host' },
+        isLocked
+          ? `${hostUsername} locked the lounge (new entries blocked)`
+          : `${hostUsername} unlocked the lounge`,
+        undefined,
+        { isLocked }
+      );
+    } catch {
+      // Non-blocking
+    }
+
+    return { success: true, room: updatedRoom };
   }
 
   /**
@@ -1049,7 +1559,8 @@ export class RoomService {
 
     // Determine viewer membership and role
     let isMember = false;
-    let role: 'host' | 'member' | 'viewer' | 'none' = 'none';
+    let role: 'host' | 'moderator' | 'member' | 'viewer' | 'none' = 'none';
+    let isMuted = false;
 
     if (requestingUserId) {
       if (isOwner) {
@@ -1064,7 +1575,8 @@ export class RoomService {
 
         if (myMembership) {
           isMember = true;
-          role = myMembership.role as 'host' | 'member';
+          role = myMembership.role as 'host' | 'moderator' | 'member';
+          isMuted = Boolean(myMembership.isMuted);
         } else {
           role = 'viewer';
         }
@@ -1082,6 +1594,7 @@ export class RoomService {
     const host = {
       id: hostOwnerIdStr,
       username: (roomDoc.ownerId as any).username || 'Host',
+      displayName: (roomDoc.ownerId as any).displayName ?? null,
       avatar: (roomDoc.ownerId as any).avatar ?? null,
     };
 
@@ -1097,6 +1610,7 @@ export class RoomService {
       category: roomDoc.category,
       currentParticipantsCount: roomDoc.currentParticipantsCount,
       isChatEnabled: roomDoc.isChatEnabled !== false,
+      isLocked: Boolean(roomDoc.isLocked),
       atmospherePreset: roomDoc.atmospherePreset || 'midnight_lounge',
       stateVersion: verifiedVersion,
       currentSongTitle: roomDoc.currentSongTitle ?? null,
@@ -1113,6 +1627,7 @@ export class RoomService {
         viewer: {
           isMember,
           role,
+          isMuted,
           isKicked,
         },
         version: verifiedVersion,

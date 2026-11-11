@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { RoomServiceClient } from 'livekit-server-sdk';
+import { RoomServiceClient, TrackSource } from 'livekit-server-sdk';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { UserModel } from '../users/user.model.js';
@@ -176,6 +176,7 @@ export class VoiceService {
       participantIdentity,
       name: user.displayName || user.username,
       metadata,
+      canPublish: !membership.isMuted,
     });
 
     // 7. Track in server-side session registry (private mapping)
@@ -256,6 +257,66 @@ export class VoiceService {
         'Failed to evict participant from LiveKit; recording for recovery retry'
       );
       await this.recordPendingEviction('user', userId, roomId, undefined, errorMsg);
+    }
+  }
+
+  /**
+   * Authoritatively updates LiveKit voice publishing permissions and mutes/unmutes active tracks for a moderated user.
+   */
+  public async muteLiveKitParticipant(roomId: string, userId: string, isMuted: boolean): Promise<void> {
+    const client = this.getClient();
+    const roomName = this.getLiveKitRoomName(roomId);
+    if (!client) return;
+
+    try {
+      const participants = await client.listParticipants(roomName);
+      for (const p of participants) {
+        let isMatch = p.identity.startsWith(`${userId}_`);
+        if (!isMatch && p.metadata) {
+          try {
+            const parsed = JSON.parse(p.metadata) as VoiceParticipantMetadata;
+            if (parsed.userId === userId) {
+              isMatch = true;
+            }
+          } catch {
+            // ignore JSON parse error on metadata
+          }
+        }
+
+        if (isMatch) {
+          logger.info(
+            { roomId, roomName, userId, participantIdentity: p.identity, isMuted },
+            'Updating LiveKit participant voice publishing permissions'
+          );
+
+          // Server-authoritative permission update
+          await client.updateParticipant(roomName, p.identity, undefined, {
+            canPublish: !isMuted,
+            canPublishSources: !isMuted ? [TrackSource.MICROPHONE] : [],
+            canSubscribe: true,
+            canPublishData: false,
+          });
+
+          // Mute any active audio tracks if muting
+          if (isMuted && p.tracks) {
+            for (const track of p.tracks) {
+              if (track.source === TrackSource.MICROPHONE || track.type === 0) {
+                try {
+                  await client.mutePublishedTrack(roomName, p.identity, track.sid, true);
+                } catch (trackErr) {
+                  logger.warn({ trackErr, trackSid: track.sid }, 'Error muting published audio track');
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        { roomId, roomName, userId, isMuted, err: errorMsg },
+        'Failed to update LiveKit participant mute state'
+      );
     }
   }
 

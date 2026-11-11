@@ -22,6 +22,7 @@ export const RoomSnapshotDtoSchema = z.object({
   category: RoomCategorySchema,
   currentParticipantsCount: z.number().int().nonnegative(),
   isChatEnabled: z.boolean().default(true),
+  isLocked: z.boolean().default(false).optional(),
   atmospherePreset: RoomAtmospherePresetSchema.default('midnight_lounge').optional(),
   stateVersion: z.number().int().positive().optional(),
   currentSongTitle: z.string().nullable().optional(),
@@ -32,7 +33,8 @@ export type RoomSnapshotDto = z.infer<typeof RoomSnapshotDtoSchema>;
 // Viewer state in relation to the room
 export const RoomViewerStateSchema = z.object({
   isMember: z.boolean(),
-  role: z.enum(['host', 'member', 'viewer', 'none']).default('none'),
+  role: z.enum(['host', 'moderator', 'member', 'viewer', 'none']).default('none'),
+  isMuted: z.boolean().default(false),
   isKicked: z.boolean().default(false),
 });
 export type RoomViewerState = z.infer<typeof RoomViewerStateSchema>;
@@ -53,9 +55,14 @@ export type RoomStateSnapshotDto = z.infer<typeof RoomStateSnapshotSchema>;
 export const RoomStateEventTypeSchema = z.enum([
   'room.updated',
   'room.settings.updated',
+  'room.lock.updated',
+  'room.host.transferred',
   'member.joined',
   'member.left',
   'member.kicked',
+  'member.role.updated',
+  'member.muted',
+  'member.unmuted',
   'room.closed',
 ]);
 export type RoomStateEventType = z.infer<typeof RoomStateEventTypeSchema>;

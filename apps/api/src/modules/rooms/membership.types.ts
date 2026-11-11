@@ -6,6 +6,9 @@ export interface IRoomMembership {
   userId: Types.ObjectId;
   role: RoomMembershipRole;
   status: RoomMembershipStatus;
+  isMuted?: boolean;
+  mutedAt?: Date | null;
+  mutedBy?: Types.ObjectId | null;
   joinedAt: Date;
   leftAt?: Date | null;
   kickedAt?: Date | null;

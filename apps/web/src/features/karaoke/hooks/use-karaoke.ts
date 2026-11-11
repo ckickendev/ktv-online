@@ -23,12 +23,20 @@ export interface UseKaraokeOptions {
   enabled?: boolean;
   currentUserId?: string;
   isHost?: boolean;
+  isModerator?: boolean;
   isMember?: boolean;
   roomStatus?: string;
 }
 
 export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
-  const { enabled = true, currentUserId, isHost = false, isMember = false, roomStatus = 'active' } = options;
+  const {
+    enabled = true,
+    currentUserId,
+    isHost = false,
+    isModerator = false,
+    isMember = false,
+    roomStatus = 'active',
+  } = options;
   const queryClient = useQueryClient();
 
   // 1. TanStack Query: Queue snapshot
@@ -193,7 +201,7 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
 
   const isCurrentSinger = Boolean(currentUserId && currentSingerId === currentUserId);
   const isCurrentRequester = Boolean(currentUserId && currentRequester?.id === currentUserId);
-  const canControlPlayback = Boolean(isHost || isCurrentSinger || isCurrentRequester);
+  const canControlPlayback = Boolean(isHost || isModerator || isCurrentSinger || isCurrentRequester);
   const canAddSongs = Boolean(isMember && roomStatus !== 'closed');
 
   // Next up singer turn check
@@ -344,6 +352,7 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     canControlPlayback,
     canAddSongs,
     isHost,
+    isModerator,
     isLoading: queueQuery.isLoading || playbackQuery.isLoading,
     isError: queueQuery.isError || playbackQuery.isError,
     addToQueue,

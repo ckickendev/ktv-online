@@ -17,7 +17,7 @@ const RoomMembershipSchema = new Schema<IRoomMembershipDocument>(
     },
     role: {
       type: String,
-      enum: ['host', 'member'],
+      enum: ['host', 'moderator', 'member'],
       default: 'member',
     },
     status: {
@@ -25,6 +25,19 @@ const RoomMembershipSchema = new Schema<IRoomMembershipDocument>(
       enum: ['active', 'left'],
       default: 'active',
       index: true,
+    },
+    isMuted: {
+      type: Boolean,
+      default: false,
+    },
+    mutedAt: {
+      type: Date,
+      default: null,
+    },
+    mutedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
     joinedAt: {
       type: Date,
@@ -79,6 +92,12 @@ const RoomMembershipSchema = new Schema<IRoomMembershipDocument>(
         } else if (ret.userId) {
           ret.userId = String(ret.userId);
         }
+        ret.isMuted = Boolean(ret.isMuted);
+        ret.mutedAt = ret.mutedAt
+          ? ret.mutedAt instanceof Date
+            ? ret.mutedAt.toISOString()
+            : String(ret.mutedAt)
+          : null;
         delete ret._id;
         delete ret.__v;
         return ret;

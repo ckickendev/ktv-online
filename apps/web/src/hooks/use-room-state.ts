@@ -61,6 +61,7 @@ export function useRoomState(
   const [viewer, setViewer] = useState<RoomViewerState>({
     isMember: false,
     role: 'none',
+    isMuted: false,
     isKicked: false,
   });
   const [version, setVersion] = useState<number>(0);
@@ -129,6 +130,7 @@ export function useRoomState(
             setViewer({
               isMember: true,
               role: memberPayload.role,
+              isMuted: Boolean(memberPayload.isMuted),
               isKicked: false,
             });
           }
@@ -150,6 +152,7 @@ export function useRoomState(
             setViewer({
               isMember: false,
               role: 'viewer',
+              isMuted: false,
               isKicked: false,
             });
           }
@@ -174,6 +177,7 @@ export function useRoomState(
             setViewer({
               isMember: false,
               role: 'none',
+              isMuted: false,
               isKicked: true,
             });
           }
@@ -181,6 +185,94 @@ export function useRoomState(
 
         if (typeof newCount === 'number') {
           setRoom((prev) => (prev ? { ...prev, currentParticipantsCount: newCount } : null));
+        }
+        break;
+      }
+
+      case 'member.role.updated': {
+        const targetUserId = event.payload.userId as string | undefined;
+        const newRole = event.payload.role as 'host' | 'moderator' | 'member' | undefined;
+
+        if (targetUserId && newRole) {
+          setMembers((prev) =>
+            prev.map((m) => (m.userId === targetUserId ? { ...m, role: newRole } : m))
+          );
+          if (currentUserIdRef.current && targetUserId === currentUserIdRef.current) {
+            setViewer((prev) => ({
+              ...prev,
+              role: newRole,
+            }));
+          }
+        }
+        break;
+      }
+
+      case 'member.muted': {
+        const targetUserId = event.payload.userId as string | undefined;
+        if (targetUserId) {
+          setMembers((prev) =>
+            prev.map((m) => (m.userId === targetUserId ? { ...m, isMuted: true } : m))
+          );
+          if (currentUserIdRef.current && targetUserId === currentUserIdRef.current) {
+            setViewer((prev) => ({
+              ...prev,
+              isMuted: true,
+            }));
+          }
+        }
+        break;
+      }
+
+      case 'member.unmuted': {
+        const targetUserId = event.payload.userId as string | undefined;
+        if (targetUserId) {
+          setMembers((prev) =>
+            prev.map((m) => (m.userId === targetUserId ? { ...m, isMuted: false } : m))
+          );
+          if (currentUserIdRef.current && targetUserId === currentUserIdRef.current) {
+            setViewer((prev) => ({
+              ...prev,
+              isMuted: false,
+            }));
+          }
+        }
+        break;
+      }
+
+      case 'room.lock.updated': {
+        const isLocked = Boolean(event.payload.isLocked);
+        setRoom((prev) => (prev ? { ...prev, isLocked } : null));
+        break;
+      }
+
+      case 'room.host.transferred': {
+        const prevHostId = event.payload.previousHostId as string | undefined;
+        const newHostId = event.payload.newHostId as string | undefined;
+        const newHostUsername = event.payload.newHostUsername as string | undefined;
+        const newHostDisplayName = event.payload.newHostDisplayName as string | null | undefined;
+
+        if (newHostId && newHostUsername) {
+          setHost({
+            id: newHostId,
+            username: newHostUsername,
+            displayName: newHostDisplayName ?? null,
+            avatar: null,
+          });
+          setRoom((prev) => (prev ? { ...prev, ownerId: newHostId } : null));
+
+          setMembers((prev) =>
+            prev.map((m) => {
+              if (m.userId === newHostId) return { ...m, role: 'host' as const };
+              if (m.userId === prevHostId) return { ...m, role: 'member' as const };
+              return m;
+            })
+          );
+
+          if (currentUserIdRef.current === newHostId) {
+            setViewer((prev) => ({ ...prev, role: 'host' }));
+          } else if (currentUserIdRef.current === prevHostId) {
+            setViewer((prev) => ({ ...prev, role: 'member' }));
+          }
         }
         break;
       }

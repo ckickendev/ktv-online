@@ -24,11 +24,13 @@ export class VoiceTokenService {
       ttl: ttlSeconds,
     });
 
+    const canPublish = options.canPublish !== false;
+
     token.addGrant({
       roomJoin: true,
       room: options.roomName,
-      canPublish: true,
-      canPublishSources: [TrackSource.MICROPHONE],
+      canPublish,
+      canPublishSources: canPublish ? [TrackSource.MICROPHONE] : [],
       canSubscribe: true,
       canPublishData: false,
     });

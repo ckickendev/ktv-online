@@ -77,6 +77,34 @@ export const roomApi = {
     return apiClient.post<null>(`/rooms/${roomId}/members/${userId}/kick`, { reason });
   },
 
+  async updateMemberRole(
+    roomId: string,
+    userId: string,
+    role: 'moderator' | 'member'
+  ): Promise<RoomMembershipDto> {
+    return apiClient.post<RoomMembershipDto>(`/rooms/${roomId}/members/${userId}/role`, { role });
+  },
+
+  async muteMember(
+    roomId: string,
+    userId: string,
+    isMuted: boolean,
+    reason?: string
+  ): Promise<RoomMembershipDto> {
+    return apiClient.post<RoomMembershipDto>(`/rooms/${roomId}/members/${userId}/mute`, {
+      isMuted,
+      reason,
+    });
+  },
+
+  async transferHost(roomId: string, newHostUserId: string): Promise<RoomDto> {
+    return apiClient.post<RoomDto>(`/rooms/${roomId}/transfer-host`, { newHostUserId });
+  },
+
+  async setRoomLock(roomId: string, isLocked: boolean): Promise<RoomDto> {
+    return apiClient.post<RoomDto>(`/rooms/${roomId}/lock`, { isLocked });
+  },
+
   async reinstateMember(roomId: string, userId: string): Promise<null> {
     return apiClient.post<null>(`/rooms/${roomId}/members/${userId}/reinstate`, {});
   },

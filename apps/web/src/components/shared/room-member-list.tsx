@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Crown, Users, RefreshCw, AlertCircle, UserX, Mic, MicOff, Mic2 } from 'lucide-react';
+import { Crown, Users, RefreshCw, AlertCircle, UserX, Mic, MicOff, Mic2, Shield, VolumeX } from 'lucide-react';
 import { UserAvatar } from './user-avatar';
 import { UserProfileModal } from '../profile/user-profile-modal';
 import { useRoomMembers } from '@/hooks/queries/use-room';
@@ -12,7 +12,11 @@ interface RoomMemberListProps {
   currentUserId?: string | null;
   onlineUserIds?: Set<string>;
   isHost?: boolean;
+  isModerator?: boolean;
   onKickMember?: (userId: string, username: string) => void;
+  onMuteMember?: (userId: string, username: string, isMuted: boolean) => void;
+  onUpdateRole?: (userId: string, username: string, newRole: 'moderator' | 'member') => void;
+  onTransferHost?: (userId: string, username: string, displayName?: string | null) => void;
   className?: string;
   members?: RoomMembershipDto[];
   onRefresh?: () => void;
@@ -26,7 +30,11 @@ export function RoomMemberList({
   currentUserId,
   onlineUserIds,
   isHost,
+  isModerator,
   onKickMember,
+  onMuteMember,
+  onUpdateRole,
+  onTransferHost,
   className,
   members: propMembers,
   onRefresh: propOnRefresh,
@@ -167,6 +175,8 @@ export function RoomMemberList({
             .sort((a, b) => {
               if (a.role === 'host' && b.role !== 'host') return -1;
               if (b.role === 'host' && a.role !== 'host') return 1;
+              if (a.role === 'moderator' && b.role !== 'moderator') return -1;
+              if (b.role === 'moderator' && a.role !== 'moderator') return 1;
               return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
             })
             .map((m) => {
@@ -179,7 +189,7 @@ export function RoomMemberList({
                 : [];
               const isInVoice = userSessions.length > 0;
               const isSpeaking = userSessions.some((p) => p.isSpeaking);
-              const isMuted = isInVoice && userSessions.every((p) => p.isMuted);
+              const isMutedInVoice = isInVoice && userSessions.every((p) => p.isMuted);
               const sessionCount = userSessions.length;
 
               const isSinger = Boolean(
@@ -187,12 +197,24 @@ export function RoomMemberList({
                 (currentSingerName && (username === currentSingerName || displayName === currentSingerName))
               );
 
+              // Permissions
+              const canMute = Boolean(
+                !isCurrentUser &&
+                ((isHost && m.role !== 'host') || (isModerator && m.role === 'member'))
+              );
+              const canKick = Boolean(
+                !isCurrentUser &&
+                ((isHost && m.role !== 'host') || (isModerator && m.role === 'member'))
+              );
+              const canChangeRole = Boolean(isHost && !isCurrentUser && m.role !== 'host');
+              const canTransfer = Boolean(isHost && !isCurrentUser);
+
               return (
                 <div
                   key={m.id}
                   data-testid={`member-item-${m.userId}`}
                   className={cn(
-                    'p-2.5 rounded-xl border flex items-center justify-between transition-colors',
+                    'p-2.5 rounded-xl border flex items-center justify-between transition-colors gap-2',
                     isSinger
                       ? 'bg-fuchsia-950/30 border-fuchsia-500/40 shadow-sm shadow-fuchsia-950/40'
                       : isCurrentUser
@@ -248,6 +270,26 @@ export function RoomMemberList({
                             Host
                           </span>
                         )}
+                        {m.role === 'moderator' && (
+                          <span
+                            data-testid="moderator-badge"
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-sky-500/15 text-sky-300 border border-sky-500/30 shrink-0"
+                            title="Lounge Moderator"
+                          >
+                            <Shield className="w-2.5 h-2.5 fill-sky-300" />
+                            Mod
+                          </span>
+                        )}
+                        {m.isMuted && (
+                          <span
+                            data-testid="member-muted-badge"
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-rose-500/15 text-rose-300 border border-rose-500/30 shrink-0"
+                            title="Microphone muted by room moderation"
+                          >
+                            <MicOff className="w-2.5 h-2.5 text-rose-300" />
+                            Muted
+                          </span>
+                        )}
                         {isSinger && (
                           <span
                             className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30 shrink-0"
@@ -276,14 +318,14 @@ export function RoomMemberList({
                     </div>
                   </div>
 
-                  <div className="flex items-center pl-2 shrink-0 gap-1.5">
+                  <div className="flex items-center pl-1 shrink-0 gap-1">
                     {/* Voice indicator for member */}
                     {isInVoice && (
                       <span
-                        title={isMuted ? 'Muted in voice lounge' : isSpeaking ? 'Speaking in voice' : 'Listening in voice'}
+                        title={isMutedInVoice ? 'Muted in voice lounge' : isSpeaking ? 'Speaking in voice' : 'Listening in voice'}
                         className="p-1 rounded-md bg-white/5"
                       >
-                        {isMuted ? (
+                        {isMutedInVoice ? (
                           <MicOff className="w-3 h-3 text-rose-400" />
                         ) : (
                           <Mic className={cn('w-3 h-3', isSpeaking ? 'text-emerald-400 animate-pulse' : 'text-slate-400')} />
@@ -291,19 +333,81 @@ export function RoomMemberList({
                       </span>
                     )}
 
-                    {isHost && m.role !== 'host' && onKickMember && (
+                    {/* Moderation: Mute / Unmute */}
+                    {canMute && onMuteMember && (
                       <button
                         type="button"
+                        data-testid={`mute-member-btn-${m.userId}`}
+                        onClick={() => onMuteMember(m.userId, username, !m.isMuted)}
+                        title={m.isMuted ? `Unmute ${displayName}` : `Mute ${displayName}`}
+                        className={cn(
+                          'p-1 rounded transition-colors',
+                          m.isMuted
+                            ? 'text-rose-400 hover:text-emerald-400 hover:bg-emerald-500/10'
+                            : 'text-slate-400 hover:text-rose-400 hover:bg-rose-500/10'
+                        )}
+                      >
+                        {m.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+
+                    {/* Moderation: Promote/Demote Moderator (Host only) */}
+                    {canChangeRole && onUpdateRole && (
+                      <button
+                        type="button"
+                        data-testid={`role-member-btn-${m.userId}`}
+                        onClick={() =>
+                          onUpdateRole(
+                            m.userId,
+                            username,
+                            m.role === 'moderator' ? 'member' : 'moderator'
+                          )
+                        }
+                        title={
+                          m.role === 'moderator'
+                            ? `Demote ${displayName} to Member`
+                            : `Promote ${displayName} to Moderator`
+                        }
+                        className={cn(
+                          'p-1 rounded transition-colors',
+                          m.role === 'moderator'
+                            ? 'text-sky-400 hover:text-slate-400 hover:bg-white/10'
+                            : 'text-slate-400 hover:text-sky-400 hover:bg-sky-500/10'
+                        )}
+                      >
+                        <Shield className={cn('w-3.5 h-3.5', m.role === 'moderator' && 'fill-sky-400/40')} />
+                      </button>
+                    )}
+
+                    {/* Moderation: Transfer Host (Host only) */}
+                    {canTransfer && onTransferHost && (
+                      <button
+                        type="button"
+                        data-testid={`transfer-host-btn-${m.userId}`}
+                        onClick={() => onTransferHost(m.userId, username, displayName)}
+                        title={`Transfer Host ownership to ${displayName}`}
+                        className="p-1 rounded text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+                      >
+                        <Crown className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {/* Moderation: Kick Member (Host or Moderator) */}
+                    {canKick && onKickMember && (
+                      <button
+                        type="button"
+                        data-testid={`kick-member-btn-${m.userId}`}
                         onClick={() => onKickMember(m.userId, username)}
-                        title={`Remove ${username} from room`}
-                        className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        title={`Remove ${displayName} from lounge`}
+                        className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                       >
                         <UserX className="w-3.5 h-3.5" />
                       </button>
                     )}
+
                     <span
                       className={cn(
-                        'w-2 h-2 rounded-full',
+                        'w-2 h-2 rounded-full ml-0.5',
                         isOnline
                           ? 'bg-emerald-400 ring-2 ring-emerald-500/20'
                           : 'bg-slate-500 opacity-60'

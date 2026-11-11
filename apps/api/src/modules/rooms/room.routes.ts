@@ -2,7 +2,15 @@ import { Router } from 'express';
 import { roomController } from './room.controller.js';
 import { validateBody, validateQuery } from '../../middlewares/validate.middleware.js';
 import { requireAuth, optionalAuth, requireRole } from '../../middlewares/auth.middleware.js';
-import { CreateRoomSchema, RoomQuerySchema, UpdateRoomSchema } from './room.validation.js';
+import {
+  CreateRoomSchema,
+  RoomQuerySchema,
+  UpdateRoomSchema,
+  UpdateMemberRoleSchema,
+  MuteMemberSchema,
+  TransferHostSchema,
+  LockRoomSchema,
+} from './room.validation.js';
 
 export const roomRoutes = Router();
 
@@ -69,6 +77,42 @@ roomRoutes.post('/:id/leave', requireAuth, (req, res, next) => {
 roomRoutes.post('/:id/members/:userId/kick', requireAuth, (req, res, next) => {
   roomController.kickMember(req, res, next);
 });
+
+roomRoutes.post(
+  '/:id/members/:userId/role',
+  requireAuth,
+  validateBody(UpdateMemberRoleSchema),
+  (req, res, next) => {
+    roomController.updateMemberRole(req, res, next);
+  }
+);
+
+roomRoutes.post(
+  '/:id/members/:userId/mute',
+  requireAuth,
+  validateBody(MuteMemberSchema),
+  (req, res, next) => {
+    roomController.muteMember(req, res, next);
+  }
+);
+
+roomRoutes.post(
+  '/:id/transfer-host',
+  requireAuth,
+  validateBody(TransferHostSchema),
+  (req, res, next) => {
+    roomController.transferHost(req, res, next);
+  }
+);
+
+roomRoutes.post(
+  '/:id/lock',
+  requireAuth,
+  validateBody(LockRoomSchema),
+  (req, res, next) => {
+    roomController.setRoomLock(req, res, next);
+  }
+);
 
 roomRoutes.post('/:id/members/:userId/reinstate', requireAuth, (req, res, next) => {
   roomController.reinstateMember(req, res, next);
