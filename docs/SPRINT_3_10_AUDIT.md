@@ -360,4 +360,47 @@ The following items cannot be validated through static analysis and must be veri
 4. **Phase 5.4:** Static verification via `pnpm typecheck` and `pnpm lint`.
 5. **Phase 5.5:** Documentation update and final implementation report.
 
+---
+
+## Phase 5 — Remediation Verification & Sprint Closure
+
+### 5.1 Repository State Reconciled
+- **Baseline Commit:** `9db5d8ef428b1440d02031f6476e10509a974abc` (Sprint 3.9 — Karaoke Experience Polish)
+- **Remediation Commit:** `2b6c031826bd5e883d17990d9ed2d79c3440e94b`
+- **Phase 4 Documentation Commit:** `e6a196a4198cfa1a09d3b24dd52b7ba48d08cb72`
+- **Final HEAD Commit:** `e6a196a4198cfa1a09d3b24dd52b7ba48d08cb72`
+- **Working-Tree Status:** Clean. Database name `test` preserved.
+
+### 5.2 Final Finding Status & Verification
+
+All 5 approved remediations from Phase 4 have been verified against the current repository source code:
+
+| Finding ID | Title | Subsystem | Status | Verification Detail |
+| :--- | :--- | :--- | :---: | :--- |
+| **STAB-01** | User Identity Projections | Rooms / Projections | **VERIFIED** | All 18 projection call-sites in `room.service.ts` (`findById`, `findRooms`, `findRoomsByOwner`, `update`, `closeRoom`, `joinRoom`, `getActiveMembers`, `getMyMembership`, `findJoinedRoomsByUser`, `kickMember`, `getRoomStateSnapshot`) explicitly populate `displayName`. |
+| **STAB-02** | Member Departure Identity | Rooms / Realtime State | **VERIFIED** | In `room.service.ts:leaveRoom()`, `updatedMembership` is populated with `userId`, and `member.left` broadcasts `memberObj?.displayName \|\| memberObj?.username \|\| 'Member'`. |
+| **STAB-03** | Room Activity Logging | Rooms / Activity Feed | **VERIFIED** | Non-blocking `chatService.recordActivity()` calls are integrated in `joinRoom()` (`member_joined`) and `leaveRoom()` (`member_left`). Failures do not affect room state transactions. |
+| **STAB-04** | Immediate Stage Activation Identity | Karaoke / Stage | **VERIFIED** | In `karaoke.service.ts:addToQueue()`, user queries select `displayName avatar` and `performerDisplayName` prioritizes `displayName` before falling back to `username`. |
+| **STAB-05** | Queue Performer Avatar Projection | Karaoke / Queue | **VERIFIED** | In `karaoke.service.ts:advanceToNextTrack()`, both candidate search and atomic claim populate `'requestedBy'` and `'singer'` with `'username displayName avatar'`. |
+
+### 5.3 Remaining Architectural Risks (Deferred to Milestone 4.0)
+
+1. **ARCH-01 (Socket.IO Redis Adapter):** Required when scaling horizontally across multi-container load-balanced clusters. Single-instance memory adapter remains stable for current staging and dev topologies.
+2. **ARCH-02 (Web Audio Realtime Key Transposition):** Client-side pitch shift DSP requires Web Audio API AudioContext graph upgrade. Deferred to dedicated audio processing milestone.
+3. **ARCH-03 (Chat & Activity TTL / Retention):** Database retention policy and MongoDB TTL index deferred to Sprint 4.0 data maintenance.
+
+### 5.4 Runtime-Only Verification Requirements
+
+These requirements depend on live media streams and client network conditions and cannot be confirmed via static analysis:
+1. **RT-01 (LiveKit Reconnect Mute Enforcement):** Verification of token revocation across reconnecting WebRTC participants.
+2. **RT-02 (Multi-Client Playback Synchronization):** Verification of audio clock anchor drift under simulated packet jitter.
+3. **RT-03 (Mobile Audio Autoplay Policy):** Verification of audio unlock on iOS Safari and Android Chrome user interaction.
+
+### 5.5 Explicit Closure Decision
+
+All identified defects from Sprints 3.0 through 3.9 approved for Sprint 3.10 remediation are verified in source code. Static checks (`pnpm typecheck` and `pnpm lint`) pass with 0 errors and 0 warnings. The platform is stabilized, fully backward compatible, and ready to transition to Sprint 4.0.
+
+**Sprint 3.10 Closure Status:** `CODE COMPLETE — NOT RUNTIME VERIFIED`
+
+
 

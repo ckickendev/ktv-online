@@ -5,19 +5,24 @@
 - **Sprint Objective:** Perform a comprehensive source-code audit covering Sprint 3.0 through Sprint 3.9, identify technical debt and cross-sprint inconsistencies, and fix verified low/medium-risk defects safely without adding new features.
 - **Sprint Policy:** Strict Code-Only Development Policy. No test files created or modified, no test runners executed, no production build commands run.
 - **Baseline Commit:** `9db5d8ef428b1440d02031f6476e10509a974abc` (Sprint 3.9 — Karaoke Experience Polish)
+- **Remediation Commit:** `2b6c031826bd5e883d17990d9ed2d79c3440e94b`
+- **Phase 4 Documentation Commit:** `e6a196a4198cfa1a09d3b24dd52b7ba48d08cb72`
+- **Final HEAD Commit:** `e6a196a4198cfa1a09d3b24dd52b7ba48d08cb72`
 - **Final Verdict:** `CODE COMPLETE — NOT RUNTIME VERIFIED`
 
 ---
 
-## B. Audit & Fix Summary
+## B. Phase 5 Remediation Verification
 
-| Defect ID | Severity | File(s) Changed | Root Cause & Resolution |
-| :--- | :---: | :--- | :--- |
-| **STAB-01** | Medium | `apps/api/src/modules/rooms/room.service.ts` | Sprint 3.7 introduced `displayName` on `UserModel`, but older room queries in `room.service.ts` only populated `'username avatar role'` or `'username avatar'`. Updated all 18 population query call-sites to include `displayName`. |
-| **STAB-02** | Medium | `apps/api/src/modules/rooms/room.service.ts` | In `leaveRoom()`, `updatedMembership.userId` was unpopulated, causing the `member.left` realtime event to broadcast `username: 'Member'`. Populated `userId` with `'username displayName avatar role'` and extracted `displayName || username || 'Member'`. |
-| **STAB-03** | Low | `apps/api/src/modules/rooms/room.service.ts` | `joinRoom()` and `leaveRoom()` did not record timeline activities, omitting participant joins and leaves from the room activity feed. Added non-blocking `chatService.recordActivity()` calls for `member_joined` and `member_left`. |
-| **STAB-04** | Low | `apps/api/src/modules/karaoke/karaoke.service.ts` | In `addToQueue()`, direct stage activation from idle selected only `username` from `UserModel`, omitting `displayName` when setting `room.currentSingerName`. Updated query to include `displayName` and resolved `performerDisplayName`. |
-| **STAB-05** | Low | `apps/api/src/modules/karaoke/karaoke.service.ts` | In `advanceToNextTrack()`, `requestedBy` and `singer` were populated with `'username displayName'`, omitting `avatar`. Updated both queries to populate `'username displayName avatar'`. |
+Each approved remediation from Phase 4 has been audited against the actual source code:
+
+| Finding ID | Title | Subsystem | Status | Verification Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **STAB-01** | User Identity Projection | Rooms / Projections | **VERIFIED** | All 18 projection call-sites across `room.service.ts` (`findById`, `findRooms`, `findRoomsByOwner`, `update`, `closeRoom`, `joinRoom`, `getActiveMembers`, `getMyMembership`, `findJoinedRoomsByUser`, `kickMember`, `getRoomStateSnapshot`) explicitly populate `displayName`. |
+| **STAB-02** | Member Departure Identity | Rooms / Realtime State | **VERIFIED** | In `room.service.ts:leaveRoom()`, `updatedMembership` is populated with `userId`, and `member.left` broadcasts `memberObj?.displayName \|\| memberObj?.username \|\| 'Member'`. |
+| **STAB-03** | Room Activity Logging | Rooms / Activity Feed | **VERIFIED** | In `room.service.ts`, non-blocking `chatService.recordActivity()` calls are integrated inside `joinRoom()` (`member_joined`) and `leaveRoom()` (`member_left`) without breaking membership transaction semantics. |
+| **STAB-04** | Immediate Stage Activation Identity | Karaoke / Stage | **VERIFIED** | In `karaoke.service.ts:addToQueue()`, user queries select `displayName avatar` and `performerDisplayName` resolves `singerUser?.displayName \|\| singerUser?.username \|\| ...` before assigning `room.currentSingerName`. |
+| **STAB-05** | Queue Performer Avatar Projection | Karaoke / Queue | **VERIFIED** | In `karaoke.service.ts:advanceToNextTrack()`, both candidate retrieval and atomic claim queries populate `'requestedBy'` and `'singer'` with `'username displayName avatar'`. |
 
 ---
 
@@ -77,18 +82,34 @@
 
 ---
 
-## E. Static Verification Results
+## E. Deferred Architectural Work & Runtime Risks
+
+### 1. Architectural Work Deferred to Milestone 4.0
+1. **ARCH-01 (Socket.IO Redis Adapter):** In-memory Socket.IO adapter requires replacement with `@socket.io/redis-adapter` for multi-instance container clustering.
+2. **ARCH-02 (Web Audio Realtime Key Transposition):** Audio key and pitch transposition DSP nodes deferred to audio architecture upgrade milestone.
+3. **ARCH-03 (Chat & Activity TTL / Retention):** Database retention policy and MongoDB TTL index deferred to data maintenance roadmap.
+
+### 2. Runtime Verification Requirements (Cannot be Verified Statically)
+1. **RT-01 (LiveKit Reconnect Mute Enforcement):** Verify that users server-muted by a room moderator remain muted across WebRTC reconnections and page refreshes.
+2. **RT-02 (Multi-Client Playback Sync under High Latency):** Verify lyrics and audio anchor drift remains within ±50ms across simulated multi-client network latency.
+3. **RT-03 (Mobile Audio Autoplay Policy):** Verify audio unmuting behavior on iOS Safari and Android Chrome upon explicit user interaction.
+
+---
+
+## F. Static Verification Evidence
+
+Executed against current HEAD:
 
 ### 1. Monorepo Type Check (`pnpm typecheck`)
 ```bash
 $ pnpm --recursive run typecheck
 Scope: 3 of 4 workspace projects
 packages/contracts typecheck$ tsc --noEmit
-└─ Done in 984ms
+└─ Done in 1s
 apps/api typecheck$ tsc --noEmit
 └─ Done in 1.5s
 apps/web typecheck$ tsc --noEmit
-└─ Done in 2.3s
+└─ Done in 2.4s
 ```
 **Result:** PASSED (0 errors across contracts, API, and Web).
 
@@ -97,18 +118,17 @@ apps/web typecheck$ tsc --noEmit
 $ pnpm --recursive run lint
 Scope: 3 of 4 workspace projects
 packages/contracts lint$ eslint src/
-└─ Done in 732ms
+└─ Done in 734ms
 apps/api lint$ eslint src/
 └─ Done in 1s
 apps/web lint$ next lint
 ✔ No ESLint warnings or errors
-└─ Done in 1.7s
+└─ Done in 1.9s
 ```
 **Result:** PASSED (0 warnings, 0 errors).
 
 ---
 
-## F. Final Verdict
+## G. Final Verdict
 
 `CODE COMPLETE — NOT RUNTIME VERIFIED`
-
