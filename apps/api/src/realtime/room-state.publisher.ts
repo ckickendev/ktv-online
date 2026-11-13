@@ -44,6 +44,7 @@ export async function publishRoomStateEvent(
             payload,
             attemptCount: 0,
             publishedAt: null,
+            expiresAt: null,
           },
         },
         { upsert: true }
@@ -63,11 +64,13 @@ export async function publishRoomStateEvent(
       const channel = getRoomChannel(roomId);
       io.to(channel).emit(SOCKET_EVENTS.SERVER.ROOM_STATE_EVENT, event);
 
-      // Mark outbox record as published
+      // Mark outbox record as published with explicit 7-day post-publish retention expiry
       if (Types.ObjectId.isValid(roomId)) {
+        const publishedAt = new Date();
+        const expiresAt = new Date(publishedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
         await RoomStateOutboxModel.updateOne(
           { roomId: new Types.ObjectId(roomId), version },
-          { $set: { publishedAt: new Date() }, $inc: { attemptCount: 1 } }
+          { $set: { publishedAt, expiresAt }, $inc: { attemptCount: 1 } }
         ).exec();
       }
 
@@ -85,7 +88,10 @@ export async function publishRoomStateEvent(
           { roomId: new Types.ObjectId(roomId), version },
           {
             $inc: { attemptCount: 1 },
-            $set: { lastError: err instanceof Error ? err.message : 'Broadcast error' },
+            $set: {
+              lastError: err instanceof Error ? err.message : 'Broadcast error',
+              expiresAt: null,
+            },
           }
         ).exec();
       }
@@ -134,13 +140,16 @@ export async function retryPendingOutboxEvents(batchSize = 50): Promise<number> 
 
       io.to(channel).emit(SOCKET_EVENTS.SERVER.ROOM_STATE_EVENT, event);
 
-      record.publishedAt = new Date();
+      const publishedAt = new Date();
+      record.publishedAt = publishedAt;
+      record.expiresAt = new Date(publishedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
       record.attemptCount += 1;
       await record.save();
       retriedCount += 1;
     } catch (err: unknown) {
       record.attemptCount += 1;
       record.lastError = err instanceof Error ? err.message : 'Retry broadcast error';
+      record.expiresAt = null;
       await record.save();
     }
   }

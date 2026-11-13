@@ -366,4 +366,129 @@ The backend architecture contains strict concurrency guards to handle overlappin
 - Requires live multi-client testing with simulated network latency to observe smooth visual handoff between outgoing singer and incoming singer.
 - High network jitter (>1,000ms RTT) may prolong the visual `TRANSITIONING` state before the next track begins.
 
+---
+
+## INT-02 — Database Retention & Outbox Lifecycle Audit
+
+### 1. Issue Summary & Source Audit Reconciliation
+In Phase 0, finding INT-02 reported:
+> *"RoomStateOutboxModel, RoomMessageModel, and RoomActivityModel lack automated TTL indexing or scheduled archiving. Implement 30-day TTL index."*
+
+A rigorous line-by-line inspection of the actual MongoDB models revealed critical discrepancies between the Phase 0 report and reality:
+
+| Collection / Model | Actual Existing Indexes in Source | Factual Status | Assessment |
+| :--- | :--- | :--- | :--- |
+| **`RoomStateOutboxModel`** | `{ createdAt: 1 }` (`expireAfterSeconds: 604800` / 7 days) | **Existing TTL on `createdAt`** | **CRITICAL DEFECT:** Unconditionally purges pending (`publishedAt: null`) and failed events after 7 days, violating delivery invariants. |
+| **`RoomMessageModel`** | `{ createdAt: 1 }` (`expireAfterSeconds: 2592000` / 30 days) | **Existing 30-day TTL** | **POLICY REQUIRED:** Index already exists in code (added in Sprint 2.1.1); lacks explicit product-owner sign-off regarding moderation audit retention. |
+| **`RoomActivityModel`** | `{ createdAt: 1 }` (`expireAfterSeconds: 604800` / 7 days) | **Existing 7-day TTL** | **POLICY REQUIRED:** Index already exists in code; permanently deletes kick and moderation audit trails after 7 days. |
+| **`RoomQueueItemModel`** | `{ roomId: 1, status: 1, position: 1 }`, etc. | **NO TTL index** | **ARCHITECTURAL RISK:** Completed/skipped items accumulate indefinitely without bounds. |
+| **`VoiceEvictionTaskModel`** | `{ updatedAt: 1 }` (`expireAfterSeconds: 86400`, `partialFilter: { status: 'completed' }`) | **Exemplary Safe TTL** | **NO FIX REQUIRED:** Purges only completed tasks after 24 hours. Pending/failed tasks never purged. |
+| **`VoiceWebhookEventModel`** | `{ createdAt: 1 }` (`expireAfterSeconds: 86400` / 24 hours) | **Existing 24h TTL** | **NO FIX REQUIRED:** Idempotent webhook deduplication window. |
+| **`VoiceParticipantSequenceModel`** | `{ updatedAt: 1 }` (`expireAfterSeconds: 86400` / 24 hours) | **Existing 24h TTL** | **NO FIX REQUIRED:** Monotonic sequence tracker cleans up 24h after participant leaves. |
+| **`SessionModel`** | `{ expiresAt: 1 }` (`expireAfterSeconds: 0`) | **Existing Safe TTL** | **NO FIX REQUIRED:** Clean TTL on explicit token expiration timestamp. |
+| **`RoomMembershipModel`** | `{ roomId: 1, userId: 1 }` (unique partial for `status: 'active'`) | **NO TTL index** | **NO FIX REQUIRED:** Tracks membership and bans (`kickedAt`). Must NOT be automatically deleted. |
+| **`RoomModel`** | `{ status: 1 }`, `{ ownerId: 1 }`, etc. | **NO TTL index** | **NO FIX REQUIRED:** Core room entity. Archival requires separate product milestone. |
+
+---
+
+### 2. Outbox Lifecycle & Safety Remediation (Highest Priority)
+
+#### 2.1 Outbox State Lifecycle
+The `RoomStateOutboxModel` tracks authoritative room state transitions (`member.joined`, `member.left`, `room.settings.updated`, `room.host.transferred`, etc.):
+
+```mermaid
+stateDiagram-v2
+  [*] --> Pending: publishRoomStateEvent() [upsert with publishedAt=null, expiresAt=null]
+  Pending --> Published: Socket.IO Broadcast Succeeded
+  note right of Published
+    publishedAt = now
+    expiresAt = now + 7 days
+    Eligible for TTL cleanup after 7 days post-publish
+  end note
+  Pending --> Failed: Socket.IO Broadcast Failed / Server Down
+  note left of Failed
+    lastError recorded
+    attemptCount incremented
+    publishedAt = null, expiresAt = null
+    NEVER purged by TTL
+  end note
+  Failed --> Retrying: retryPendingOutboxEvents() [attemptCount < 5]
+  Retrying --> Published: Retry Broadcast Succeeded
+  Retrying --> DeadLetter: Retry Failed [attemptCount >= 5]
+  note left of DeadLetter
+    expiresAt remains null
+    Preserved permanently for manual replay & audit
+  end note
+```
+
+#### 2.2 Critical Vulnerability in Prior Implementation
+The previous index:
+`RoomStateOutboxSchema.index({ createdAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 });`
+used `createdAt` without a partial filter. If the Socket server was temporarily offline or a delivery failed, unbroadcast events were silently and permanently deleted by MongoDB after 7 days, destroying the recovery guarantee of the Transactional Outbox pattern.
+
+#### 2.3 Remediation Implemented
+1. **Dedicated Expiration Field (`expiresAt`):**
+   Added `expiresAt: { type: Date, default: null, index: true }` to `IRoomStateOutbox` and `RoomStateOutboxSchema`.
+2. **Selective Safe TTL Index:**
+   Replaced the dangerous `{ createdAt: 1 }` index with:
+   ```typescript
+   RoomStateOutboxSchema.index(
+     { expiresAt: 1 },
+     {
+       expireAfterSeconds: 0,
+       partialFilterExpression: { expiresAt: { $type: 'date' } },
+     }
+   );
+   ```
+3. **Explicit Lifecycle Assignment (`room-state.publisher.ts`):**
+   - On initial record creation: `expiresAt: null`.
+   - On broadcast failure: `expiresAt: null`.
+   - On successful broadcast / retry: `expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)`.
+4. **Safety Invariants Satisfied:**
+   - Pending events (`publishedAt === null`) have `expiresAt: null` -> **Never purged**.
+   - Failed events (`lastError !== null`) have `expiresAt: null` -> **Never purged**.
+   - Actively processing / retrying events have `expiresAt: null` -> **Never purged**.
+   - Only events conclusively delivered to subscribers expire 7 days after delivery.
+
+---
+
+### 3. Chat & Activity Retention Policy Proposals
+
+#### 3.1 `RoomMessageModel` (Chat Messages)
+- **Current State:** 30-day TTL on `{ createdAt: 1 }` exists in source code since Sprint 2.1.1.
+- **Product Policy Questions Requiring Sign-Off:**
+  1. *Host Lounge Permanence:* Do room owners expect private lounge chat history to be preserved longer than public lounges?
+  2. *Abuse Reporting:* If a user reports abusive chat messages 35 days later, is 30-day deletion acceptable to Legal / Trust & Safety?
+- **Recommendations for Product Owner:**
+  - **Option 1 (Approve Existing):** Confirm the existing 30-day TTL policy for all chat messages.
+  - **Option 2 (Tiered Retention):** Retain public room messages for 30 days, private room messages for 90 days.
+  - **Option 3 (Soft Archival):** Migrate messages older than 30 days to cold storage collection before deletion.
+
+#### 3.2 `RoomActivityModel` (Room Activity Feed)
+- **Current State:** 7-day TTL on `{ createdAt: 1 }` exists in source code since Sprint 2.1.1.
+- **Product Policy Questions Requiring Sign-Off:**
+  1. *Moderation Audit Trails:* Moderation events (`member_kicked`, `member_muted`, `member_role_updated`) currently share the same 7-day TTL as ephemeral cheers (`reaction_sent`, `gift_sent`). After 7 days, host moderation logs are lost.
+- **Recommendations for Product Owner:**
+  - **Option 1 (Separation of Concerns):** Keep 7-day TTL on ephemeral audience events (`member_joined`, `reaction_sent`, `gift_sent`), but exclude moderation events using `partialFilterExpression: { type: { $nin: ['member_kicked', 'member_muted', 'member_role_updated'] } }`.
+  - **Option 2 (Dedicated Moderation Collection):** Create `RoomModerationAuditModel` with permanent or 1-year retention for compliance.
+
+#### 3.3 `RoomQueueItemModel` (Karaoke Queue History)
+- **Current State:** No TTL index exists. Completed, skipped, and removed songs remain indefinitely.
+- **Recommendations for Product Owner:**
+  - If "User Singing History" or "Lounge Analytics" is planned for Sprint 4.x / 5.0, retain completed items.
+  - If karaoke queue is strictly ephemeral, introduce a 14-day TTL on `{ completedAt: 1 }` for non-active items (`partialFilterExpression: { status: { $in: ['completed', 'skipped', 'removed', 'failed'] } }`).
+
+---
+
+### 4. Implementation Decision Gate Summary
+
+| Finding | Description | Classification | Severity | Action | Status |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **INT-02A** | Outbox age-based TTL deletes pending/failed events | **CONFIRMED DEFECT** | **P1** | **FIX NOW** | **RESOLVED:** Implemented safe `expiresAt` with `partialFilterExpression`. |
+| **INT-02B** | Chat message 30-day retention unconfirmed by product policy | **PRODUCT POLICY REQUIRED** | **P2** | **FIX AFTER APPROVAL** | **DOCUMENTED:** Retained existing code; awaiting product sign-off. |
+| **INT-02C** | Moderation kick/mute audit logs purged after 7 days | **PRODUCT POLICY REQUIRED** | **P2** | **FIX AFTER APPROVAL** | **DOCUMENTED:** Proposal submitted for tiered activity retention. |
+| **INT-02D** | Unbounded growth in completed/skipped karaoke queue items | **ARCHITECTURAL RISK** | **P3** | **FIX AFTER APPROVAL** | **DOCUMENTED:** Proposal submitted for queue item archival/TTL. |
+| **INT-02E** | Voice eviction, session, webhook, and sequence TTLs | **NO FIX REQUIRED** | **P3** | **NO FIX REQUIRED** | **VERIFIED:** Existing implementations are bounded and safe. |
+
+
 

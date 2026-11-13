@@ -8,6 +8,7 @@ export interface IRoomStateOutbox {
   type: RoomStateEventType;
   payload: Record<string, unknown>;
   publishedAt: Date | null;
+  expiresAt?: Date | null;
   attemptCount: number;
   lastError: string | null;
   createdAt: Date;
@@ -47,6 +48,11 @@ const RoomStateOutboxSchema = new Schema<IRoomStateOutboxDocument>(
       default: null,
       index: true,
     },
+    expiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     attemptCount: {
       type: Number,
       default: 0,
@@ -67,8 +73,15 @@ RoomStateOutboxSchema.index({ roomId: 1, version: 1 }, { unique: true });
 // Sweep index for pending/unacknowledged publication retries
 RoomStateOutboxSchema.index({ publishedAt: 1, createdAt: 1 });
 
-// TTL retention index: prune historical outbox records after 7 days
-RoomStateOutboxSchema.index({ createdAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 });
+// TTL retention index: prune ONLY successfully published outbox records after their explicit expiresAt date (7 days post-publish).
+// Pending events (publishedAt === null) and failed/retryable events (expiresAt === null) are NEVER purged by TTL.
+RoomStateOutboxSchema.index(
+  { expiresAt: 1 },
+  {
+    expireAfterSeconds: 0,
+    partialFilterExpression: { expiresAt: { $type: 'date' } },
+  }
+);
 
 export const RoomStateOutboxModel: Model<IRoomStateOutboxDocument> =
   (mongoose.models.RoomStateOutbox as Model<IRoomStateOutboxDocument>) ||
