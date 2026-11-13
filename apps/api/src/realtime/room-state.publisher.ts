@@ -64,7 +64,12 @@ export async function publishRoomStateEvent(
       const channel = getRoomChannel(roomId);
       io.to(channel).emit(SOCKET_EVENTS.SERVER.ROOM_STATE_EVENT, event);
 
-      // Mark outbox record as published with explicit 7-day post-publish retention expiry
+      // Mark outbox record as broadcasted to the local Socket.IO room channel.
+      // Note on Delivery Semantics:
+      // 'publishedAt' guarantees that the local Socket.IO server accepted and emitted the event to the room channel.
+      // It does NOT guarantee individual client subscriber TCP receipt or application acknowledgment (which clients
+      // recover via version-fenced snapshot reconciliation).
+      // Once successfully emitted to Socket.IO, assign explicit 7-day post-broadcast retention expiry (expiresAt).
       if (Types.ObjectId.isValid(roomId)) {
         const publishedAt = new Date();
         const expiresAt = new Date(publishedAt.getTime() + 7 * 24 * 60 * 60 * 1000);

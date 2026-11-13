@@ -51,7 +51,6 @@ const RoomStateOutboxSchema = new Schema<IRoomStateOutboxDocument>(
     expiresAt: {
       type: Date,
       default: null,
-      index: true,
     },
     attemptCount: {
       type: Number,

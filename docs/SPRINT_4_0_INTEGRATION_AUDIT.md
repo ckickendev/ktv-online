@@ -490,5 +490,25 @@ used `createdAt` without a partial filter. If the Socket server was temporarily 
 | **INT-02D** | Unbounded growth in completed/skipped karaoke queue items | **ARCHITECTURAL RISK** | **P3** | **FIX AFTER APPROVAL** | **DOCUMENTED:** Proposal submitted for queue item archival/TTL. |
 | **INT-02E** | Voice eviction, session, webhook, and sequence TTLs | **NO FIX REQUIRED** | **P3** | **NO FIX REQUIRED** | **VERIFIED:** Existing implementations are bounded and safe. |
 
+---
+
+### 5. Phase 3.1: Outbox TTL Index Safety Reconciliation
+
+#### 5.1 Existing Database Index Lifecycle Investigation
+- **Mongoose Index Behavior:** The application boots Mongoose models using standard connection (`autoIndex`). Mongoose invokes `createIndexes()`, which builds indexes declared in the schema that are missing in the database.
+- **Index Retention Reality:** Neither Mongoose nor MongoDB drops indexes removed from the schema. In an existing database where `createdAt_1` was created under Sprints 2.2.1–4.0, **the old 7-day TTL index remains active in MongoDB indefinitely** unless explicitly dropped.
+- **Coexistence Hazard:** If the old `createdAt_1` TTL index coexists with the new selective `expiresAt` index, MongoDB's background TTL thread will continue deleting pending or failed documents 7 days after `createdAt`, completely undermining the remediation!
+- **Migration Script Created:** An explicit, idempotent database migration script ([`reconcile-outbox-ttl-index.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/migrations/reconcile-outbox-ttl-index.ts)) was authored to safely identify and drop the old `createdAt` TTL index and any un-filtered `expiresAt` index during deployment.
+
+#### 5.2 Duplicate Index Conflict Resolution
+- In Phase 3, `expiresAt` was declared with `index: true` at the schema field level while also defining a schema-level index `RoomStateOutboxSchema.index({ expiresAt: 1 }, ...)`.
+- Mongoose generates an un-filtered single-field index on `{ expiresAt: 1 }` from `index: true`, causing an index key collision or duplicate definition against the selective TTL index.
+- **Remediation:** Removed field-level `index: true` from `expiresAt`, retaining exclusively the schema-level index with `expireAfterSeconds: 0` and `partialFilterExpression: { expiresAt: { $type: 'date' } }`.
+
+#### 5.3 Clarified Delivery Semantics
+- In [`room-state.publisher.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/realtime/room-state.publisher.ts), `publishedAt` signifies that the local Socket.IO server accepted and emitted the event to the room channel.
+- It does **not** guarantee individual client subscriber TCP receipt or application acknowledgment. Clients recover any missed frames via version-fenced snapshot reconciliation (`getRoomStateSnapshot`). Expiration (`expiresAt`) is assigned 7 days post-broadcast emission.
+
+
 
 
