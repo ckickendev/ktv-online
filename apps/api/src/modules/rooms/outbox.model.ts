@@ -73,12 +73,14 @@ RoomStateOutboxSchema.index({ roomId: 1, version: 1 }, { unique: true });
 RoomStateOutboxSchema.index({ publishedAt: 1, createdAt: 1 });
 
 // TTL retention index: prune ONLY successfully published outbox records after their explicit expiresAt date (7 days post-publish).
+// Standard MongoDB TTL index on expiresAt (expireAfterSeconds: 0).
+// MongoDB automatically skips documents where expiresAt is null or not a Date.
 // Pending events (publishedAt === null) and failed/retryable events (expiresAt === null) are NEVER purged by TTL.
 RoomStateOutboxSchema.index(
   { expiresAt: 1 },
   {
     expireAfterSeconds: 0,
-    partialFilterExpression: { expiresAt: { $type: 'date' } },
+    name: 'expiresAt_1_ttl',
   }
 );
 

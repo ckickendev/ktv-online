@@ -503,11 +503,39 @@ used `createdAt` without a partial filter. If the Socket server was temporarily 
 #### 5.2 Duplicate Index Conflict Resolution
 - In Phase 3, `expiresAt` was declared with `index: true` at the schema field level while also defining a schema-level index `RoomStateOutboxSchema.index({ expiresAt: 1 }, ...)`.
 - Mongoose generates an un-filtered single-field index on `{ expiresAt: 1 }` from `index: true`, causing an index key collision or duplicate definition against the selective TTL index.
-- **Remediation:** Removed field-level `index: true` from `expiresAt`, retaining exclusively the schema-level index with `expireAfterSeconds: 0` and `partialFilterExpression: { expiresAt: { $type: 'date' } }`.
+- **Remediation:** Removed field-level `index: true` from `expiresAt`, retaining exclusively the single schema-level TTL index.
 
 #### 5.3 Clarified Delivery Semantics
 - In [`room-state.publisher.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/realtime/room-state.publisher.ts), `publishedAt` signifies that the local Socket.IO server accepted and emitted the event to the room channel.
 - It does **not** guarantee individual client subscriber TCP receipt or application acknowledgment. Clients recover any missed frames via version-fenced snapshot reconciliation (`getRoomStateSnapshot`). Expiration (`expiresAt`) is assigned 7 days post-broadcast emission.
+
+---
+
+### 6. Phase 3.2: Standard MongoDB TTL Index Correction
+
+#### 6.1 Unsuitability of Partial TTL on Regular Collections
+- In regular MongoDB collections (as opposed to time-series collections), TTL indexes with a `partialFilterExpression` are unsupported or severely restricted.
+- The `roomstateoutboxes` collection is a standard, non-time-series MongoDB collection with unique compound indexes (`{ roomId: 1, version: 1 }`).
+
+#### 6.2 Standard TTL Index Native Null-Safe Behavior
+- MongoDB's native single-field TTL index on a Date field (`{ expiresAt: 1 }` with `expireAfterSeconds: 0`) inherently provides complete null-safety:
+  1. If a document's indexed field does not contain a BSON Date (e.g. `expiresAt: null` or missing), MongoDB **skips the document entirely** and the document will **never expire**.
+  2. If the field contains a valid BSON Date, the TTL thread purges the document once `now >= expiresAt`.
+- Therefore, a standard single-field TTL index without `partialFilterExpression` fully satisfies all data-safety invariants for pending, failed, retryable, and dead-letter outbox events.
+
+#### 6.3 Corrected Final Outbox Index Contract
+- Schema index definition in [`outbox.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/outbox.model.ts):
+  ```typescript
+  RoomStateOutboxSchema.index(
+    { expiresAt: 1 },
+    {
+      expireAfterSeconds: 0,
+      name: 'expiresAt_1_ttl',
+    }
+  );
+  ```
+- Migration script in [`reconcile-outbox-ttl-index.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/migrations/reconcile-outbox-ttl-index.ts) updated to drop incompatible partial or non-TTL indexes on `expiresAt` and establish the standard `expiresAt_1_ttl` index cleanly and idempotently.
+
 
 
 

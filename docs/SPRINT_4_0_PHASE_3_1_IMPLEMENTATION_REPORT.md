@@ -1,3 +1,7 @@
+> [!NOTE]
+> **Subsequent Correction (Sprint 4.0 Phase 3.2):**
+> In Phase 3.2, the TTL index was corrected from using `partialFilterExpression` to a standard single-field TTL index (`{ expiresAt: 1 }`, `expireAfterSeconds: 0`, `name: 'expiresAt_1_ttl'`). Regular MongoDB collections do not support partial TTL indexes, and standard MongoDB TTL indexes naturally skip documents where `expiresAt` is `null` or missing. See [`docs/SPRINT_4_0_PHASE_3_2_IMPLEMENTATION_REPORT.md`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/docs/SPRINT_4_0_PHASE_3_2_IMPLEMENTATION_REPORT.md) for details.
+
 # KTVOnline — Sprint 4.0 Phase 3.1: Implementation Report
 ## Outbox TTL Index Safety Reconciliation
 
