@@ -77,6 +77,8 @@ export function useRoomState(
   const [kickedReason, setKickedReason] = useState<string | null>(null);
 
   // Mutable refs to prevent stale closures and manage synchronization locks
+  const roomRef = useRef<RoomSnapshotDto | null>(null);
+  roomRef.current = room;
   const versionRef = useRef<number>(0);
   const roomIdRef = useRef<string | undefined>(roomId);
   roomIdRef.current = roomId;
@@ -359,7 +361,7 @@ export function useRoomState(
     isFetchingSnapshotRef.current = true;
 
     try {
-      setIsLoading((prev) => (room ? prev : true));
+      setIsLoading((prev) => (roomRef.current ? prev : true));
       const snapshot = await roomApi.getRoomState(roomIdRef.current);
       applySnapshot(snapshot);
     } catch (err: unknown) {
@@ -374,7 +376,7 @@ export function useRoomState(
         fetchSnapshot();
       }
     }
-  }, [applySnapshot, room]);
+  }, [applySnapshot]);
 
   // Request fresh snapshot from Socket or REST with coalesced recovery
   const refreshState = useCallback(async () => {
@@ -433,7 +435,7 @@ export function useRoomState(
         if (verDto.version > versionRef.current) {
           setSyncStatus('desynchronized');
           refreshState();
-        } else if (verDto.status === 'closed' && room?.status !== 'closed') {
+        } else if (verDto.status === 'closed' && roomRef.current?.status !== 'closed') {
           setRoom((prev) => (prev ? { ...prev, status: 'closed', currentParticipantsCount: 0 } : null));
           setRoomClosedNotice('This room has been closed by the host.');
         }
@@ -462,7 +464,7 @@ export function useRoomState(
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('focus', onWindowFocus);
     };
-  }, [enabled, roomId, refreshState, room?.status]);
+  }, [enabled, roomId, refreshState]);
 
   // Socket.IO event synchronization layer with event buffering
   useEffect(() => {
@@ -567,6 +569,11 @@ export function useRoomState(
     socket.on(SOCKET_EVENTS.SERVER.ROOM_CLOSED, handleRoomClosedNotice);
 
     return () => {
+      // Leave room presence channel on unmount or when roomId changes
+      if (socket.connected) {
+        socket.emit(SOCKET_EVENTS.CLIENT.ROOM_LEAVE, { roomId: targetRoomId });
+      }
+
       socket.off('connect', onConnectOrReconnect);
       socket.off(SOCKET_EVENTS.SERVER.ROOM_STATE_SNAPSHOT, handleRoomStateSnapshot);
       socket.off(SOCKET_EVENTS.SERVER.ROOM_STATE_EVENT, handleRoomStateEvent);

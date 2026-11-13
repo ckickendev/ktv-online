@@ -244,3 +244,52 @@ flowchart TD
 | **INT-03** | Frontend / Ergonomics | **P2** | **Low** | **UX Inconsistency** | **Queue Completion Notice Delay:** When a song reaches the end of its duration, the client display remains on `00:00` for 1-2 seconds while waiting for authoritative server advance. Add immediate client transition state. |
 | **INT-04** | Voice / LiveKit | **P2** | **Medium** | **Runtime Requirement** | **WebRTC Media Reconnection Token Invalidation:** Requires live multi-client verification under network packet drop to confirm participant media state re-syncs cleanly. |
 | **INT-05** | Infrastructure | **P3** | **High** | **Architectural Risk** | **Socket.IO Cross-Instance Scaling:** In-memory adapter prevents multi-container horizontal scale-out. Documented for Milestone 5.0. |
+
+---
+
+## INT-01 — Realtime Subscription Lifecycle Remediation
+
+### 1. Issue Summary
+In `apps/web/src/hooks/use-room-state.ts`, the Socket.IO event synchronization effect registered listeners and emitted `SOCKET_EVENTS.CLIENT.ROOM_JOIN` upon mount and reconnect. However, the cleanup function only detached local event listeners (`socket.off`) without notifying the server that the socket was leaving the channel (`SOCKET_EVENTS.CLIENT.ROOM_LEAVE`).
+
+### 2. Root Cause Confirmed from Source
+1. **Unilateral Listener Detachment:** The client disconnected local callbacks but left the underlying Socket.IO socket joined to `room:${roomId}` on the server.
+2. **Presence Ghosting:** Because `presenceManager.removeSocket(socket.id)` was only triggered on `socket.on('disconnect')` or explicit `ROOM_LEAVE`, navigation away from a room (e.g. to `/rooms` or `/profile`) left the user recorded as an active online participant in memory.
+3. **Cross-Room Channel Leakage:** Sockets switching from Room A to Room B remained subscribed to Room A's channel on the server, receiving unnecessary broadcasts.
+4. **Unstable Dependency Re-triggering:** `fetchSnapshot` had `room` in its dependency array, which caused `refreshState` to re-instantiate on every room state change, resetting the socket effect needlessly.
+
+### 3. Actual Lifecycle Ownership Model
+- **Socket Connection:** Owned globally by `socketManager` singleton (`apps/web/src/lib/socket/socket-client.ts`).
+- **Room Subscription:** Owned at the route level by `useRoomState(roomId)` in `/rooms/[roomId]/page.tsx`. Sibling/child feature hooks (`useRoomChat`, `useKaraoke`, `useStageReactions`, `useVirtualGifts`) only attach domain event handlers on the active socket.
+- **Room Presence:** Owned on the backend by in-memory `RoomPresenceManager` with per-user socket sets (`roomUsers = Map<roomId, Map<userId, Set<socketId>>>`).
+- **Persistent Membership:** Owned authoritatively in MongoDB by `RoomMembershipModel`. Persistent membership is completely decoupled from Socket.IO presence and is never affected by socket join/leave events.
+
+### 4. Chosen Solution
+1. **Emit `ROOM_LEAVE` on Unmount & Room Change:**
+   In `use-room-state.ts`, updated the effect cleanup to emit `SOCKET_EVENTS.CLIENT.ROOM_LEAVE` with `targetRoomId` whenever the hook unmounts or `roomId` changes:
+   ```typescript
+   return () => {
+     if (socket.connected) {
+       socket.emit(SOCKET_EVENTS.CLIENT.ROOM_LEAVE, { roomId: targetRoomId });
+     }
+     socket.off('connect', onConnectOrReconnect);
+     // ... deregister domain handlers
+     bufferedEventsRef.current = [];
+   };
+   ```
+2. **Stabilize Hook Callbacks with `roomRef`:**
+   Stored `room` in `roomRef` to remove `room` from `fetchSnapshot`'s dependency array. This guarantees `fetchSnapshot`, `refreshState`, and the socket synchronization effect remain completely stable across room state mutations.
+
+### 5. Preserved Architectural Invariants
+- **Invariant A (Membership vs. Presence):** `ROOM_LEAVE` on the socket only affects channel broadcasting and ephemeral in-memory presence. Persistent MongoDB membership remains active.
+- **Invariant B (Multi-Device Safety):** `RoomPresenceManager.removeSocket()` deletes only the leaving `socketId`. If the user has another active tab or device in the room, `userSockets.size > 0`, `isLastDisconnection === false`, and the user remains online.
+- **Invariant C (Idempotent Cleanup):** Repeated cleanup calls on the server are safe no-ops (`this.socketMeta.get(socketId)` returns `undefined`).
+- **Invariant D (Route-Level Ownership):** `useRoomState` is only instantiated at the route level in `page.tsx`. Child components never trigger accidental unsubscriptions.
+- **Invariant E (Safe Room Switching):** When moving from Room A to Room B, the cleanup emits `ROOM_LEAVE` for Room A before the new effect emits `ROOM_JOIN` for Room B.
+- **Invariant F (Safe Reconnection):** Socket reconnect re-emits `ROOM_JOIN` only for the currently active `targetRoomId`.
+
+### 6. Remaining Runtime Verification Scenarios
+- Multi-tab presence isolation when closing one tab.
+- Rapid room switching between Room A and Room B.
+- Network blip socket reconnection handling.
+
