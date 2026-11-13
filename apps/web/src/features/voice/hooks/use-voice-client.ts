@@ -555,12 +555,17 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
             return;
           }
 
-          await room.localParticipant.setMicrophoneEnabled(!isMuted, {
-            autoGainControl: capturePreferencesRef.current.autoGainControl,
-            echoCancellation: capturePreferencesRef.current.echoCancellation,
-            noiseSuppression: capturePreferencesRef.current.noiseSuppression,
-            deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
-          });
+          const canPublishMic = room.localParticipant.permissions?.canPublish !== false;
+          if (canPublishMic && !isMuted) {
+            await room.localParticipant.setMicrophoneEnabled(true, {
+              autoGainControl: capturePreferencesRef.current.autoGainControl,
+              echoCancellation: capturePreferencesRef.current.echoCancellation,
+              noiseSuppression: capturePreferencesRef.current.noiseSuppression,
+              deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
+            });
+          } else {
+            setIsMuted(true);
+          }
           reconnectAttemptsRef.current = 0;
           setConnectionState('connected');
           syncParticipants(room);
@@ -643,14 +648,19 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
         return;
       }
 
-      // 4. Enable local microphone audio track with active capture options
-      await room.localParticipant.setMicrophoneEnabled(true, {
-        autoGainControl: capturePreferencesRef.current.autoGainControl,
-        echoCancellation: capturePreferencesRef.current.echoCancellation,
-        noiseSuppression: capturePreferencesRef.current.noiseSuppression,
-        deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
-      });
-      setIsMuted(false);
+      // 4. Enable local microphone audio track with active capture options if permitted
+      const canPublishMic = room.localParticipant.permissions?.canPublish !== false;
+      if (canPublishMic) {
+        await room.localParticipant.setMicrophoneEnabled(true, {
+          autoGainControl: capturePreferencesRef.current.autoGainControl,
+          echoCancellation: capturePreferencesRef.current.echoCancellation,
+          noiseSuppression: capturePreferencesRef.current.noiseSuppression,
+          deviceId: activeAudioInputIdRef.current ? { exact: activeAudioInputIdRef.current } : undefined,
+        });
+        setIsMuted(false);
+      } else {
+        setIsMuted(true);
+      }
       syncParticipants(room);
     } catch (err: unknown) {
       if (sessionGenRef.current !== currentSessionGen) return;
@@ -681,6 +691,11 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
   // Toggle local microphone mute
   const toggleMute = useCallback(async () => {
     if (!roomRef.current || !roomRef.current.localParticipant) return;
+
+    if (roomRef.current.localParticipant.permissions?.canPublish === false) {
+      setErrorMessage('Your microphone has been muted by room moderation.');
+      return;
+    }
 
     try {
       const targetState = !isMuted;
