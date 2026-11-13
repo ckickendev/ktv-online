@@ -536,6 +536,113 @@ used `createdAt` without a partial filter. If the Socket server was temporarily 
   ```
 - Migration script in [`reconcile-outbox-ttl-index.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/database/migrations/reconcile-outbox-ttl-index.ts) updated to drop incompatible partial or non-TTL indexes on `expiresAt` and establish the standard `expiresAt_1_ttl` index cleanly and idempotently.
 
+---
+
+## 7. Sprint 4.0 Phase 4: Final Integration Closure & Multi-Subsystem Audit
+
+### 7.1 Scope & Methodology
+Phase 4 performs the final source-code and architectural integration verification across all major KTVOnline subsystems:
+- **Area A:** Room Lifecycle & Membership ([`room.service.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.service.ts), [`room.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/room.model.ts), [`membership.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/membership.model.ts), [`use-room-state.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/hooks/use-room-state.ts)).
+- **Area B:** Realtime & Outbox ([`room-state.publisher.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/realtime/room-state.publisher.ts), [`outbox.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/outbox.model.ts), [`socket.server.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/realtime/socket.server.ts), [`socket-client.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/lib/socket-client.ts)).
+- **Area C:** Playback, Queue & Singer Handoff ([`karaoke.service.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/karaoke/karaoke.service.ts), [`playback-state.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/playback-state.model.ts), [`queue-item.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/queue-item.model.ts), [`KaraokePlayer.tsx`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/components/karaoke/KaraokePlayer.tsx), [`SingerTurnIndicator.tsx`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/components/karaoke/SingerTurnIndicator.tsx), [`use-karaoke.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/hooks/use-karaoke.ts)).
+- **Area D:** LiveKit Voice & Moderation ([`voice.service.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/voice/voice.service.ts), [`use-voice.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/hooks/use-voice.ts), [`VoiceControls.tsx`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/components/voice/VoiceControls.tsx)).
+- **Area E:** Audience Interaction & Atmosphere ([`message.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/message.model.ts), [`activity.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/rooms/activity.model.ts), [`ChatPanel.tsx`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/components/chat/ChatPanel.tsx), [`CheerOverlay.tsx`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/components/chat/CheerOverlay.tsx)).
+- **Area F:** User Identity & Discovery ([`user.model.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/modules/users/user.model.ts), [`room-card.tsx`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/components/rooms/room-card.tsx), discovery REST APIs).
+- **Area G:** Database Retention & Collections (All 13 Mongoose schemas, indexes, and migration tooling).
+
+---
+
+### 7.2 End-to-End Flow Traceability Matrix (FLOW-01 to FLOW-14)
+
+| Flow ID | Flow Name | Primary Entry Point | Backend Handlers & Models | Realtime Events & Versioning | Frontend Reconciliation & UX | Failure Recovery / Deadlock Mitigation | Verification Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :---: |
+| **FLOW-01** | User Room Creation | `POST /api/rooms` | `room.service.ts`, `RoomModel`, `RoomMembershipModel`, `RoomPlaybackStateModel` | Outbox: `ROOM_STATE_SYNC` (`version: 1`) | Redirect to `/room/:code`, initializes `useRoomState` | Rollback transaction if initial membership fails; unique room code retry | **STATIC VERIFIED** |
+| **FLOW-02** | Room Join & Presence | `POST /api/rooms/:id/join` & Socket `ROOM_JOIN` | `room.service.ts`, `RoomMembershipModel`, `RoomPresenceManager` | `ROOM_MEMBER_JOINED`, `ROOM_PRESENCE_UPDATE` | Zustand store appends member; active avatar roster updates | Atomic `$inc: { currentParticipants: 1 }` with capacity bounds; idempotent join | **STATIC VERIFIED** |
+| **FLOW-03** | Room Leave & Disconnect | REST leave / Socket disconnect / unmount | `room.service.ts`, `RoomMembershipModel`, `RoomPresenceManager` | `ROOM_MEMBER_LEFT`, `ROOM_PRESENCE_UPDATE` | `useRoomState` cleanup emits `ROOM_LEAVE`, resets Zustand state | Grace period on disconnect (10s) before broadcasting offline; host reassignment if owner leaves | **STATIC VERIFIED** |
+| **FLOW-04** | Song Search & Queue Addition | `POST /api/rooms/:id/queue` | `karaoke.service.ts`, `RoomQueueItemModel` | `ROOM_QUEUE_UPDATED` (`queueVersion: N+1`), `ROOM_ACTIVITY` | TanStack Query invalidation + Socket.IO optimistic queue append | Max queue limit enforcement (50 songs); duplicate entry prevention | **STATIC VERIFIED** |
+| **FLOW-05** | Queue Reorder & Removal | `PATCH /queue/:itemId` / `DELETE` | `karaoke.service.ts`, `RoomQueueItemModel` | `ROOM_QUEUE_UPDATED`, `ROOM_STATE_SYNC` | Queue drawer updates; drag-and-drop optimistic reorder | Host or singer authorization check; monotonic position re-indexing | **STATIC VERIFIED** |
+| **FLOW-06** | Playback Start & Lease Acquisition | `karaoke.service.ts` cron / explicit start | `RoomPlaybackStateModel` (lease locking via `findOneAndUpdate`) | `ROOM_PLAYBACK_STARTED` (`status: 'playing'`, `anchorStartedAt`) | Audio/video player synchronizes via NTP median clock offset | Lease expiration (15s) breaks abandoned locks; stale worker recovery | **STATIC VERIFIED** |
+| **FLOW-07** | Song Completion & Singer Handoff | Track completion / `advanceQueue` | `karaoke.service.ts`, `playback-state.model.ts`, `queue-item.model.ts` | `ROOM_PLAYBACK_TRANSITION` (`TRANSITIONING`), `ROOM_PLAYBACK_STARTED` | `SingerTurnIndicator` overlay renders next singer during handover | If next track fails to load, worker auto-advances to subsequent track | **STATIC VERIFIED** |
+| **FLOW-08** | Pause, Resume & Seek | `POST /api/rooms/:id/playback/control` | `karaoke.service.ts`, `RoomPlaybackStateModel` | `ROOM_PLAYBACK_PAUSED`, `ROOM_PLAYBACK_RESUMED`, `ROOM_PLAYBACK_SEEKED` | Direct video player sync; audio element aligns to `currentPositionMs` | Host/singer permission validation; version-guarded state broadcast | **STATIC VERIFIED** |
+| **FLOW-09** | LiveKit Token Issuance & Connection | `POST /api/rooms/:id/voice-token` | `voice.service.ts`, LiveKit `AccessToken` generation | REST response with JWT; LiveKit server room webhook | `useVoice` connects to LiveKit SFU; audio track published | Expiring JWT auto-refreshed; fallback to listener-only if mic blocked | **STATIC VERIFIED** |
+| **FLOW-10** | Mic Mute & Voice Moderation | `POST /api/rooms/:id/members/:userId/mute` | `room.service.ts`, `membership.model.ts`, LiveKit server SDK | `ROOM_MEMBER_MUTED`, LiveKit `RoomServiceClient.mutePublishedTrack` | Local mic muted; UI reflects muted badge; audio track disabled | LiveKit track muting guarantees server-enforced silence even if client hacks UI | **STATIC VERIFIED** |
+| **FLOW-11** | Member Kick & Eviction | `POST /api/rooms/:id/members/:userId/kick` | `room.service.ts`, `membership.model.ts`, LiveKit `removeParticipant` | `ROOM_MEMBER_KICKED`, Socket.IO disconnect for member | Kicked user redirected to `/rooms` with toast; UI cleared | Socket.IO room departure enforced server-side; room banned from rejoin | **STATIC VERIFIED** |
+| **FLOW-12** | Live Chat & Rate Limiting | Socket `ROOM_CHAT_SEND` | `socket.server.ts`, `message.model.ts`, Token Bucket rate limiter | `ROOM_CHAT_MESSAGE` broadcast | `ChatPanel` virtualized message stream; auto-scrolls down | In-memory token bucket drops spam; max message length capped (500 chars) | **STATIC VERIFIED** |
+| **FLOW-13** | Reactions & Virtual Cheer Storms | Socket `ROOM_REACTION` | `socket.server.ts`, `activity.model.ts` (ephemeral) | `ROOM_REACTION_BROADCAST`, batch cheer frames | Canvas-based `CheerOverlay` particle burst; non-blocking | Batch throttling (max 10 reactions/sec per client) prevents frame drops | **STATIC VERIFIED** |
+| **FLOW-14** | Reconnection & State Recovery | Client network reconnect / page reload | `socket.server.ts`, `room.service.ts` (`getRoomStateSnapshot`) | `ROOM_STATE_RECONCILE`, `ROOM_QUEUE_UPDATED` | Zustand store performs full snapshot reconcile if gap detected | Monotonic version check detects missing frames and triggers full sync | **STATIC VERIFIED** |
+
+---
+
+### 7.3 Source-of-Truth Reconciliation Matrix (13 Core Domains)
+
+| # | System Domain | Authoritative Source of Truth | Secondary / Caching Stores | Frontend Projection Store | Discrepancy Reconciliation Mechanism |
+| :---: | :--- | :--- | :--- | :--- | :--- |
+| **1** | **Room Ownership** | `RoomModel.ownerId` (MongoDB) | LiveKit Room metadata | `useRoomState.isHost` (Zustand) | Server validates owner JWT on privileged REST/Socket calls; updates broadcast via `ROOM_STATE_SYNC`. |
+| **2** | **Room Membership** | `RoomMembershipModel` (`status: 'active'`) | Mongoose active count cache | `useRoomState.members` | REST join/leave mutates DB; `RoomPresenceManager` manages active socket references. |
+| **3** | **Online Presence** | `RoomPresenceManager` in-memory socket set | Heartbeat timestamp map | `useRoomState.onlineUsers` | Multi-tab socket tracking per user; 10s grace period on disconnect before emitting offline. |
+| **4** | **Voice WebRTC State** | LiveKit Media Server SFU | None (LiveKit authoritative) | `useVoice` (`room.participants`) | LiveKit webhooks (`participant_joined`, `participant_left`) sync to backend. |
+| **5** | **Participant Mute State** | `RoomMembershipModel.isMuted` | LiveKit track permissions | `VoiceControls` / Member roster | Server issues JWT without `canPublish` and invokes LiveKit `mutePublishedTrack`. |
+| **6** | **Karaoke Queue Order** | `RoomQueueItemModel` (`status: 'queued'`) | Playback State queue cache | `useKaraoke.queue` | Strict sorting `{ position: 1, addedAt: 1 }`; `queueVersion` incremented on every reorder. |
+| **7** | **Active Singer** | `RoomQueueItemModel` (`status: 'playing'`) | `RoomModel.currentSingerName` | `SingerTurnIndicator` / `KaraokePlayer` | Backend sets singer on queue advance; frontend displays handover state (`isTransitioning`). |
+| **8** | **Playback Lifecycle** | `RoomPlaybackStateModel.status` | Distributed lease lock (15s) | `useKaraoke.status` | State machine: `idle` -> `playing` -> `paused` -> `transitioning` -> `completed`. |
+| **9** | **Playback Position** | `RoomPlaybackStateModel.anchorStartedAt` | Local media timestamp | `KaraokePlayer` video sync | `clockSyncService` NTP-style median round-trip offset calculates authoritative current ms. |
+| **10** | **Room State Version** | `RoomModel.stateVersion` | `RoomStateOutboxModel.version` | `useRoomState.stateVersion` | Monotonic increment (`$inc: { stateVersion: 1 }`); client refetches snapshot if version gaps occur. |
+| **11** | **Queue Version** | `RoomPlaybackStateModel.queueVersion` | Outbox event payload | `useKaraoke.queueVersion` | Monotonic increment on any queue mutation; triggers TanStack Query refresh. |
+| **12** | **User Profile Identity** | `UserModel` (MongoDB) | Session token payload | `useAuthStore.user` | Profile edits update DB and invalidate cached tokens; public DTO filters sensitive fields. |
+| **13** | **Atmosphere & Visuals** | `RoomModel.atmospherePreset` | Client `localStorage` settings | `RoomAtmosphere` & UI Theme | Room-wide theme authoritative from DB; lyrics font size and particle density remain local preferences. |
+
+---
+
+### 7.4 Consolidated Findings Classification
+
+| Finding ID | Subsystem Area | Classification | Severity | Current Status | Remediation / Resolution Notes |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **INT-01** | Realtime Presence | **CONFIRMED DEFECT** | **P1** | **RESOLVED** | Fixed in Phase 1: `useRoomState` cleanup unmount hook emits `ROOM_LEAVE`. Eliminates ghost participant retention. |
+| **INT-02A** | Database Outbox | **CONFIRMED DEFECT** | **P1** | **RESOLVED** | Fixed in Phase 3/3.1/3.2: Replaced unconditional `createdAt` TTL with standard single-field null-safe `expiresAt_1_ttl` index. Authored migration script. |
+| **INT-02B** | Chat Retention | **PRODUCT POLICY REQUIRED** | **P2** | **DOCUMENTED** | 30-day TTL exists in source code. Proposed retention options submitted for stakeholder sign-off. |
+| **INT-02C** | Activity Retention | **PRODUCT POLICY REQUIRED** | **P2** | **DOCUMENTED** | 7-day TTL exists in source code. Proposed separating moderation audit trails from ephemeral cheers. |
+| **INT-02D** | Queue Retention | **ARCHITECTURAL RISK** | **P3** | **DOCUMENTED** | Completed queue items grow unbounded. Proposed 14-day archival policy for non-active songs. |
+| **INT-02E** | Session/Voice TTLs | **NO FIX REQUIRED** | **P3** | **VERIFIED** | Voice session evictions, rate limit sequences, and webhook logs are properly bounded. |
+| **INT-03** | Playback Handoff | **CONFIRMED DEFECT / UX** | **P2** | **RESOLVED** | Fixed in Phase 2: Added `TRANSITIONING` handoff state, optimistic UI indicator, and reduced worker polling interval (500ms). |
+| **INT-04** | WebRTC Reconnect | **RUNTIME VERIFICATION REQUIRED** | **P2** | **PENDING QA** | Source code handles token generation and reconnection. Requires multi-client WebRTC audio verification harness. |
+| **INT-05** | Socket.IO Multi-Node | **ARCHITECTURAL RISK** | **P3** | **MILESTONE 5.0** | Current in-memory `RoomPresenceManager` is single-instance. Documented Redis adapter roadmap for horizontal scaling. |
+
+---
+
+### 7.5 Final Sprint 4.0 Static Verdict
+
+```text
+================================================================================
+                    SPRINT 4.0 INTEGRATION AUDIT VERDICT
+================================================================================
+  Status:  AUDIT COMPLETE — RUNTIME VERIFICATION REQUIRED
+  Date:    2026-11-13
+  Branch:  main
+  Baseline HEAD: 3099b604e14f9d0c8fa2ff6ef2448373b9e4a3b7
+  
+  Subsystems Audited:
+    [X] Area A: Room Lifecycle & Membership
+    [X] Area B: Realtime & Outbox
+    [X] Area C: Playback, Queue & Singer Handoff
+    [X] Area D: LiveKit Voice & Moderation
+    [X] Area E: Audience Interaction & Atmosphere
+    [X] Area F: Identity & Discovery
+    [X] Area G: Database Retention & Index Safety
+
+  Defects Remediated in Sprint 4.0:
+    [X] INT-01: Ghost Presence on Client Unmount (Phase 1)
+    [X] INT-03: Playback Singer Transition Latency (Phase 2)
+    [X] INT-02A: Outbox TTL Deletion of Pending Events (Phase 3 / 3.1 / 3.2)
+    [X] INT-02A (DB): Standard MongoDB Null-Safe Single-Field TTL Index
+
+  Static Verification Checks:
+    [X] TypeScript: 0 errors across @ktv/contracts, apps/api, apps/web
+    [X] ESLint: 0 errors, 0 warnings across all workspaces
+    [X] Schema & Migration: Idempotent migration script prepared
+================================================================================
+```
+
+
 
 
 
