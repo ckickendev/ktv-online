@@ -332,6 +332,24 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
     }
   }, [roomId, queryClient]);
 
+  // Proactive Server State Reconciliation on Track Completion (Sprint 4.0 Phase 2: INT-03)
+  useEffect(() => {
+    if (!enabled || !roomId || !playback || playback.status !== 'playing' || !playback.currentItem) {
+      return;
+    }
+
+    const durationMs = playback.currentItem.song?.durationMs || 0;
+    if (durationMs > 1000 && currentPositionMs >= durationMs) {
+      const timer = setTimeout(() => {
+        requestSync();
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    }
+
+    return undefined;
+  }, [enabled, roomId, playback, currentPositionMs, requestSync]);
+
   return {
     queue,
     playback,

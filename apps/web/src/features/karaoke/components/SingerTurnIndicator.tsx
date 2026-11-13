@@ -115,6 +115,11 @@ export function SingerTurnIndicator({
     durationMs && currentPositionMs && durationMs > 20000 && durationMs - currentPositionMs <= 15000
   );
 
+  const isTransitioning = Boolean(
+    (durationMs && currentPositionMs && durationMs > 1000 && currentPositionMs >= durationMs) ||
+    (performerState === 'ended' && Boolean(nextUpItem))
+  );
+
   return (
     <div className={cn('relative w-full overflow-hidden select-none', className)}>
       {/* Floating Stage Particles Overlay */}
@@ -207,15 +212,24 @@ export function SingerTurnIndicator({
                       Live
                     </span>
                   )}
-                  {isEndingSoon && (
+                  {isTransitioning ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 animate-pulse">
+                      <Loader2 className="w-2.5 h-2.5 text-cyan-400 animate-spin" />
+                      Performance Complete
+                    </span>
+                  ) : isEndingSoon ? (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse">
                       <Sparkles className="w-2.5 h-2.5 text-amber-400" />
                       Wrapping Up
                     </span>
-                  )}
+                  ) : null}
                 </div>
                 <p className="text-xs text-violet-200/80 mt-0.5 truncate">
-                  {performerState === 'paused'
+                  {isTransitioning
+                    ? nextUpItem
+                      ? `Great performance! Wrapping up stage for "${nextUpItem.song.title}".`
+                      : 'Great performance! Wrapping up the stage.'
+                    : performerState === 'paused'
                     ? 'Performance is paused. Resume when ready.'
                     : 'Your song is live on stage. Sing with the backing track!'}
                 </p>
@@ -272,14 +286,30 @@ export function SingerTurnIndicator({
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h4 className="text-sm font-bold text-amber-300 uppercase tracking-wide">
-                    You Are Up Next!
+                    {isTransitioning ? 'Step Up to the Stage!' : 'You Are Up Next!'}
                   </h4>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-200 border border-amber-500/30">
-                    Get Ready
+                  <span
+                    className={cn(
+                      'px-2 py-0.5 rounded-full text-[10px] font-semibold',
+                      isTransitioning
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse flex items-center gap-1'
+                        : 'bg-amber-500/20 text-amber-200 border border-amber-500/30'
+                    )}
+                  >
+                    {isTransitioning ? (
+                      <>
+                        <Loader2 className="w-2.5 h-2.5 animate-spin text-emerald-400" />
+                        Stage Handoff
+                      </>
+                    ) : (
+                      'Get Ready'
+                    )}
                   </span>
                 </div>
                 <p className="text-xs text-amber-200/90 mt-0.5 truncate">
-                  {nextUpItem
+                  {isTransitioning
+                    ? `Get ready! "${nextUpItem?.song.title || 'Your song'}" is taking the spotlight right now!`
+                    : nextUpItem
                     ? `"${nextUpItem.song.title}" takes the stage right after this performance.`
                     : 'Your turn is coming up next.'}
                 </p>
@@ -378,28 +408,43 @@ export function SingerTurnIndicator({
                       Singing
                     </span>
                   )}
-                  {isEndingSoon && (
+                  {isTransitioning ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 animate-pulse">
+                      <Loader2 className="w-2.5 h-2.5 text-cyan-400 animate-spin" />
+                      Stage Handoff
+                    </span>
+                  ) : isEndingSoon ? (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse">
                       <Sparkles className="w-2.5 h-2.5 text-amber-400" />
                       Wrapping Up
                     </span>
-                  )}
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5">
-                  {isDedicatedSinger && currentRequester && (
-                    <span className="text-slate-500 truncate">
-                      Queued by {currentRequester.displayName || currentRequester.username}
+                  {isTransitioning ? (
+                    <span className="text-cyan-300 truncate font-medium">
+                      {nextUpItem
+                        ? `Performance complete. Next up: "${nextUpItem.song.title}" (${nextSingerName || 'Next Singer'})`
+                        : 'Performance complete. Wrapping up stage...'}
                     </span>
-                  )}
-                  {performerState === 'paused' && (
-                    <span className="text-amber-400 flex items-center gap-1 font-medium">
-                      <Pause className="w-2.5 h-2.5" /> Paused
-                    </span>
-                  )}
-                  {performerState === 'preparing' && (
-                    <span className="text-cyan-400 flex items-center gap-1 font-medium">
-                      <Loader2 className="w-2.5 h-2.5 animate-spin" /> Preparing
-                    </span>
+                  ) : (
+                    <>
+                      {isDedicatedSinger && currentRequester && (
+                        <span className="text-slate-500 truncate">
+                          Queued by {currentRequester.displayName || currentRequester.username}
+                        </span>
+                      )}
+                      {performerState === 'paused' && (
+                        <span className="text-amber-400 flex items-center gap-1 font-medium">
+                          <Pause className="w-2.5 h-2.5" /> Paused
+                        </span>
+                      )}
+                      {performerState === 'preparing' && (
+                        <span className="text-cyan-400 flex items-center gap-1 font-medium">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" /> Preparing
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

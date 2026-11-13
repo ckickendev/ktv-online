@@ -293,3 +293,77 @@ In `apps/web/src/hooks/use-room-state.ts`, the Socket.IO event synchronization e
 - Rapid room switching between Room A and Room B.
 - Network blip socket reconnection handling.
 
+---
+
+## INT-03 — Playback Transition & Singer Handoff Remediation
+
+### 1. Issue Summary & Latency Analysis
+In Phase 0, INT-03 identified that when a song reaches the end of its duration, the client timeline displays `00:00` remaining (or 100% progress) while the frontend remains in an apparent "frozen" or "stuck" state for approximately 1–2 seconds before the stage advances to the next track or returns to standby.
+
+Detailed latency breakdown:
+1. **Precision Timer vs. Distributed Poller:** The backend combines in-memory node-local `setTimeout` precision timers (`KaraokePlaybackWorker.schedulePrecisionTimer`) with periodic distributed lease scanning (`processDuePlaybacks` polling every 2,000ms via `claimDuePlayback`).
+2. **Audio Track Duration Discrepancy:** Native browser `<audio>` playback duration can differ by a few hundred milliseconds from the static `song.durationMs` stored in MongoDB due to audio container metadata or encoding headers.
+3. **Timer Event Loop Jitter & Network Transmission:** Even when the precision timer fires promptly, database transaction execution (`advanceToNextTrack`), queue rebalancing, and WebSocket broadcast transmission consume ~100–350ms.
+4. **Fallback Poller Window:** If the API process restarted during playback or an in-memory precision timer was cancelled/missed, playback relies on the 2,000ms poller. This produces an average 1,000ms (and up to 2,000ms) delay before lease acquisition.
+5. **UI State Ambiguity:** During this ~1-2s gap, `KaraokePlayer.tsx` maintained `isPlaying = true`, displaying `ON AIR` or `ENDING SOON`, while the lyrics engine stayed parked on the final lyric line. Users perceived the application as stalled or unresponsive.
+
+### 2. Root Cause Confirmed from Source
+- **Client Render Lag:** `currentPositionMs` was clamped to `durationMs` (`Math.min(durationMs, baseMs + elapsed)` in `use-karaoke.ts`), locking the timer display to `00:00`.
+- **Missing Intermediate Visual Phase:** The UI recognized only `loading`, `playing`, `paused`, and `ended`/`idle`. There was no distinct client-side `transitioning` state for the brief interval between track conclusion and receipt of authoritative server state advancement.
+- **Audience & Performer Desynchronization:** `SingerTurnIndicator.tsx` continued alerting the active singer that they were live (`ON AIR` / `Singing Live`) and warned the next singer (`Get Ready`) without indicating that the performance had completed and handoff was actively taking place.
+
+### 3. Authoritative Ownership Matrix
+
+| Responsibility | Authoritative Owner | Mechanism | Role of Frontend Replica |
+| :--- | :--- | :--- | :--- |
+| **Track Completion** | Backend (`KaraokePlaybackWorker` / `karaokeService`) | Atomic CAS transaction with monotonic `playbackVersion` + `queueVersion` | Pure consumer; never self-completes tracks |
+| **Queue Advancement** | Backend (`karaokeService.advanceToNextTrack`) | Atomic MongoDB CAS item update (`status: 'playing'`) | Pure consumer; updates TanStack query cache upon socket event |
+| **Singer Handoff** | Backend (`RoomModel.currentSingerName`, `RoomQueueItemModel`) | Validates active room membership; rebalances queue positions | Renders current and next singer badges from server payload |
+| **Playback Status** | Backend (`RoomPlaybackStateModel.status`) | Distributed lease token locking (`claimDuePlayback`) | Renders `TRANSITIONING` UI state locally when `position >= duration` |
+| **Clock Synchronization** | Backend Anchor (`anchorStartedAt`) | NTP-style offset estimation (`clock-sync.service.ts`) | Calculates smooth 10Hz interpolated position |
+
+### 4. Concurrency & Race Condition Safeguards
+The backend architecture contains strict concurrency guards to handle overlapping triggers:
+1. **Natural Completion vs. Host/Singer Skip:**
+   - If a host or singer triggers `skip` while natural completion is underway, both invoke `advanceToNextTrack()`.
+   - `advanceToNextTrack()` evaluates `options.expectedPlaybackVersion`. The first operation increments `playbackVersion` (`v -> v+1`).
+   - The second operation detects the version mismatch (`current !== expected`) and aborts cleanly without double-advancing the queue.
+2. **Duplicate Worker Lease Contention:**
+   - In multi-instance deployments, workers race to claim overdue tracks via `claimDuePlayback(instanceId, leaseDurationMs)`.
+   - MongoDB CAS guarantees only one worker acquires the unique `leaseToken`.
+   - When completing the transition, `commitConditionalPlaybackTransition()` validates the `leaseToken`. Expired or stolen leases are rejected and rolled back.
+3. **Departed or Kicked Candidate Singers:**
+   - When advancing to the next queued item, `advanceToNextTrack()` performs active membership validation (`RoomMembershipModel.findOne({ status: 'active', kickedAt: null })`).
+   - If the candidate performer left or was kicked while in queue, their item is automatically marked `status: 'removed'`, and the engine advances to the next eligible track.
+4. **Audio Unavailability Defense:**
+   - If a candidate song is missing an audio source (`audioAvailability !== 'audio_available'`), it is marked `status: 'failed'` and skipped safely to prevent stage stalling.
+
+### 5. Implemented Solution
+1. **Frontend `isTransitioning` Derived State (`KaraokePlayer.tsx`):**
+   - Derived cleanly without mutating server state:
+     ```typescript
+     const isTransitioning = Boolean(
+       currentItem &&
+         ((isPlaying && durationMs > 1 && currentPositionMs >= durationMs) ||
+           (isEnded && Boolean(nextUpItem)))
+     );
+     ```
+   - When `isTransitioning` is active:
+     - Top status badge displays an animated cyan `TRANSITIONING` badge (`stage-status-transitioning`) with a spinner.
+     - Top status label displays `"Handoff in progress..."` or `"Wrapping up performance..."`.
+     - An authoritative transition overlay banner appears over the stage: `"Song Concluded • Stage Transition"` displaying `"Next Up: [Song Title] • [Next Singer]"`.
+     - The interactive progress bar displays an active pulsing cyan gradient at 100%, indicating stage handoff rather than a frozen bar.
+     - The `ENDING SOON` badge is safely suppressed during transition.
+2. **Performer & Audience Cues (`SingerTurnIndicator.tsx`):**
+   - **Current Singer View:** Switches to `"Performance Complete"` with a supportive message: `"Great performance! Wrapping up stage for [Next Song Title]."`
+   - **Next Singer View:** Switches to `"Step Up to the Stage!"` with badge `"Stage Handoff"` and prompt: `"Get ready! [Song Title] is taking the spotlight right now!"`
+   - **Audience View:** Displays `"Stage Handoff"` badge and notes the upcoming performance handoff.
+3. **Proactive Reconciliation Fallback (`use-karaoke.ts`):**
+   - Added a safe fallback timer: if `currentPositionMs >= durationMs` and playback remains `'playing'` for >1,500ms without a server push, the client automatically emits `KARAOKE_STATE_REQUEST` (`socket.emit(SOCKET_EVENTS.CLIENT.KARAOKE_STATE_REQUEST, { roomId })`).
+   - Ensures fast recovery even if an in-memory precision timer failed or network packet dropped during transition.
+
+### 6. Remaining Limitations & Runtime Verification
+- Requires live multi-client testing with simulated network latency to observe smooth visual handoff between outgoing singer and incoming singer.
+- High network jitter (>1,000ms RTT) may prolong the visual `TRANSITIONING` state before the next track begins.
+
+

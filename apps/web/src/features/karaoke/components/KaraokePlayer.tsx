@@ -162,6 +162,22 @@ export function KaraokePlayer({
   const isEndingSoon = isPlaying && durationMs > 20000 && durationMs - currentPositionMs <= 15000;
   const isIdle = status === 'idle' || isEnded;
 
+  // Track completion & handoff transition state (Sprint 4.0 Phase 2: INT-03)
+  const isTransitioning = Boolean(
+    currentItem &&
+      ((isPlaying && durationMs > 1 && currentPositionMs >= durationMs) ||
+        (isEnded && Boolean(nextUpItem)))
+  );
+
+  const nextSingerName =
+    nextSinger?.displayName ||
+    nextSinger?.username ||
+    nextUpItem?.singer?.displayName ||
+    nextUpItem?.singer?.username ||
+    nextUpItem?.requestedBy?.displayName ||
+    nextUpItem?.requestedBy?.username ||
+    null;
+
   // Handle click on progress bar for seeking
   const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!canControlPlayback || !currentItem || isIdle) return;
@@ -281,10 +297,50 @@ export function KaraokePlayer({
           />
         )}
 
+        {/* Stage Transition Overlay (Sprint 4.0 Phase 2: INT-03) */}
+        {isTransitioning && (
+          <div
+            data-testid="stage-transition-overlay"
+            className="absolute inset-x-4 top-14 z-20 flex items-center justify-between p-3.5 rounded-xl bg-black/85 backdrop-blur-md border border-cyan-500/35 text-cyan-200 text-xs shadow-2xl animate-in fade-in slide-in-from-top-2"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center shrink-0">
+                <Loader2 className="w-4 h-4 text-cyan-300 animate-spin" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold text-white truncate text-xs sm:text-sm">
+                  Song Concluded &bull; Stage Transition
+                </p>
+                {nextUpItem ? (
+                  <p className="text-[11px] text-cyan-300/90 truncate mt-0.5">
+                    Next Up: <span className="font-semibold text-white">{nextUpItem.song.title}</span>
+                    {nextSingerName ? ` &bull; ${nextSingerName}` : ''}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                    Preparing stage for next performance...
+                  </p>
+                )}
+              </div>
+            </div>
+            <span className="text-[10px] font-mono font-medium text-cyan-400 uppercase px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/25 shrink-0 hidden xs:inline-block">
+              Authoritative Sync
+            </span>
+          </div>
+        )}
+
         {/* Screen Top Status Bar */}
         <div className="flex items-center justify-between text-xs text-slate-400 relative z-10 flex-wrap gap-2">
           <div className="flex items-center gap-2 flex-wrap">
-            {isPreparing ? (
+            {isTransitioning ? (
+              <span
+                data-testid="stage-status-transitioning"
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold uppercase tracking-wider text-[10px] animate-pulse"
+              >
+                <Loader2 className="w-2.5 h-2.5 animate-spin text-cyan-400" />
+                TRANSITIONING
+              </span>
+            ) : isPreparing ? (
               <span
                 data-testid="stage-status-preparing"
                 className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/40 font-bold uppercase tracking-wider text-[10px]"
@@ -323,7 +379,7 @@ export function KaraokePlayer({
               </span>
             )}
 
-            {isEndingSoon && (
+            {isEndingSoon && !isTransitioning && (
               <span
                 data-testid="stage-status-ending"
                 className="hidden xs:flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/35 font-bold uppercase tracking-wider text-[9px] animate-pulse"
@@ -334,7 +390,12 @@ export function KaraokePlayer({
               </span>
             )}
 
-            {executionState === 'reconnecting' ? (
+            {isTransitioning ? (
+              <span className="flex items-center gap-1 text-[11px] text-cyan-300 font-medium">
+                <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
+                {nextUpItem ? 'Handoff in progress...' : 'Wrapping up performance...'}
+              </span>
+            ) : executionState === 'reconnecting' ? (
               <span className="flex items-center gap-1 text-[11px] text-cyan-300 font-medium">
                 <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
                 Reconnecting...
@@ -511,7 +572,9 @@ export function KaraokePlayer({
               style={{ width: `${progressPercent}%` }}
               className={cn(
                 'h-full rounded-full transition-all duration-100',
-                isPlaying
+                isTransitioning
+                  ? 'bg-gradient-to-r from-cyan-500 to-violet-500 animate-pulse'
+                  : isPlaying
                   ? 'bg-gradient-to-r from-violet-500 via-fuchsia-400 to-cyan-400'
                   : 'bg-amber-400'
               )}
