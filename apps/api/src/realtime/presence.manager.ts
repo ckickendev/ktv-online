@@ -35,6 +35,25 @@ export class RoomPresenceManager {
     { username: string; avatar?: string | null; role: 'host' | 'member' | 'viewer' }
   >();
 
+  // Generation-fenced pending disconnect timers: "roomId:userId" -> { timer, generation }
+  private pendingDisconnects = new Map<string, { timer: NodeJS.Timeout; generation: number }>();
+  private userGenerations = new Map<string, number>();
+
+  private getPresenceKey(roomId: string, userId: string): string {
+    return `${roomId}:${userId}`;
+  }
+
+  private cancelPendingDisconnect(roomId: string, userId: string): void {
+    const key = this.getPresenceKey(roomId, userId);
+    const pending = this.pendingDisconnects.get(key);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pendingDisconnects.delete(key);
+      const nextGen = (this.userGenerations.get(key) || 0) + 1;
+      this.userGenerations.set(key, nextGen);
+    }
+  }
+
   /**
    * Register a socket into a room's presence.
    */
@@ -46,6 +65,11 @@ export class RoomPresenceManager {
     role: 'host' | 'member' | 'viewer' = 'member',
     avatar?: string | null
   ): AddSocketResult {
+    // If a disconnect grace timer was pending for this user in this room, cancel it immediately
+    const presenceKey = this.getPresenceKey(roomId, userId);
+    const wasPendingGrace = this.pendingDisconnects.has(presenceKey);
+    this.cancelPendingDisconnect(roomId, userId);
+
     // Record socket metadata
     this.socketMeta.set(socketId, { userId, username, avatar, role, roomId });
     this.userDetails.set(userId, { username, avatar, role });
@@ -57,7 +81,8 @@ export class RoomPresenceManager {
     }
 
     let userSockets = roomMap.get(userId);
-    const isFirstConnection = !userSockets || userSockets.size === 0;
+    // Only true first connection if the user was neither active nor in grace period
+    const isFirstConnection = !wasPendingGrace && (!userSockets || userSockets.size === 0);
 
     if (!userSockets) {
       userSockets = new Set<string>();
@@ -83,7 +108,7 @@ export class RoomPresenceManager {
   }
 
   /**
-   * Remove a socket when it disconnects or leaves a room.
+   * Remove a socket when it disconnects or leaves a room (explicit immediate removal).
    */
   removeSocket(socketId: string): RemoveSocketResult | null {
     const meta = this.socketMeta.get(socketId);
@@ -93,6 +118,9 @@ export class RoomPresenceManager {
 
     this.socketMeta.delete(socketId);
     const { roomId, userId, username } = meta;
+
+    // Explicit leave cancels any pending disconnect grace timer immediately
+    this.cancelPendingDisconnect(roomId, userId);
 
     const roomMap = this.roomUsers.get(roomId);
     if (!roomMap) {
@@ -123,6 +151,91 @@ export class RoomPresenceManager {
       username,
       isLastDisconnection,
       totalOnline,
+    };
+  }
+
+  /**
+   * Handle an unexpected socket disconnect with a generation-fenced grace period.
+   * If the disconnecting socket is the user's last socket in the room, a grace period
+   * timer is scheduled before emitting member departure. If the user reconnects within
+   * the grace period, the timer is cancelled and presence remains uninterrupted.
+   */
+  handleDisconnect(
+    socketId: string,
+    gracePeriodMs: number,
+    onExpired: (result: RemoveSocketResult) => void
+  ): { isPendingGrace: boolean; immediateResult: RemoveSocketResult | null } {
+    const meta = this.socketMeta.get(socketId);
+    if (!meta) {
+      return { isPendingGrace: false, immediateResult: null };
+    }
+
+    this.socketMeta.delete(socketId);
+    const { roomId, userId, username } = meta;
+
+    const roomMap = this.roomUsers.get(roomId);
+    if (!roomMap) {
+      return { isPendingGrace: false, immediateResult: null };
+    }
+
+    const userSockets = roomMap.get(userId);
+    if (!userSockets) {
+      return { isPendingGrace: false, immediateResult: null };
+    }
+
+    userSockets.delete(socketId);
+
+    // Multi-tab check: if user still has other active sockets in this room, no grace timer is needed
+    if (userSockets.size > 0) {
+      return {
+        isPendingGrace: false,
+        immediateResult: {
+          roomId,
+          userId,
+          username,
+          isLastDisconnection: false,
+          totalOnline: roomMap.size,
+        },
+      };
+    }
+
+    // Last socket disconnected unexpectedly: schedule grace period timer with generation fencing
+    const presenceKey = this.getPresenceKey(roomId, userId);
+    this.cancelPendingDisconnect(roomId, userId);
+
+    const generation = (this.userGenerations.get(presenceKey) || 0) + 1;
+    this.userGenerations.set(presenceKey, generation);
+
+    const timer = setTimeout(() => {
+      this.pendingDisconnects.delete(presenceKey);
+
+      // Verify generation has not changed (i.e. user has not reconnected)
+      if (this.userGenerations.get(presenceKey) === generation) {
+        const rMap = this.roomUsers.get(roomId);
+        const uSockets = rMap?.get(userId);
+
+        if (rMap && uSockets && uSockets.size === 0) {
+          rMap.delete(userId);
+          if (rMap.size === 0) {
+            this.roomUsers.delete(roomId);
+          }
+
+          onExpired({
+            roomId,
+            userId,
+            username,
+            isLastDisconnection: true,
+            totalOnline: rMap.size,
+          });
+        }
+      }
+    }, gracePeriodMs);
+
+    this.pendingDisconnects.set(presenceKey, { timer, generation });
+
+    return {
+      isPendingGrace: true,
+      immediateResult: null,
     };
   }
 
@@ -178,6 +291,8 @@ export class RoomPresenceManager {
    * Remove a user entirely from a room's presence (e.g. kicked or evicted).
    */
   removeUserFromRoom(roomId: string, userId: string): { totalOnline: number; username: string } | null {
+    this.cancelPendingDisconnect(roomId, userId);
+
     const roomMap = this.roomUsers.get(roomId);
     if (!roomMap) return null;
 
@@ -208,6 +323,13 @@ export class RoomPresenceManager {
    * Clear all presence in a room (e.g. room closed).
    */
   clearRoom(roomId: string): void {
+    for (const [key, pending] of this.pendingDisconnects.entries()) {
+      if (key.startsWith(`${roomId}:`)) {
+        clearTimeout(pending.timer);
+        this.pendingDisconnects.delete(key);
+      }
+    }
+
     const roomMap = this.roomUsers.get(roomId);
     if (roomMap) {
       for (const [, sockets] of roomMap.entries()) {
@@ -223,6 +345,11 @@ export class RoomPresenceManager {
    * Reset all presence state.
    */
   clear(): void {
+    for (const pending of this.pendingDisconnects.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingDisconnects.clear();
+    this.userGenerations.clear();
     this.roomUsers.clear();
     this.socketMeta.clear();
     this.userDetails.clear();

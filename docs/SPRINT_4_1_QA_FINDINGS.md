@@ -29,18 +29,18 @@ Sprint 4.1 evaluated the multi-subsystem reliability, cross-client race conditio
 
 ---
 
-### Finding INT-06: Immediate Socket Disconnect Emission (Absence of 10s Grace Period Timer)
+### Finding INT-06: Immediate Socket Disconnect Emission (Resolved via Generation-Fenced Grace Period)
 - **Finding ID:** `INT-06`
 - **Severity:** **P2 (Reliability / UI Jitter)**
 - **Affected Subsystem:** Realtime Presence ([`apps/api/src/realtime/room.events.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/realtime/room.events.ts), [`apps/api/src/realtime/presence.manager.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/api/src/realtime/presence.manager.ts))
-- **Source Location:** `apps/api/src/realtime/room.events.ts` lines 326–345
+- **Source Location:** `apps/api/src/realtime/room.events.ts` lines 326–365, `presence.manager.ts` lines 180–245
 - **Root Cause:** 
-  Previous documentation (`docs/SPRINT_4_0_INTEGRATION_AUDIT.md`) described a "10-second disconnect grace period" before emitting member departure. Inspection of `room.events.ts` reveals that on socket `disconnect`, `presenceManager.removeSocket(socket.id)` is called immediately, and if `isLastDisconnection` is true, `MEMBER_LEFT` is broadcasted immediately without a timer.
+  Previous documentation (`docs/SPRINT_4_0_INTEGRATION_AUDIT.md`) described a "10-second disconnect grace period" before emitting member departure. Inspection in Sprint 4.1 revealed that on socket `disconnect`, `presenceManager.removeSocket(socket.id)` was called immediately, and if `isLastDisconnection` was true, `MEMBER_LEFT` was broadcasted immediately without a timer.
 - **Impact:** 
-  If a single-tab user experiences a transient 1-second network blip or reloads the browser, other occupants in the room briefly see the user drop from the roster (`member:left`) and reappear moments later (`member:joined`). While database membership remains `active` (preventing seat loss), the presence UI jitters.
-- **Remediation Recommendation:** 
-  Document the discrepancy for Milestone 5.0. If grace period behavior is desired, introduce an asynchronous in-memory timer map (`disconnectTimers: Map<userId, NodeJS.Timeout>`) in `RoomPresenceManager` that cancels upon socket reconnect within 10 seconds.
-- **Remediation Status:** **DOCUMENTED (Deferred to Milestone 5.0 to avoid introducing complex asynchronous timer race conditions without an active multi-client test harness)**.
+  Transient network drops or page reloads caused presence flicker (`member:left` broadcast followed immediately by `member:joined` when the socket reconnected).
+- **Remediation Implemented in Sprint 4.2:** 
+  Implemented a generation-fenced 10-second disconnect grace period in `RoomPresenceManager.handleDisconnect()`. On unexpected socket disconnect, if it is the user's last socket, a 10s timer is scheduled with a generation counter. If the user reconnects within 10s, the timer is cancelled and `isFirstConnection: false` suppresses redundant `MEMBER_JOINED` broadcasts. If the timer expires without reconnect, `MEMBER_LEFT` is emitted. Explicit `ROOM_LEAVE` bypasses the timer and evicts immediately.
+- **Remediation Status:** **RESOLVED IN SPRINT 4.2**.
 
 ---
 
@@ -78,7 +78,7 @@ Sprint 4.1 evaluated the multi-subsystem reliability, cross-client race conditio
 | :--- | :--- | :--- | :--- | :---: |
 | **QA-01** | Normal Room Lifecycle | Room & Membership | CAS capacity check; idempotent join; explicit close tears down LiveKit & sockets. | **VERIFIED** |
 | **QA-02** | Multiple Tabs & Devices | Realtime Presence | Multi-socket `Set` per `userId`; closing tab 1 does NOT emit `member:left`. | **VERIFIED** |
-| **QA-03** | Disconnect & Reconnect | Realtime Presence | Reconnection restores state snapshot; discrepancy noted on grace period debounce. | **INT-06 (P2)** |
+| **QA-03** | Disconnect & Reconnect | Realtime Presence | Reconnection restores state snapshot; generation-fenced 10s grace period stops presence jitter. | **INT-06 (RESOLVED)** |
 | **QA-04** | Host Disconnect & Ownership | Room Governance | Host ownership authoritative in MongoDB; host departure requires explicit close. | **INT-07 (P3)** |
 | **QA-05** | Voice Connection | LiveKit WebRTC | Sanitized participant metadata; JWT signed with `canPublish: !isMuted`. | **VERIFIED** |
 | **QA-06** | Voice Reconnection | LiveKit WebRTC | Exponential backoff retry; fresh token requested from backend; re-checks permissions. | **VERIFIED** |

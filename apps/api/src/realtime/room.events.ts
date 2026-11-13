@@ -323,24 +323,42 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
     }
   );
 
-  // 5. Socket disconnection
+  // 5. Socket disconnection (unexpected network drop or tab close with 10s grace period)
   socket.on('disconnect', (reason) => {
     logger.info({ socketId: socket.id, userId: user.id, reason }, 'Socket disconnected');
-    const result = presenceManager.removeSocket(socket.id);
 
-    if (result && result.isLastDisconnection) {
-      const channel = getRoomChannel(result.roomId);
-      io.to(channel).emit(SOCKET_EVENTS.SERVER.MEMBER_LEFT, {
-        roomId: result.roomId,
-        userId: result.userId,
-        username: result.username,
-        totalOnline: result.totalOnline,
-      });
+    const { isPendingGrace, immediateResult } = presenceManager.handleDisconnect(
+      socket.id,
+      10000, // 10s disconnect grace period
+      (expiredResult) => {
+        const channel = getRoomChannel(expiredResult.roomId);
+        io.to(channel).emit(SOCKET_EVENTS.SERVER.MEMBER_LEFT, {
+          roomId: expiredResult.roomId,
+          userId: expiredResult.userId,
+          username: expiredResult.username,
+          totalOnline: expiredResult.totalOnline,
+        });
 
+        logger.info(
+          { roomId: expiredResult.roomId, userId: expiredResult.userId, remainingOnline: expiredResult.totalOnline },
+          'Disconnect grace period expired: emitted member:left'
+        );
+      }
+    );
+
+    if (isPendingGrace) {
       logger.info(
-        { roomId: result.roomId, userId: result.userId, remainingOnline: result.totalOnline },
-        'Last socket disconnected for user: emitted member:left'
+        { socketId: socket.id, userId: user.id },
+        'Last socket disconnected for user: 10s grace period scheduled'
       );
+    } else if (immediateResult && immediateResult.isLastDisconnection) {
+      const channel = getRoomChannel(immediateResult.roomId);
+      io.to(channel).emit(SOCKET_EVENTS.SERVER.MEMBER_LEFT, {
+        roomId: immediateResult.roomId,
+        userId: immediateResult.userId,
+        username: immediateResult.username,
+        totalOnline: immediateResult.totalOnline,
+      });
     }
   });
 }

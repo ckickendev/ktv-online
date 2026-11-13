@@ -25,10 +25,11 @@ The hook's error handler caught this 403 error, classified it as an authorizatio
 ### 2.2 Implemented Fix
 File modified: [`apps/web/src/features/voice/hooks/use-voice-client.ts`](file:///Users/mac/Documents/workspace/workspace_coding/ktvonline/apps/web/src/features/voice/hooks/use-voice-client.ts)
 
-1. **Permission-Guarded Microphone Activation on Join:**
+1. **Strict Permission-Guarded Microphone Activation on Join:**
    ```typescript
-   // Enable local microphone audio track with active capture options if permitted
-   const canPublishMic = room.localParticipant.permissions?.canPublish !== false;
+   // Enable local microphone audio track with active capture options if explicitly permitted
+   const perms = room.localParticipant.permissions;
+   const canPublishMic = perms ? perms.canPublish === true : false;
    if (canPublishMic) {
      await room.localParticipant.setMicrophoneEnabled(true, {
        autoGainControl: capturePreferencesRef.current.autoGainControl,
@@ -38,6 +39,10 @@ File modified: [`apps/web/src/features/voice/hooks/use-voice-client.ts`](file://
      });
      setIsMuted(false);
    } else {
+     // Listen-only mode: permissions initializing or publishing explicitly restricted
+     setIsMuted(true);
+   }
+   ```
      setIsMuted(true);
    }
    syncParticipants(room);

@@ -448,6 +448,21 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
         if (sessionGenRef.current === currentSessionGen) syncParticipants(room);
       });
 
+      // Synchronize dynamic LiveKit participant permission updates (e.g. host mute/unmute)
+      room.on(RoomEvent.ParticipantPermissionsChanged, (_prevPermissions, participant) => {
+        if (sessionGenRef.current !== currentSessionGen) return;
+        if (participant === room.localParticipant) {
+          const perms = room.localParticipant.permissions;
+          if (perms?.canPublish === false) {
+            // Moderation revoked microphone publishing permission
+            room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+            setIsMuted(true);
+          }
+          // If perms?.canPublish === true, participant is now authorized to unmute when desired
+        }
+        syncParticipants(room);
+      });
+
       // Handle remote audio playback
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, participant: RemoteParticipant) => {
         if (sessionGenRef.current !== currentSessionGen) return;
@@ -555,7 +570,9 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
             return;
           }
 
-          const canPublishMic = room.localParticipant.permissions?.canPublish !== false;
+          // Strict permission evaluation: require explicit publish authorization
+          const perms = room.localParticipant.permissions;
+          const canPublishMic = perms ? perms.canPublish === true : false;
           if (canPublishMic && !isMuted) {
             await room.localParticipant.setMicrophoneEnabled(true, {
               autoGainControl: capturePreferencesRef.current.autoGainControl,
@@ -648,8 +665,9 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
         return;
       }
 
-      // 4. Enable local microphone audio track with active capture options if permitted
-      const canPublishMic = room.localParticipant.permissions?.canPublish !== false;
+      // 4. Enable local microphone audio track with active capture options if explicitly permitted
+      const perms = room.localParticipant.permissions;
+      const canPublishMic = perms ? perms.canPublish === true : false;
       if (canPublishMic) {
         await room.localParticipant.setMicrophoneEnabled(true, {
           autoGainControl: capturePreferencesRef.current.autoGainControl,
@@ -659,6 +677,7 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
         });
         setIsMuted(false);
       } else {
+        // Listen-only mode: permissions initializing or publishing explicitly restricted
         setIsMuted(true);
       }
       syncParticipants(room);
@@ -692,7 +711,13 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
   const toggleMute = useCallback(async () => {
     if (!roomRef.current || !roomRef.current.localParticipant) return;
 
-    if (roomRef.current.localParticipant.permissions?.canPublish === false) {
+    const perms = roomRef.current.localParticipant.permissions;
+    if (!perms) {
+      setErrorMessage('Voice permissions are still initializing. Please wait a moment.');
+      return;
+    }
+
+    if (perms.canPublish === false) {
       setErrorMessage('Your microphone has been muted by room moderation.');
       return;
     }
