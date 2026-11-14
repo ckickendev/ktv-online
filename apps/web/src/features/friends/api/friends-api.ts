@@ -6,6 +6,8 @@ import {
   FriendQueryDto,
   FriendRequestQueryDto,
   UserSearchQueryDto,
+  PendingInvitationsResponseDto,
+  DismissInvitationResponseDto,
 } from '@ktv/contracts';
 
 export interface PaginatedFriendsResponse {
@@ -117,5 +119,19 @@ export const friendsApi = {
     return apiClient.post<{ success: boolean }>(`/friends/rooms/${roomId}/invite`, {
       friendUserId,
     });
+  },
+
+  /**
+   * Fetch pending room invitations received by the current user.
+   */
+  async getPendingInvitations(): Promise<PendingInvitationsResponseDto> {
+    return apiClient.get<PendingInvitationsResponseDto>('/friends/invitations/pending');
+  },
+
+  /**
+   * Dismiss a pending room invitation.
+   */
+  async dismissInvitation(invitationId: string): Promise<DismissInvitationResponseDto> {
+    return apiClient.post<DismissInvitationResponseDto>(`/friends/invitations/${invitationId}/dismiss`);
   },
 };

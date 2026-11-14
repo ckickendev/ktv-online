@@ -37,6 +37,15 @@ export function useFriends(params?: Partial<FriendQueryDto>) {
             ...oldData,
             items: oldData.items.map((item) => {
               if (item.friend.id === payload.userId) {
+                // Ignore out-of-order presence updates with older timestamps
+                if (
+                  item.friend.presence?.updatedAt &&
+                  payload.updatedAt &&
+                  new Date(payload.updatedAt).getTime() < new Date(item.friend.presence.updatedAt).getTime()
+                ) {
+                  return item;
+                }
+
                 return {
                   ...item,
                   friend: {
@@ -64,12 +73,18 @@ export function useFriends(params?: Partial<FriendQueryDto>) {
       queryClient.invalidateQueries({ queryKey: queryKeys.friends.all });
     };
 
+    const handleReconnect = () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.friends.all });
+    };
+
     socket.on(SOCKET_EVENTS.SERVER.FRIEND_PRESENCE_UPDATED, handlePresenceUpdated);
     socket.on(SOCKET_EVENTS.SERVER.FRIEND_REQUEST_ACCEPTED, handleFriendAccepted);
+    socket.on('connect', handleReconnect);
 
     return () => {
       socket.off(SOCKET_EVENTS.SERVER.FRIEND_PRESENCE_UPDATED, handlePresenceUpdated);
       socket.off(SOCKET_EVENTS.SERVER.FRIEND_REQUEST_ACCEPTED, handleFriendAccepted);
+      socket.off('connect', handleReconnect);
     };
   }, [queryClient]);
 

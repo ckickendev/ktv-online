@@ -204,12 +204,17 @@ export type JoinRoomWithInviteDto = z.infer<typeof JoinRoomWithInviteSchema>;
   - Declared compound index `{ recipientId: 1, status: 1, expiresAt: 1 }` (`idx_room_invitations_recipient_status_expires`).
   - Audited in Sprint 5.7.1.1 (`docs/SPRINT_5_7_PHASE_1_INDEPENDENT_AUDIT.md`): Verdict **AUDIT PASSED WITH LIMITATIONS — PHASE 2 APPROVED CONDITIONALLY**.
 
-- **Phase 2: Friend Activity UI & Realtime Synchronization** *(NEXT UP)*
-  - Implement `useFriendActivity` hook with TanStack Query and Socket.IO `friend:presence_updated` listener.
-  - Implement `FriendActivitySection` on `/friends` with swimlanes: **Singing Now**, **In a Lounge**, **Available Online**, **Offline**.
-  - Standardize all CTA buttons to **"Join Lounge"** (zero occurrences of "Watch Live").
+- **Phase 2: Friend Activity UI & Realtime Synchronization** *(COMPLETED)*
+  - Implemented `useFriendActivity` hook partitioning activities into `singingNow`, `inLounges`, `availableOnline`, and `offline`.
+  - Added timestamp ordering enforcement to ignore stale out-of-order `friend:presence:updated` socket payloads.
+  - Implemented automatic cache invalidation and snapshot reconciliation upon socket `'connect'` (reconnection).
+  - Implemented `PendingInvitationsInbox` displaying authenticated pending lounge invitations with countdown and instant dismissal.
+  - Integrated dual-credential `joinRoom` flow accepting `{ roomId, invitationId, inviteToken }` in web client and room page.
+  - Implemented `FriendActivitySection` and `FriendActivityCard` on `/friends` with Section A (Header & Aggregate Badges), Section 7 (Pending Inbox), Section B (Singing Now), Section C (In a Lounge), Section D (Available Online), and Section E (Offline Friends collapsible).
+  - Standardized all CTA buttons to **"Join Lounge"** with zero occurrences of "Watch Live" across the entire codebase.
+  - Static typecheck (`pnpm typecheck`) and linter (`pnpm lint`) passing with zero errors.
 
-- **Phase 3: Multi-Friend Session Starter Dialog**
+- **Phase 3: Multi-Friend Session Starter Dialog** *(NEXT UP)*
   - Implement `StartSocialSessionDialog` component on `/friends`.
   - Multi-select checklist of accepted friends ordered by live presence.
   - Room parameter inputs (Name, Category, Atmosphere, Visibility).

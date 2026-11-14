@@ -2,10 +2,10 @@
 
 import React, { useState } from 'react';
 import { useFriends, useIncomingRequests } from '@/features/friends/hooks/use-friends';
-import { FriendCard } from '@/features/friends/components/friend-card';
 import { FriendRequestsList } from '@/features/friends/components/friend-requests-list';
 import { UserSearchTab } from '@/features/friends/components/user-search-tab';
-import { Users, UserPlus, Inbox, Sparkles, Loader2, Radio } from 'lucide-react';
+import { FriendActivitySection } from '@/features/friends/components/friend-activity-section';
+import { Users, UserPlus, Inbox, Loader2, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import Link from 'next/link';
@@ -14,7 +14,7 @@ export default function FriendsPage() {
   const { isAuthenticated, isInitializing } = useAuth();
   const [activeTab, setActiveTab] = useState<'friends' | 'requests' | 'search'>('friends');
 
-  const { data: friendsData, isLoading: isLoadingFriends } = useFriends();
+  const { data: friendsData } = useFriends();
   const { data: incomingData } = useIncomingRequests();
 
   if (isInitializing) {
@@ -140,37 +140,7 @@ export default function FriendsPage() {
 
       {/* Tab Panels */}
       {activeTab === 'friends' && (
-        <div>
-          {isLoadingFriends ? (
-            <div className="flex items-center justify-center py-20 text-slate-400 gap-2">
-              <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
-              <span className="text-sm">Updating presence and friendships...</span>
-            </div>
-          ) : friends.length > 0 ? (
-            <div className="space-y-3">
-              {friends.map((friendship) => (
-                <FriendCard key={friendship.id} friendship={friendship} />
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-center rounded-3xl bg-white/[0.02] border border-white/5 p-8">
-              <div className="w-14 h-14 rounded-2xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center mb-4">
-                <Sparkles className="w-7 h-7 text-violet-400" />
-              </div>
-              <h3 className="text-base font-semibold text-white mb-1">Your Friends List is Empty</h3>
-              <p className="text-xs text-slate-400 max-w-sm mb-6">
-                Karaoke is always more fun together. Search for other singers across KTVOnline and invite them to sing.
-              </p>
-              <button
-                onClick={() => setActiveTab('search')}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-md shadow-violet-600/25 transition-all"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>Find People</span>
-              </button>
-            </div>
-          )}
-        </div>
+        <FriendActivitySection onFindPeopleClick={() => setActiveTab('search')} />
       )}
 
       {activeTab === 'requests' && <FriendRequestsList />}

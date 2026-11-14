@@ -56,5 +56,6 @@ export const queryKeys = {
     incoming: (params?: Record<string, unknown>) => [...queryKeys.friends.all, 'incoming', params ?? {}] as const,
     outgoing: (params?: Record<string, unknown>) => [...queryKeys.friends.all, 'outgoing', params ?? {}] as const,
     search: (q: string) => [...queryKeys.friends.all, 'search', q] as const,
+    pendingInvitations: () => [...queryKeys.friends.all, 'pending-invitations'] as const,
   },
 };

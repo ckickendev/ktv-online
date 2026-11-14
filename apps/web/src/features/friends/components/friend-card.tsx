@@ -80,14 +80,14 @@ export function FriendCard({ friendship }: FriendCardProps) {
           </Link>
         )}
 
-        {/* Join Stage / Performer CTA if friend is singing in a public lounge */}
+        {/* Join Lounge CTA if friend is singing in a public lounge */}
         {presence?.status === 'singing' && presence.roomId && !presence.isPrivateLounge && (
           <Link
             href={`/rooms/${presence.roomId}`}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-xs font-semibold shadow-md shadow-fuchsia-600/20 transition-all animate-pulse"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-xs font-semibold shadow-md shadow-fuchsia-600/20 transition-all"
           >
             <LogIn className="w-3.5 h-3.5" />
-            <span>Watch Live</span>
+            <span>Join Lounge</span>
           </Link>
         )}
 

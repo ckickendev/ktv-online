@@ -55,16 +55,22 @@ export function useJoinRoom() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (roomId: string) => {
-      return roomApi.joinRoom(roomId);
+    mutationFn: async (
+      payload: string | { roomId: string; inviteToken?: string; invitationId?: string }
+    ) => {
+      const roomId = typeof payload === 'string' ? payload : payload.roomId;
+      const credentials = typeof payload === 'string' ? undefined : payload;
+      return roomApi.joinRoom(roomId, credentials);
     },
-    onSuccess: (_, roomId) => {
+    onSuccess: (_, payload) => {
+      const roomId = typeof payload === 'string' ? payload : payload.roomId;
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.members(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.membership(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.state(roomId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.joined() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.friends.all });
     },
   });
 }

@@ -52,6 +52,8 @@ export function InvitationNotificationListener() {
     handleDismiss(key);
     if (invitation.invitationToken) {
       router.push(`/invite/${invitation.invitationToken}`);
+    } else if (invitation.invitationId) {
+      router.push(`/rooms/${invitation.roomId}?invitationId=${invitation.invitationId}`);
     } else {
       router.push(`/rooms/${invitation.roomId}`);
     }

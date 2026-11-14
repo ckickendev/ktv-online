@@ -51,9 +51,17 @@ export const roomApi = {
     return apiClient.post<RoomDto>(`/rooms/${roomId}/close`, {});
   },
 
-  async joinRoom(roomId: string, inviteToken?: string): Promise<RoomMembershipDto> {
+  async joinRoom(
+    roomId: string,
+    credentials?: string | { inviteToken?: string; invitationId?: string }
+  ): Promise<RoomMembershipDto> {
+    const payload =
+      typeof credentials === 'string'
+        ? { inviteToken: credentials }
+        : credentials;
     return apiClient.post<RoomMembershipDto>(`/rooms/${roomId}/join`, {
-      ...(inviteToken ? { inviteToken } : {}),
+      ...(payload?.inviteToken ? { inviteToken: payload.inviteToken } : {}),
+      ...(payload?.invitationId ? { invitationId: payload.invitationId } : {}),
     });
   },
 

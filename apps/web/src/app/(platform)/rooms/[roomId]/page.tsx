@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   Mic,
   Users,
@@ -74,6 +74,7 @@ import { cn } from '@/lib/utils';
 export default function RoomDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const roomId = params?.roomId as string;
 
   const { isAuthenticated, user: currentUser } = useAuth();
@@ -234,7 +235,9 @@ export default function RoomDetailPage() {
   const handleJoin = async () => {
     setJoinErrorMessage(null);
     try {
-      await joinMutation.mutateAsync(roomId);
+      const invitationId = searchParams?.get('invitationId') || undefined;
+      const inviteToken = searchParams?.get('inviteToken') || undefined;
+      await joinMutation.mutateAsync({ roomId, invitationId, inviteToken });
       refreshState();
     } catch (err: unknown) {
       const errorMsg =
