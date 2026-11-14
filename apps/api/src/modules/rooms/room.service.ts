@@ -61,7 +61,8 @@ export type JoinRoomResult =
         | 'INVITATION_INVALID'
         | 'INVITATION_EXPIRED'
         | 'INVITATION_REVOKED'
-        | 'INVITATION_ROOM_MISMATCH';
+        | 'INVITATION_ROOM_MISMATCH'
+        | 'INVITATION_RECIPIENT_MISMATCH';
     };
 
 export type LeaveRoomResult =
@@ -395,7 +396,7 @@ export class RoomService {
       if (!inviteToken) {
         return { success: false, error: 'PRIVATE_ROOM' };
       }
-      const inviteValidation = await invitationService.validateInvitation(inviteToken, roomId);
+      const inviteValidation = await invitationService.validateInvitation(inviteToken, roomId, userId);
       if (!inviteValidation.valid) {
         const err = inviteValidation.error;
         if (
@@ -403,7 +404,8 @@ export class RoomService {
           err === 'INVITATION_EXPIRED' ||
           err === 'INVITATION_REVOKED' ||
           err === 'INVITATION_ROOM_MISMATCH' ||
-          err === 'INVITATION_REQUIRED'
+          err === 'INVITATION_REQUIRED' ||
+          err === 'INVITATION_RECIPIENT_MISMATCH'
         ) {
           return { success: false, error: err };
         }

@@ -56,9 +56,9 @@ export class InvitationService {
       return { success: false, error: 'FORBIDDEN_NOT_HOST' };
     }
 
-    // Revoke any previous active invitations for this room
+    // Revoke any previous active general invitations for this room (preserves friend-specific invitations)
     await RoomInvitationModel.updateMany(
-      { roomId: roomObjectId, status: 'active', revokedAt: null },
+      { roomId: roomObjectId, recipientId: null, status: 'active', revokedAt: null },
       { $set: { status: 'revoked', revokedAt: new Date() } }
     ).exec();
 
@@ -73,6 +73,78 @@ export class InvitationService {
       roomId: roomObjectId,
       tokenHash,
       createdBy: hostObjectId,
+      recipientId: null,
+      expiresAt,
+      status: 'active',
+      revokedAt: null,
+    });
+
+    return {
+      success: true,
+      data: {
+        id: invitation._id.toString(),
+        roomId: roomObjectId.toString(),
+        token: rawToken,
+        expiresAt: expiresAt.toISOString(),
+        createdAt: invitation.createdAt.toISOString(),
+      },
+    };
+  }
+
+  /**
+   * Creates a dedicated, recipient-bound invitation for a specific friend.
+   * Only revokes any prior active invitation for that specific friend in this room.
+   */
+  async createFriendInvitation(
+    roomId: string,
+    hostUserId: string,
+    friendUserId: string,
+    expiresInHours = 48
+  ): Promise<{ success: boolean; data?: CreateInvitationResponseDto; error?: string }> {
+    if (
+      !Types.ObjectId.isValid(roomId) ||
+      !Types.ObjectId.isValid(hostUserId) ||
+      !Types.ObjectId.isValid(friendUserId)
+    ) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    const roomObjectId = new Types.ObjectId(roomId);
+    const hostObjectId = new Types.ObjectId(hostUserId);
+    const friendObjectId = new Types.ObjectId(friendUserId);
+
+    const room = await RoomModel.findById(roomObjectId).exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    if (room.status === 'closed') {
+      return { success: false, error: 'ROOM_CLOSED' };
+    }
+
+    // Authoritative host check
+    if (room.ownerId.toString() !== hostUserId) {
+      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    }
+
+    // Revoke only previous active invitations for this specific friend in this room
+    await RoomInvitationModel.updateMany(
+      { roomId: roomObjectId, recipientId: friendObjectId, status: 'active', revokedAt: null },
+      { $set: { status: 'revoked', revokedAt: new Date() } }
+    ).exec();
+
+    // Generate secure token and hash
+    const rawToken = this.generateRawToken();
+    const tokenHash = this.hashToken(rawToken);
+
+    const validHours = Math.min(Math.max(expiresInHours, 1), 168); // 1h to 7 days
+    const expiresAt = new Date(Date.now() + validHours * 60 * 60 * 1000);
+
+    const invitation = await RoomInvitationModel.create({
+      roomId: roomObjectId,
+      tokenHash,
+      createdBy: hostObjectId,
+      recipientId: friendObjectId,
       expiresAt,
       status: 'active',
       revokedAt: null,
@@ -191,6 +263,18 @@ export class InvitationService {
       };
     }
 
+    // Recipient-bound check: if invitation is dedicated to a friend, verify identity
+    if (invitation.recipientId && requestingUserId) {
+      if (invitation.recipientId.toString() !== requestingUserId) {
+        return {
+          success: true,
+          data: {
+            invitation: { status: 'invalid' },
+          },
+        };
+      }
+    }
+
     const now = new Date();
     if (invitation.expiresAt < now) {
       return {
@@ -291,7 +375,8 @@ export class InvitationService {
    */
   async validateInvitation(
     rawToken: string,
-    roomId: string
+    roomId: string,
+    requestingUserId?: string
   ): Promise<{ valid: boolean; error?: string }> {
     if (!rawToken || typeof rawToken !== 'string') {
       return { valid: false, error: 'INVITATION_REQUIRED' };
@@ -314,6 +399,13 @@ export class InvitationService {
 
     if (invitation.expiresAt < new Date()) {
       return { valid: false, error: 'INVITATION_EXPIRED' };
+    }
+
+    // Recipient-bound validation: if token is bound to a specific friend, verify caller identity
+    if (invitation.recipientId && requestingUserId) {
+      if (invitation.recipientId.toString() !== requestingUserId) {
+        return { valid: false, error: 'INVITATION_RECIPIENT_MISMATCH' };
+      }
     }
 
     return { valid: true };

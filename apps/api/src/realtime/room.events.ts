@@ -14,6 +14,7 @@ import { RoomModel } from '../modules/rooms/room.model.js';
 import { RoomMembershipModel } from '../modules/rooms/membership.model.js';
 import { roomService } from '../modules/rooms/room.service.js';
 import { presenceManager } from './presence.manager.js';
+import { broadcastUserPresenceToFriends } from './friend.events.js';
 import { logger } from '../utils/logger.js';
 import { AuthenticatedSocketData } from './socket.auth.js';
 
@@ -167,6 +168,11 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
             totalOnline,
             correlationId,
           });
+
+          // Proactively broadcast updated room presence to friends (DEF-PRES-01)
+          broadcastUserPresenceToFriends(io, user.id).catch((err) => {
+            logger.error({ err, userId: user.id }, 'Error broadcasting friend presence on room join');
+          });
         }
 
         // Send current presence snapshot back to the joining socket
@@ -229,6 +235,11 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
           username: user.username,
           totalOnline: result.totalOnline,
           correlationId,
+        });
+
+        // Broadcast presence transition out of room to friends (DEF-PRES-01)
+        broadcastUserPresenceToFriends(io, user.id).catch((err) => {
+          logger.error({ err, userId: user.id }, 'Error broadcasting friend presence on room leave');
         });
       }
 
@@ -343,6 +354,11 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
           { roomId: expiredResult.roomId, userId: expiredResult.userId, remainingOnline: expiredResult.totalOnline },
           'Disconnect grace period expired: emitted member:left'
         );
+
+        // Disconnect grace expired: update friends on departure from room (DEF-PRES-01)
+        broadcastUserPresenceToFriends(io, expiredResult.userId).catch((err) => {
+          logger.error({ err, userId: expiredResult.userId }, 'Error broadcasting friend presence after room grace expired');
+        });
       }
     );
 
@@ -358,6 +374,10 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
         userId: immediateResult.userId,
         username: immediateResult.username,
         totalOnline: immediateResult.totalOnline,
+      });
+
+      broadcastUserPresenceToFriends(io, immediateResult.userId).catch((err) => {
+        logger.error({ err, userId: immediateResult.userId }, 'Error broadcasting friend presence after immediate disconnect');
       });
     }
   });

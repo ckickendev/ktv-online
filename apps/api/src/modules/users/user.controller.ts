@@ -3,6 +3,8 @@ import { Types } from 'mongoose';
 import { userService } from './user.service.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { CreateUserDto, UpdateProfileDto } from '@ktv/contracts';
+import { getSocketServer } from '../../realtime/socket.server.js';
+import { broadcastUserPresenceToFriends } from '../../realtime/friend.events.js';
 
 export class UserController {
   async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -99,6 +101,15 @@ export class UserController {
         return;
       }
       const updatedPreferences = await userService.updatePreferences(req.user.id, req.body);
+
+      // If presence visibility preference was updated, broadcast to friends (DEF-PRES-01)
+      if (req.body?.presenceVisibility !== undefined) {
+        const io = getSocketServer();
+        if (io) {
+          broadcastUserPresenceToFriends(io, req.user.id).catch(() => {});
+        }
+      }
+
       sendSuccess(res, updatedPreferences, 'User preferences updated successfully');
     } catch (error) {
       next(error);

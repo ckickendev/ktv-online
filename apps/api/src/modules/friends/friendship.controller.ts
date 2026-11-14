@@ -271,11 +271,18 @@ export class FriendshipController {
 
       if (!result.success) {
         switch (result.error) {
+          case 'FORBIDDEN_NOT_HOST':
+            sendError(res, 'Only the room host can invite friends to this lounge', 403);
+            return;
           case 'NOT_FRIENDS':
             sendError(res, 'You can only send direct lounge invites to friends', 403);
             return;
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'ROOM_CLOSED':
           case 'ROOM_UNAVAILABLE':
-            sendError(res, 'Room is closed or unavailable', 404);
+            sendError(res, 'Cannot invite friends to a closed room', 400);
             return;
           default:
             sendError(res, 'Failed to send lounge invitation', 400);

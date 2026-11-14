@@ -17,6 +17,7 @@ import {
 import { karaokeService } from '../modules/karaoke/karaoke.service.js';
 import { UnsupportedTopologyError } from '../database/transaction.js';
 import { getRoomChannel } from './room.events.js';
+import { broadcastUserPresenceToFriends } from './friend.events.js';
 import { logger } from '../utils/logger.js';
 import { AuthenticatedSocketData } from './socket.auth.js';
 
@@ -62,6 +63,14 @@ export function broadcastKaraokePlaybackUpdated(
   };
 
   io.to(channel).emit(SOCKET_EVENTS.SERVER.KARAOKE_PLAYBACK_UPDATED, payload);
+
+  // Proactively broadcast singing/in_lounge presence transition to friends (DEF-PRES-01)
+  const activeSingerId = playback.currentItem?.singer?.id || playback.currentItem?.requestedBy?.id;
+  if (activeSingerId) {
+    broadcastUserPresenceToFriends(io, activeSingerId).catch((err) => {
+      logger.error({ err, activeSingerId }, 'Error broadcasting friend presence on playback update');
+    });
+  }
 }
 
 /**

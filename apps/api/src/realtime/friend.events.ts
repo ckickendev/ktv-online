@@ -1,4 +1,5 @@
 import { Server } from 'socket.io';
+import { Types } from 'mongoose';
 import {
   SOCKET_EVENTS,
   FriendPresenceUpdatedPayload,
@@ -8,6 +9,8 @@ import {
 } from '@ktv/contracts';
 import { AuthenticatedSocket, AuthenticatedSocketData } from './socket.auth.js';
 import { globalPresenceManager } from './global-presence.manager.js';
+import { FriendshipModel } from '../modules/friends/friendship.model.js';
+import { UserModel } from '../modules/users/user.model.js';
 import { logger } from '../utils/logger.js';
 
 export function getUserChannel(userId: string): string {
@@ -25,7 +28,11 @@ export function registerFriendEvents(
     try {
       if (data?.targetUserId) {
         const presence = await globalPresenceManager.getUserPresence(data.targetUserId, userId);
-        socket.emit(SOCKET_EVENTS.SERVER.FRIEND_PRESENCE_UPDATED, presence);
+        const target = await UserModel.findById(data.targetUserId).select('username').lean().exec();
+        socket.emit(SOCKET_EVENTS.SERVER.FRIEND_PRESENCE_UPDATED, {
+          ...presence,
+          username: target?.username || '',
+        });
       }
     } catch (err) {
       logger.error({ err, userId }, 'Error handling friend presence request');
@@ -79,4 +86,51 @@ export function emitFriendInvitationReceived(
 ): void {
   if (!io) return;
   io.to(getUserChannel(friendUserId)).emit(SOCKET_EVENTS.SERVER.FRIEND_INVITATION_RECEIVED, payload);
+}
+
+/**
+ * Broadcast dynamic presence of target user to all their accepted friends in realtime (DEF-PRES-01).
+ * Respects individual friend privacy rules and room masking per viewer perspective.
+ */
+export async function broadcastUserPresenceToFriends(
+  io: Server<any, any, any, AuthenticatedSocketData> | null,
+  userId: string
+): Promise<void> {
+  if (!io || !userId || !Types.ObjectId.isValid(userId)) return;
+
+  try {
+    const userObjectId = new Types.ObjectId(userId);
+    const friendships = await FriendshipModel.find({
+      $or: [
+        { requesterId: userObjectId },
+        { addresseeId: userObjectId },
+      ],
+      status: 'accepted',
+    })
+      .select('requesterId addresseeId')
+      .lean()
+      .exec();
+
+    if (!friendships || friendships.length === 0) return;
+
+    const userDoc = await UserModel.findById(userId).select('username').lean().exec();
+    const username = userDoc?.username || '';
+
+    await Promise.allSettled(
+      friendships.map(async (f) => {
+        const friendUserId =
+          f.requesterId.toString() === userId
+            ? f.addresseeId.toString()
+            : f.requesterId.toString();
+
+        const presence = await globalPresenceManager.getUserPresence(userId, friendUserId);
+        emitFriendPresenceUpdate(io, friendUserId, {
+          ...presence,
+          username,
+        });
+      })
+    );
+  } catch (err) {
+    logger.error({ err, userId }, 'Error broadcasting user presence to friends');
+  }
 }

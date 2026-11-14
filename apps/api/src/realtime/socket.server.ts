@@ -7,7 +7,7 @@ import { registerRoomEvents, getRoomChannel } from './room.events.js';
 import { registerChatEvents } from './chat.events.js';
 import { registerStageReactionEvents } from './stage-reaction.events.js';
 import { registerGiftEvents } from './gift.events.js';
-import { registerFriendEvents, getUserChannel } from './friend.events.js';
+import { registerFriendEvents, getUserChannel, broadcastUserPresenceToFriends } from './friend.events.js';
 import { globalPresenceManager } from './global-presence.manager.js';
 import {
   registerKaraokeEvents,
@@ -60,10 +60,19 @@ export function createSocketServer(
     socket.join(getUserChannel(userId));
 
     // Register into global presence tracker
-    globalPresenceManager.addSocket(userId, socket.id);
+    const { isFirstConnection } = globalPresenceManager.addSocket(userId, socket.id);
+    if (isFirstConnection) {
+      broadcastUserPresenceToFriends(io, userId).catch((err) => {
+        logger.error({ err, userId }, 'Error broadcasting presence on connect');
+      });
+    }
 
     socket.on('disconnect', () => {
-      globalPresenceManager.removeSocket(userId, socket.id);
+      globalPresenceManager.handleDisconnect(userId, socket.id, 10000, () => {
+        broadcastUserPresenceToFriends(io, userId).catch((err) => {
+          logger.error({ err, userId }, 'Error broadcasting presence on disconnect expiration');
+        });
+      });
     });
 
     // Register room lifecycle and presence event handlers
@@ -175,6 +184,11 @@ export async function evictKickedMember(
       totalOnline: presenceResult.totalOnline,
     });
   }
+
+  // 5. Broadcast updated presence to friends of evicted member
+  broadcastUserPresenceToFriends(ioInstance, userId).catch((err) => {
+    logger.error({ err, userId }, 'Error broadcasting friend presence after eviction');
+  });
 }
 
 /**

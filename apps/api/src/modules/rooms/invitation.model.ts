@@ -20,6 +20,12 @@ const RoomInvitationSchema = new Schema<IRoomInvitationDocument>(
       ref: 'User',
       required: true,
     },
+    recipientId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
     expiresAt: {
       type: Date,
       required: true,

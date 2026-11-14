@@ -10,12 +10,29 @@ export class GlobalPresenceManager {
   // userId -> Set<socketId>
   private userSockets = new Map<string, Set<string>>();
 
+  // Generation-fenced pending disconnect timers: userId -> { timer, generation }
+  private pendingDisconnects = new Map<string, { timer: NodeJS.Timeout; generation: number }>();
+  private userGenerations = new Map<string, number>();
+
+  private cancelPendingDisconnect(userId: string): void {
+    const pending = this.pendingDisconnects.get(userId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pendingDisconnects.delete(userId);
+      const nextGen = (this.userGenerations.get(userId) || 0) + 1;
+      this.userGenerations.set(userId, nextGen);
+    }
+  }
+
   /**
    * Register a user's socket connection.
    */
   addSocket(userId: string, socketId: string): { isFirstConnection: boolean; totalOnline: number } {
+    const wasPendingGrace = this.pendingDisconnects.has(userId);
+    this.cancelPendingDisconnect(userId);
+
     let sockets = this.userSockets.get(userId);
-    const isFirstConnection = !sockets || sockets.size === 0;
+    const isFirstConnection = !wasPendingGrace && (!sockets || sockets.size === 0);
 
     if (!sockets) {
       sockets = new Set<string>();
@@ -30,9 +47,11 @@ export class GlobalPresenceManager {
   }
 
   /**
-   * Unregister a user's socket disconnection.
+   * Unregister a user's socket disconnection immediately (explicit logout / eviction).
    */
   removeSocket(userId: string, socketId: string): { isLastDisconnection: boolean; totalOnline: number } {
+    this.cancelPendingDisconnect(userId);
+
     const sockets = this.userSockets.get(userId);
     if (!sockets) {
       return { isLastDisconnection: false, totalOnline: this.userSockets.size };
@@ -52,18 +71,71 @@ export class GlobalPresenceManager {
   }
 
   /**
-   * Check if a user currently has active socket connections.
+   * Handle unexpected socket disconnect with a generation-fenced grace period.
+   * If the disconnecting socket is the user's last socket, a grace period timer is scheduled.
+   * If the user reconnects within gracePeriodMs, the timer is cancelled and presence remains uninterrupted.
+   * If grace expires without reconnect, onGraceExpired is called and the user is fully removed from online tracking.
+   */
+  handleDisconnect(
+    userId: string,
+    socketId: string,
+    gracePeriodMs: number,
+    onGraceExpired: () => void
+  ): { isPendingGrace: boolean; immediateLastDisconnection: boolean } {
+    const sockets = this.userSockets.get(userId);
+    if (!sockets) {
+      return { isPendingGrace: false, immediateLastDisconnection: false };
+    }
+
+    sockets.delete(socketId);
+
+    // If user still has other active sockets (multi-tab/device), no grace period needed
+    if (sockets.size > 0) {
+      return { isPendingGrace: false, immediateLastDisconnection: false };
+    }
+
+    // Last socket disconnected: schedule grace period timer
+    this.cancelPendingDisconnect(userId);
+    const generation = (this.userGenerations.get(userId) || 0) + 1;
+    this.userGenerations.set(userId, generation);
+
+    const timer = setTimeout(() => {
+      this.pendingDisconnects.delete(userId);
+
+      // Verify generation has not changed (i.e. user has not reconnected)
+      if (this.userGenerations.get(userId) === generation) {
+        const remainingSockets = this.userSockets.get(userId);
+        if (!remainingSockets || remainingSockets.size === 0) {
+          this.userSockets.delete(userId);
+          onGraceExpired();
+        }
+      }
+    }, gracePeriodMs);
+
+    this.pendingDisconnects.set(userId, { timer, generation });
+
+    return { isPendingGrace: true, immediateLastDisconnection: false };
+  }
+
+  /**
+   * Check if a user currently has active socket connections or is within disconnect grace period.
    */
   isUserOnline(userId: string): boolean {
     const sockets = this.userSockets.get(userId);
-    return !!sockets && sockets.size > 0;
+    const hasSockets = !!sockets && sockets.size > 0;
+    const isPendingGrace = this.pendingDisconnects.has(userId);
+    return hasSockets || isPendingGrace;
   }
 
   /**
    * Get all currently online user IDs.
    */
   getOnlineUserIds(): string[] {
-    return Array.from(this.userSockets.keys());
+    const ids = new Set<string>(this.userSockets.keys());
+    for (const id of this.pendingDisconnects.keys()) {
+      ids.add(id);
+    }
+    return Array.from(ids);
   }
 
   /**
@@ -204,6 +276,11 @@ export class GlobalPresenceManager {
    * Reset all global presence state.
    */
   clear(): void {
+    for (const pending of this.pendingDisconnects.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingDisconnects.clear();
+    this.userGenerations.clear();
     this.userSockets.clear();
   }
 }

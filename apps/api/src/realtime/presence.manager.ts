@@ -70,6 +70,25 @@ export class RoomPresenceManager {
     const wasPendingGrace = this.pendingDisconnects.has(presenceKey);
     this.cancelPendingDisconnect(roomId, userId);
 
+    // Room switching cleanup (DEF-PRES-02): If socket was previously in a different room without explicit leave, evict it
+    const existingMeta = this.socketMeta.get(socketId);
+    if (existingMeta && existingMeta.roomId !== roomId) {
+      const prevRoomId = existingMeta.roomId;
+      const prevRoomMap = this.roomUsers.get(prevRoomId);
+      if (prevRoomMap) {
+        const prevUserSockets = prevRoomMap.get(existingMeta.userId);
+        if (prevUserSockets) {
+          prevUserSockets.delete(socketId);
+          if (prevUserSockets.size === 0) {
+            prevRoomMap.delete(existingMeta.userId);
+          }
+        }
+        if (prevRoomMap.size === 0) {
+          this.roomUsers.delete(prevRoomId);
+        }
+      }
+    }
+
     // Record socket metadata
     this.socketMeta.set(socketId, { userId, username, avatar, role, roomId });
     this.userDetails.set(userId, { username, avatar, role });
