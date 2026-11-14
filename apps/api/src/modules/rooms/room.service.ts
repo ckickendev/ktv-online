@@ -62,7 +62,8 @@ export type JoinRoomResult =
         | 'INVITATION_EXPIRED'
         | 'INVITATION_REVOKED'
         | 'INVITATION_ROOM_MISMATCH'
-        | 'INVITATION_RECIPIENT_MISMATCH';
+        | 'INVITATION_RECIPIENT_MISMATCH'
+        | 'AMBIGUOUS_INVITATION_CREDENTIALS';
     };
 
 export type LeaveRoomResult =
@@ -344,9 +345,27 @@ export class RoomService {
     return room;
   }
 
-  async joinRoom(roomId: string, userId: string, inviteToken?: string): Promise<JoinRoomResult> {
+  async joinRoom(
+    roomId: string,
+    userId: string,
+    credentials?: { inviteToken?: string; invitationId?: string } | string
+  ): Promise<JoinRoomResult> {
     if (!Types.ObjectId.isValid(roomId) || !Types.ObjectId.isValid(userId)) {
       return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    let inviteToken: string | undefined;
+    let invitationId: string | undefined;
+
+    if (typeof credentials === 'string') {
+      inviteToken = credentials.trim() || undefined;
+    } else if (credentials && typeof credentials === 'object') {
+      inviteToken = credentials.inviteToken?.trim() || undefined;
+      invitationId = credentials.invitationId?.trim() || undefined;
+    }
+
+    if (inviteToken && invitationId) {
+      return { success: false, error: 'AMBIGUOUS_INVITATION_CREDENTIALS' };
     }
 
     const roomObjectId = new Types.ObjectId(roomId);
@@ -393,10 +412,25 @@ export class RoomService {
 
     // 2c. Private room access validation: non-owners must present a valid, active invitation
     if (room.visibility === 'private' && room.ownerId.toString() !== userId) {
-      if (!inviteToken) {
+      if (!inviteToken && !invitationId) {
         return { success: false, error: 'PRIVATE_ROOM' };
       }
-      const inviteValidation = await invitationService.validateInvitation(inviteToken, roomId, userId);
+
+      let inviteValidation: { valid: boolean; error?: string };
+      if (invitationId) {
+        inviteValidation = await invitationService.validateRecipientInvitationById(
+          invitationId,
+          roomId,
+          userId
+        );
+      } else {
+        inviteValidation = await invitationService.validateInvitation(
+          inviteToken!,
+          roomId,
+          userId
+        );
+      }
+
       if (!inviteValidation.valid) {
         const err = inviteValidation.error;
         if (

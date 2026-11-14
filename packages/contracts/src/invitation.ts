@@ -77,7 +77,12 @@ export const InvitationPreviewDtoSchema = z.object({
 });
 export type InvitationPreviewDto = z.infer<typeof InvitationPreviewDtoSchema>;
 
-export const JoinRoomWithInviteSchema = z.object({
-  inviteToken: z.string().trim().min(1).max(256).optional(),
-});
+export const JoinRoomWithInviteSchema = z
+  .object({
+    inviteToken: z.string().trim().min(1).max(256).optional(),
+    invitationId: z.string().trim().min(1).max(100).optional(),
+  })
+  .refine((data) => !(data.inviteToken && data.invitationId), {
+    message: 'Cannot provide both inviteToken and invitationId',
+  });
 export type JoinRoomWithInviteDto = z.infer<typeof JoinRoomWithInviteSchema>;

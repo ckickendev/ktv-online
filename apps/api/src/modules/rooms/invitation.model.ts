@@ -75,6 +75,10 @@ const RoomInvitationSchema = new Schema<IRoomInvitationDocument>(
 // Indexes
 RoomInvitationSchema.index({ roomId: 1, status: 1 });
 RoomInvitationSchema.index({ roomId: 1, createdAt: -1 });
+RoomInvitationSchema.index(
+  { recipientId: 1, status: 1, expiresAt: 1 },
+  { name: 'idx_room_invitations_recipient_status_expires' }
+);
 
 export const RoomInvitationModel: Model<IRoomInvitationDocument> =
   (mongoose.models.RoomInvitation as Model<IRoomInvitationDocument>) ||

@@ -38,6 +38,21 @@ friendshipRoutes.post('/request/:id/cancel', requireAuth, (req, res, next) => {
   friendshipController.cancelRequest(req, res, next);
 });
 
+// Pending Invitations Inbox (Recipient-only, placed before /:friendUserId)
+friendshipRoutes.get('/invitations/pending', requireAuth, (req, res, next) => {
+  friendshipController.getPendingInvitations(req, res, next);
+});
+
+// Dismiss Pending Invitation (Recipient-only, placed before /:friendUserId)
+friendshipRoutes.post('/invitations/:id/dismiss', requireAuth, (req, res, next) => {
+  friendshipController.dismissInvitation(req, res, next);
+});
+
+// Batch Direct Lounge Invitations to Friends (Host-only)
+friendshipRoutes.post('/invite-lounge-batch/:roomId', requireAuth, (req, res, next) => {
+  friendshipController.inviteLoungeBatch(req, res, next);
+});
+
 // Remove Friend (Unfriend)
 friendshipRoutes.delete('/:friendUserId', requireAuth, (req, res, next) => {
   friendshipController.removeFriend(req, res, next);

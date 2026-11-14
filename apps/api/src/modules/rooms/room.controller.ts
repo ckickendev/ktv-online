@@ -121,8 +121,18 @@ export class RoomController {
 
       const inviteToken =
         typeof req.body?.inviteToken === 'string' ? req.body.inviteToken.trim() : undefined;
+      const invitationId =
+        typeof req.body?.invitationId === 'string' ? req.body.invitationId.trim() : undefined;
 
-      const result = await roomService.joinRoom(roomId, req.user.id, inviteToken);
+      if (inviteToken && invitationId) {
+        sendError(res, 'Cannot provide both inviteToken and invitationId', 400);
+        return;
+      }
+
+      const result = await roomService.joinRoom(roomId, req.user.id, {
+        inviteToken,
+        invitationId,
+      });
       if (!result.success) {
         switch (result.error) {
           case 'ROOM_NOT_FOUND':
@@ -140,8 +150,11 @@ export class RoomController {
           case 'PRIVATE_ROOM':
             sendError(res, 'Cannot join private room without direct invitation', 403);
             return;
+          case 'AMBIGUOUS_INVITATION_CREDENTIALS':
+            sendError(res, 'Cannot provide both inviteToken and invitationId', 400);
+            return;
           case 'INVITATION_REQUIRED':
-            sendError(res, 'Invitation token is required for this private room', 403);
+            sendError(res, 'Invitation token or invitationId is required for this private room', 403);
             return;
           case 'INVITATION_INVALID':
             sendError(res, 'Invitation link is invalid', 403);

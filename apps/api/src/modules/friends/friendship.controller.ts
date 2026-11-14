@@ -5,8 +5,10 @@ import {
   FriendRequestQuerySchema,
   UserSearchQuerySchema,
   SendLoungeInviteToFriendSchema,
+  BatchLoungeInviteSchema,
 } from '@ktv/contracts';
 import { friendshipService } from './friendship.service.js';
+import { invitationService } from '../rooms/invitation.service.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 
 export class FriendshipController {
@@ -291,6 +293,151 @@ export class FriendshipController {
       }
 
       sendSuccess(res, { success: true }, 'Lounge invite sent to friend successfully', 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Batch invite friends to a lounge (host-only).
+   */
+  async inviteLoungeBatch(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      const { roomId } = req.params;
+      if (!roomId) {
+        sendError(res, 'Room ID is required', 400);
+        return;
+      }
+
+      const body = BatchLoungeInviteSchema.parse(req.body);
+
+      const result = await friendshipService.inviteLoungeBatch(
+        req.user.id,
+        roomId,
+        body.friendUserIds
+      );
+
+      if (!result.success || !result.data) {
+        switch (result.error) {
+          case 'CANNOT_INVITE_SELF':
+            sendError(res, 'You cannot invite yourself to the lounge', 400);
+            return;
+          case 'INVALID_ROOM_ID':
+            sendError(res, 'Invalid room ID', 400);
+            return;
+          case 'INVALID_RECIPIENT_ID':
+            sendError(res, 'Invalid friend user ID in batch', 400);
+            return;
+          case 'RECIPIENTS_REQUIRED':
+            sendError(res, 'At least one friend user ID is required', 400);
+            return;
+          case 'BATCH_SIZE_EXCEEDED':
+            sendError(res, 'Maximum 20 friends allowed per batch', 400);
+            return;
+          case 'ROOM_NOT_FOUND':
+            sendError(res, 'Room not found', 404);
+            return;
+          case 'ROOM_CLOSED':
+            sendError(res, 'Cannot invite friends to a closed room', 400);
+            return;
+          case 'ROOM_LOCKED':
+            sendError(res, 'Cannot invite friends to a locked room', 400);
+            return;
+          case 'FORBIDDEN_NOT_HOST':
+            sendError(res, 'Only the room host can invite friends to this lounge', 403);
+            return;
+          case 'HOST_NOT_ACTIVE_MEMBER':
+            sendError(res, 'Host must be an active member of the room to send invitations', 403);
+            return;
+          case 'RATE_LIMIT_EXCEEDED':
+            sendError(res, result.message || 'Rate limit exceeded: please slow down batch invitations', 429);
+            return;
+          default:
+            sendError(res, 'Failed to process batch lounge invitations', 400);
+            return;
+        }
+      }
+
+      sendSuccess(res, result.data, 'Batch invitations processed successfully', 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Get pending invitations inbox for the authenticated recipient.
+   */
+  async getPendingInvitations(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      const result = await invitationService.getPendingInvitationsForRecipient(req.user.id);
+
+      if (!result.success || !result.data) {
+        sendError(res, 'Failed to retrieve pending invitations', 400);
+        return;
+      }
+
+      sendSuccess(
+        res,
+        { items: result.data, total: result.data.length },
+        'Pending invitations retrieved successfully',
+        200
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Dismiss a pending invitation (recipient only).
+   */
+  async dismissInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+
+      const { id } = req.params;
+      if (!id) {
+        sendError(res, 'Invitation ID is required', 400);
+        return;
+      }
+
+      const result = await invitationService.dismissInvitationByRecipient(id, req.user.id);
+
+      if (!result.success) {
+        switch (result.error) {
+          case 'NOT_FOUND':
+            sendError(res, 'Invitation not found', 404);
+            return;
+          case 'FORBIDDEN_NOT_RECIPIENT':
+            sendError(res, 'You are not authorized to dismiss this invitation', 403);
+            return;
+          case 'INVALID_ID':
+            sendError(res, 'Invalid invitation ID', 400);
+            return;
+          default:
+            sendError(res, 'Failed to dismiss invitation', 400);
+            return;
+        }
+      }
+
+      sendSuccess(
+        res,
+        { success: true, invitationId: id, status: 'revoked' },
+        'Invitation dismissed successfully',
+        200
+      );
     } catch (error) {
       next(error);
     }

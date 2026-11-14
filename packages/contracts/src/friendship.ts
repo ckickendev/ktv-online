@@ -116,6 +116,83 @@ export const SendLoungeInviteToFriendSchema = z.object({
 export type SendLoungeInviteToFriendDto = z.infer<typeof SendLoungeInviteToFriendSchema>;
 
 // ==========================================
+// BATCH INVITATION & INBOX SCHEMAS
+// ==========================================
+
+export const BatchLoungeInviteSchema = z.object({
+  friendUserIds: z
+    .array(z.string().trim().min(1, 'Friend user ID cannot be empty').max(50))
+    .min(1, 'At least one friend user ID is required')
+    .max(20, 'Maximum 20 friends allowed per batch'),
+});
+export type BatchLoungeInviteDto = z.infer<typeof BatchLoungeInviteSchema>;
+
+export const BatchLoungeInviteResultItemSchema = z.object({
+  friendUserId: z.string(),
+  status: z.enum(['sent', 'failed']),
+  invitationId: z.string().optional(),
+  error: z.string().optional(),
+});
+export type BatchLoungeInviteResultItemDto = z.infer<typeof BatchLoungeInviteResultItemSchema>;
+
+export const BatchLoungeInviteResultSchema = z.object({
+  success: z.boolean(),
+  summary: z.object({
+    total: z.number(),
+    sent: z.number(),
+    failed: z.number(),
+  }),
+  results: z.array(BatchLoungeInviteResultItemSchema),
+  roomCurrentlyFull: z.boolean().optional(),
+});
+export type BatchLoungeInviteResultDto = z.infer<typeof BatchLoungeInviteResultSchema>;
+
+export const PendingInvitationItemSchema = z.object({
+  id: z.string(),
+  roomId: z.string(),
+  room: z.object({
+    id: z.string(),
+    name: z.string(),
+    category: z.string(),
+    visibility: z.string(),
+    capacity: z.number(),
+    currentParticipantsCount: z.number(),
+    status: z.string(),
+    atmospherePreset: z.string().optional(),
+    host: z
+      .object({
+        id: z.string(),
+        username: z.string(),
+        displayName: z.string().nullable().optional(),
+        avatar: z.string().nullable().optional(),
+      })
+      .optional(),
+  }),
+  inviter: z.object({
+    id: z.string(),
+    username: z.string(),
+    displayName: z.string().nullable().optional(),
+    avatar: z.string().nullable().optional(),
+  }),
+  expiresAt: z.string(),
+  createdAt: z.string(),
+});
+export type PendingInvitationItemDto = z.infer<typeof PendingInvitationItemSchema>;
+
+export const PendingInvitationsResponseSchema = z.object({
+  items: z.array(PendingInvitationItemSchema),
+  total: z.number(),
+});
+export type PendingInvitationsResponseDto = z.infer<typeof PendingInvitationsResponseSchema>;
+
+export const DismissInvitationResponseSchema = z.object({
+  success: z.boolean(),
+  invitationId: z.string(),
+  status: z.literal('revoked'),
+});
+export type DismissInvitationResponseDto = z.infer<typeof DismissInvitationResponseSchema>;
+
+// ==========================================
 // REALTIME PAYLOAD SCHEMAS
 // ==========================================
 
@@ -146,7 +223,8 @@ export const FriendRequestAcceptedPayloadSchema = z.object({
 export type FriendRequestAcceptedPayload = z.infer<typeof FriendRequestAcceptedPayloadSchema>;
 
 export const FriendInvitationReceivedPayloadSchema = z.object({
-  invitationToken: z.string(),
+  invitationToken: z.string().optional(),
+  invitationId: z.string().optional(),
   roomId: z.string(),
   roomTitle: z.string(),
   isPrivate: z.boolean(),

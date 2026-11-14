@@ -24,8 +24,9 @@ export function InvitationNotificationListener() {
 
     const handleInvitationReceived = (payload: FriendInvitationReceivedPayload) => {
       setInvitations((prev) => {
-        // Deduplicate invitations by token
-        if (prev.some((inv) => inv.invitationToken === payload.invitationToken)) {
+        const key = payload.invitationId || payload.invitationToken;
+        // Deduplicate invitations by id or token
+        if (prev.some((inv) => (inv.invitationId || inv.invitationToken) === key)) {
           return prev;
         }
         return [payload, ...prev];
@@ -39,13 +40,21 @@ export function InvitationNotificationListener() {
     };
   }, [isAuthenticated]);
 
-  const handleDismiss = (token: string) => {
-    setInvitations((prev) => prev.filter((inv) => inv.invitationToken !== token));
+  const handleDismiss = (key?: string) => {
+    if (!key) return;
+    setInvitations((prev) =>
+      prev.filter((inv) => (inv.invitationId || inv.invitationToken) !== key)
+    );
   };
 
-  const handleAccept = (token: string) => {
-    handleDismiss(token);
-    router.push(`/invite/${token}`);
+  const handleAccept = (invitation: FriendInvitationReceivedPayload) => {
+    const key = invitation.invitationId || invitation.invitationToken;
+    handleDismiss(key);
+    if (invitation.invitationToken) {
+      router.push(`/invite/${invitation.invitationToken}`);
+    } else {
+      router.push(`/rooms/${invitation.roomId}`);
+    }
   };
 
   if (!isAuthenticated || invitations.length === 0) {
@@ -82,7 +91,7 @@ export function InvitationNotificationListener() {
               </div>
               <button
                 type="button"
-                onClick={() => handleDismiss(invitation.invitationToken)}
+                onClick={() => handleDismiss(invitation.invitationId || invitation.invitationToken)}
                 className="text-white/40 hover:text-white transition-colors p-1 rounded-md hover:bg-white/10"
                 aria-label="Dismiss invitation"
               >
@@ -113,14 +122,14 @@ export function InvitationNotificationListener() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => handleDismiss(invitation.invitationToken)}
+                onClick={() => handleDismiss(invitation.invitationId || invitation.invitationToken)}
                 className="flex-1 py-1.5 px-3 text-xs font-medium text-white/70 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
               >
                 Dismiss
               </button>
               <button
                 type="button"
-                onClick={() => handleAccept(invitation.invitationToken)}
+                onClick={() => handleAccept(invitation)}
                 className="flex-1 py-1.5 px-3 text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5"
               >
                 <Music className="w-3.5 h-3.5" />

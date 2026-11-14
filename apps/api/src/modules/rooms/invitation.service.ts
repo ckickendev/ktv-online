@@ -446,6 +446,181 @@ export class InvitationService {
 
     return { success: true, roomId: invitation.roomId.toString() };
   }
+
+  /**
+   * Validates a recipient-bound invitation record directly by invitation ID.
+   * Enforces fail-closed recipient identity check (caller must equal recipientId).
+   */
+  async validateRecipientInvitationById(
+    invitationId: string,
+    roomId: string,
+    requestingUserId: string
+  ): Promise<{ valid: boolean; error?: string }> {
+    if (
+      !Types.ObjectId.isValid(invitationId) ||
+      !Types.ObjectId.isValid(roomId) ||
+      !Types.ObjectId.isValid(requestingUserId)
+    ) {
+      return { valid: false, error: 'INVITATION_INVALID' };
+    }
+
+    const invitation = await RoomInvitationModel.findById(new Types.ObjectId(invitationId)).exec();
+
+    if (!invitation) {
+      return { valid: false, error: 'INVITATION_INVALID' };
+    }
+
+    if (invitation.roomId.toString() !== roomId.toString()) {
+      return { valid: false, error: 'INVITATION_ROOM_MISMATCH' };
+    }
+
+    // Fail-closed recipient binding verification
+    if (!invitation.recipientId || invitation.recipientId.toString() !== requestingUserId) {
+      return { valid: false, error: 'INVITATION_RECIPIENT_MISMATCH' };
+    }
+
+    if (invitation.revokedAt || invitation.status === 'revoked') {
+      return { valid: false, error: 'INVITATION_REVOKED' };
+    }
+
+    if (invitation.expiresAt < new Date()) {
+      return { valid: false, error: 'INVITATION_EXPIRED' };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Retrieves pending active invitations for a recipient inbox.
+   * Never exposes raw tokens or token hashes.
+   */
+  async getPendingInvitationsForRecipient(
+    recipientUserId: string
+  ): Promise<{ success: boolean; data?: any[]; error?: string }> {
+    if (!Types.ObjectId.isValid(recipientUserId)) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    const recipientObjectId = new Types.ObjectId(recipientUserId);
+    const now = new Date();
+
+    const invitations = await RoomInvitationModel.find({
+      recipientId: recipientObjectId,
+      status: 'active',
+      revokedAt: null,
+      expiresAt: { $gt: now },
+    })
+      .sort({ createdAt: -1 })
+      .populate({
+        path: 'roomId',
+        select: 'name category visibility capacity currentParticipantsCount status atmospherePreset ownerId',
+        populate: {
+          path: 'ownerId',
+          select: 'username displayName avatar',
+        },
+      })
+      .populate('createdBy', 'username displayName avatar')
+      .limit(50)
+      .exec();
+
+    // Filter out invitations for rooms that are closed or deleted
+    const validInvitations = invitations.filter((inv) => {
+      const room = inv.roomId as unknown as IRoomDocument | null;
+      return room && room.status !== 'closed';
+    });
+
+    const items = validInvitations.map((inv) => {
+      const room = inv.roomId as unknown as any;
+      const inviter = inv.createdBy as unknown as any;
+
+      return {
+        id: inv._id.toString(),
+        roomId: room._id.toString(),
+        room: {
+          id: room._id.toString(),
+          name: room.name,
+          category: room.category,
+          visibility: room.visibility,
+          capacity: room.capacity,
+          currentParticipantsCount: room.currentParticipantsCount,
+          status: room.status,
+          atmospherePreset: room.atmospherePreset,
+          host: room.ownerId
+            ? {
+                id: (room.ownerId._id || room.ownerId).toString(),
+                username: room.ownerId.username,
+                displayName: room.ownerId.displayName ?? null,
+                avatar: room.ownerId.avatar ?? null,
+              }
+            : undefined,
+        },
+        inviter: {
+          id: (inviter._id || inviter).toString(),
+          username: inviter.username,
+          displayName: inviter.displayName ?? null,
+          avatar: inviter.avatar ?? null,
+        },
+        expiresAt: inv.expiresAt instanceof Date ? inv.expiresAt.toISOString() : String(inv.expiresAt),
+        createdAt: inv.createdAt instanceof Date ? inv.createdAt.toISOString() : String(inv.createdAt),
+      };
+    });
+
+    return { success: true, data: items };
+  }
+
+  /**
+   * Dismisses a pending invitation (recipient only, atomic conditional operation).
+   */
+  async dismissInvitationByRecipient(
+    invitationId: string,
+    recipientUserId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!Types.ObjectId.isValid(invitationId) || !Types.ObjectId.isValid(recipientUserId)) {
+      return { success: false, error: 'INVALID_ID' };
+    }
+
+    const invitationObjectId = new Types.ObjectId(invitationId);
+    const recipientObjectId = new Types.ObjectId(recipientUserId);
+
+    const invitation = await RoomInvitationModel.findById(invitationObjectId).exec();
+    if (!invitation) {
+      return { success: false, error: 'NOT_FOUND' };
+    }
+
+    // Recipient-only check
+    if (!invitation.recipientId || invitation.recipientId.toString() !== recipientUserId) {
+      return { success: false, error: 'FORBIDDEN_NOT_RECIPIENT' };
+    }
+
+    // Idempotent: if already revoked/dismissed, return success
+    if (invitation.revokedAt || invitation.status === 'revoked') {
+      return { success: true };
+    }
+
+    // Atomic conditional update
+    const updated = await RoomInvitationModel.findOneAndUpdate(
+      {
+        _id: invitationObjectId,
+        recipientId: recipientObjectId,
+        status: 'active',
+        revokedAt: null,
+      },
+      {
+        $set: {
+          status: 'revoked',
+          revokedAt: new Date(),
+        },
+      },
+      { new: true }
+    ).exec();
+
+    if (!updated) {
+      // If concurrent dismissal won, still idempotent success
+      return { success: true };
+    }
+
+    return { success: true };
+  }
 }
 
 export const invitationService = new InvitationService();

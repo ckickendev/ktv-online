@@ -8,10 +8,13 @@ import {
   UserSearchQueryDto,
   UserSearchResultDto,
   FriendInvitationReceivedPayload,
+  BatchLoungeInviteResultDto,
+  BatchLoungeInviteResultItemDto,
 } from '@ktv/contracts';
 import { FriendshipModel, computePairKey } from './friendship.model.js';
 import { UserModel } from '../users/user.model.js';
 import { RoomModel } from '../rooms/room.model.js';
+import { RoomMembershipModel } from '../rooms/membership.model.js';
 import { invitationService } from '../rooms/invitation.service.js';
 import { globalPresenceManager } from '../../realtime/global-presence.manager.js';
 import {
@@ -20,6 +23,66 @@ import {
   emitFriendInvitationReceived,
 } from '../../realtime/friend.events.js';
 import { getSocketServer } from '../../realtime/socket.server.js';
+
+interface HostInviteRateState {
+  lastBatchTime: number;
+  recipientsTimeline: number[];
+}
+
+export class HostBatchInviteRateLimiter {
+  private hosts = new Map<string, HostInviteRateState>();
+
+  checkLimit(
+    hostUserId: string,
+    recipientCount: number
+  ): { allowed: boolean; error?: string; retryAfterSeconds?: number } {
+    const now = Date.now();
+    const state = this.hosts.get(hostUserId) || { lastBatchTime: 0, recipientsTimeline: [] };
+
+    // 1. Minimum 5 seconds between batch requests
+    const timeSinceLast = now - state.lastBatchTime;
+    if (timeSinceLast < 5000) {
+      const waitSeconds = Math.ceil((5000 - timeSinceLast) / 1000);
+      return {
+        allowed: false,
+        error: `Please wait ${waitSeconds}s before sending another batch invitation`,
+        retryAfterSeconds: waitSeconds,
+      };
+    }
+
+    // 2. Maximum 60 invited recipients per rolling 10-minute window
+    const tenMinutesAgo = now - 10 * 60 * 1000;
+    state.recipientsTimeline = state.recipientsTimeline.filter((ts) => ts > tenMinutesAgo);
+
+    if (state.recipientsTimeline.length + recipientCount > 60) {
+      const oldest = state.recipientsTimeline[0] || now;
+      const waitSeconds = Math.max(1, Math.ceil((oldest + 10 * 60 * 1000 - now) / 1000));
+      return {
+        allowed: false,
+        error: `Rate limit exceeded: maximum 60 invitations allowed per 10 minutes. Try again in ${waitSeconds}s`,
+        retryAfterSeconds: waitSeconds,
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  recordBatch(hostUserId: string, recipientCount: number): void {
+    const now = Date.now();
+    const state = this.hosts.get(hostUserId) || { lastBatchTime: 0, recipientsTimeline: [] };
+    state.lastBatchTime = now;
+    for (let i = 0; i < recipientCount; i++) {
+      state.recipientsTimeline.push(now);
+    }
+    this.hosts.set(hostUserId, state);
+  }
+
+  clear(): void {
+    this.hosts.clear();
+  }
+}
+
+export const hostBatchInviteRateLimiter = new HostBatchInviteRateLimiter();
 
 export class FriendshipService {
   /**
@@ -666,6 +729,7 @@ export class FriendshipService {
 
     const io = getSocketServer();
     const payload: FriendInvitationReceivedPayload = {
+      invitationId: createRes.data.id,
       invitationToken: inviteToken,
       roomId,
       roomTitle: room.name,
@@ -681,6 +745,213 @@ export class FriendshipService {
 
     emitFriendInvitationReceived(io, friendUserId, payload);
     return { success: true };
+  }
+
+  /**
+   * Batch invite friends to a lounge (host-only, optimized batch pipeline).
+   */
+  async inviteLoungeBatch(
+    hostUserId: string,
+    roomId: string,
+    friendUserIds: string[]
+  ): Promise<{
+    success: boolean;
+    data?: BatchLoungeInviteResultDto;
+    error?: string;
+    message?: string;
+  }> {
+    // 1. Authenticate caller (hostUserId must be valid ObjectId)
+    if (!Types.ObjectId.isValid(hostUserId)) {
+      return { success: false, error: 'UNAUTHORIZED' };
+    }
+
+    // 2. Validate request payload and room ID
+    if (!Types.ObjectId.isValid(roomId)) {
+      return { success: false, error: 'INVALID_ROOM_ID' };
+    }
+
+    if (!Array.isArray(friendUserIds) || friendUserIds.length === 0) {
+      return { success: false, error: 'RECIPIENTS_REQUIRED' };
+    }
+
+    if (friendUserIds.length > 20) {
+      return { success: false, error: 'BATCH_SIZE_EXCEEDED' };
+    }
+
+    // Validate that every recipient ID is a valid ObjectId string
+    for (const id of friendUserIds) {
+      if (!id || typeof id !== 'string' || !Types.ObjectId.isValid(id.trim())) {
+        return { success: false, error: 'INVALID_RECIPIENT_ID' };
+      }
+    }
+
+    // Deduplicate IDs deterministically
+    const uniqueRecipientIds = Array.from(new Set(friendUserIds.map((id) => id.trim())));
+
+    // Self-invitation rejection
+    if (uniqueRecipientIds.includes(hostUserId)) {
+      return { success: false, error: 'CANNOT_INVITE_SELF' };
+    }
+
+    // 3. Load the room (single query)
+    const room = await RoomModel.findById(roomId).exec();
+    if (!room) {
+      return { success: false, error: 'ROOM_NOT_FOUND' };
+    }
+
+    // 4. Verify room is not closed
+    if (room.status === 'closed') {
+      return { success: false, error: 'ROOM_CLOSED' };
+    }
+
+    // 5. Verify room is unlocked
+    if (room.isLocked) {
+      return { success: false, error: 'ROOM_LOCKED' };
+    }
+
+    // 6. Verify room.ownerId === hostUserId (host-only authorization)
+    if (room.ownerId.toString() !== hostUserId) {
+      return { success: false, error: 'FORBIDDEN_NOT_HOST' };
+    }
+
+    // 7. Verify host has active membership in the room (single query)
+    const hostMembership = await RoomMembershipModel.findOne({
+      roomId: room._id,
+      userId: new Types.ObjectId(hostUserId),
+      status: 'active',
+    }).exec();
+
+    if (!hostMembership) {
+      return { success: false, error: 'HOST_NOT_ACTIVE_MEMBER' };
+    }
+
+    // 8. Server-side rate limit check (1 batch / 5s; max 60 / 10m per host)
+    const rateLimitCheck = hostBatchInviteRateLimiter.checkLimit(hostUserId, uniqueRecipientIds.length);
+    if (!rateLimitCheck.allowed) {
+      return {
+        success: false,
+        error: 'RATE_LIMIT_EXCEEDED',
+        message: rateLimitCheck.error,
+      };
+    }
+
+    // 9. Load accepted friendships in a single batch query
+    const pairKeys = uniqueRecipientIds.map((targetId) => computePairKey(hostUserId, targetId));
+    const friendships = await FriendshipModel.find({
+      pairKey: { $in: pairKeys },
+      status: 'accepted',
+    })
+      .select('pairKey')
+      .lean()
+      .exec();
+    const acceptedPairKeySet = new Set(friendships.map((f) => f.pairKey));
+
+    // 10. Load existing active room memberships in a single batch query
+    const targetObjectIds = uniqueRecipientIds.map((id) => new Types.ObjectId(id));
+    const activeMembers = await RoomMembershipModel.find({
+      roomId: room._id,
+      userId: { $in: targetObjectIds },
+      status: 'active',
+    })
+      .select('userId')
+      .lean()
+      .exec();
+    const activeMemberIdSet = new Set(activeMembers.map((m) => m.userId.toString()));
+
+    // 11. Fetch inviter profile once for realtime notifications
+    const inviter = await UserModel.findById(hostUserId).select('username displayName avatar').lean().exec();
+
+    const io = getSocketServer();
+    const results: BatchLoungeInviteResultItemDto[] = [];
+    let sentCount = 0;
+
+    for (const recipientId of uniqueRecipientIds) {
+      const pairKey = computePairKey(hostUserId, recipientId);
+
+      if (!acceptedPairKeySet.has(pairKey)) {
+        results.push({
+          friendUserId: recipientId,
+          status: 'failed',
+          error: 'NOT_FRIENDS',
+        });
+        continue;
+      }
+
+      if (activeMemberIdSet.has(recipientId)) {
+        results.push({
+          friendUserId: recipientId,
+          status: 'failed',
+          error: 'ALREADY_IN_ROOM',
+        });
+        continue;
+      }
+
+      // Create isolated recipient-bound invitation
+      try {
+        const createRes = await invitationService.createFriendInvitation(
+          roomId,
+          hostUserId,
+          recipientId,
+          48
+        );
+
+        if (createRes.success && createRes.data) {
+          sentCount++;
+          results.push({
+            friendUserId: recipientId,
+            status: 'sent',
+            invitationId: createRes.data.id,
+          });
+
+          // Dispatch targeted realtime notification to online recipient only
+          if (io) {
+            const payload: FriendInvitationReceivedPayload = {
+              invitationId: createRes.data.id,
+              roomId,
+              roomTitle: room.name,
+              isPrivate: room.visibility === 'private',
+              inviter: {
+                id: hostUserId,
+                username: inviter?.username || '',
+                displayName: inviter?.displayName ?? null,
+                avatar: inviter?.avatar ?? null,
+              },
+              sentAt: new Date().toISOString(),
+            };
+            emitFriendInvitationReceived(io, recipientId, payload);
+          }
+        } else {
+          results.push({
+            friendUserId: recipientId,
+            status: 'failed',
+            error: createRes.error || 'CREATION_FAILED',
+          });
+        }
+      } catch {
+        results.push({
+          friendUserId: recipientId,
+          status: 'failed',
+          error: 'CREATION_FAILED',
+        });
+      }
+    }
+
+    // Record rate limit consumption only after batch execution
+    hostBatchInviteRateLimiter.recordBatch(hostUserId, sentCount);
+
+    return {
+      success: true,
+      data: {
+        success: true,
+        summary: {
+          total: uniqueRecipientIds.length,
+          sent: sentCount,
+          failed: results.filter((r) => r.status === 'failed').length,
+        },
+        results,
+        roomCurrentlyFull: room.currentParticipantsCount >= room.capacity,
+      },
+    };
   }
 }
 
