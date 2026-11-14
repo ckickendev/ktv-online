@@ -196,13 +196,15 @@ export type JoinRoomWithInviteDto = z.infer<typeof JoinRoomWithInviteSchema>;
 
 ## 6. Phased Implementation Roadmap
 
-- **Phase 1: Shared Contracts, Pending Invitations Inbox & Batch Invite API**
-  - Update `@ktv/contracts` with `BatchLoungeInviteSchema`, `PendingInvitationItemSchema`, and dual-credential `JoinRoomWithInviteSchema`.
-  - Implement `GET /api/friends/invitations/pending` and `POST /api/friends/invitations/:id/dismiss` in `invitation.service.ts` and `friendship.controller.ts`.
-  - Implement dual-credential validation in `room.service.ts` (`joinRoom`).
-  - Implement optimized batch pipeline `POST /api/friends/invite-lounge-batch/:roomId`.
+- **Phase 1: Shared Contracts, Pending Invitations Inbox & Batch Invite API** *(COMPLETE & AUDITED)*
+  - Implemented `@ktv/contracts` with `BatchLoungeInviteSchema`, `PendingInvitationItemSchema`, and dual-credential `JoinRoomWithInviteSchema`.
+  - Implemented `GET /api/friends/invitations/pending` and `POST /api/friends/invitations/:id/dismiss` in `invitation.service.ts` and `friendship.controller.ts`.
+  - Implemented dual-credential validation in `room.service.ts` and `room.controller.ts` (`joinRoom`).
+  - Implemented optimized batch pipeline `POST /api/friends/invite-lounge-batch/:roomId` with `HostBatchInviteRateLimiter`.
+  - Declared compound index `{ recipientId: 1, status: 1, expiresAt: 1 }` (`idx_room_invitations_recipient_status_expires`).
+  - Audited in Sprint 5.7.1.1 (`docs/SPRINT_5_7_PHASE_1_INDEPENDENT_AUDIT.md`): Verdict **AUDIT PASSED WITH LIMITATIONS — PHASE 2 APPROVED CONDITIONALLY**.
 
-- **Phase 2: Friend Activity UI & Realtime Synchronization**
+- **Phase 2: Friend Activity UI & Realtime Synchronization** *(NEXT UP)*
   - Implement `useFriendActivity` hook with TanStack Query and Socket.IO `friend:presence_updated` listener.
   - Implement `FriendActivitySection` on `/friends` with swimlanes: **Singing Now**, **In a Lounge**, **Available Online**, **Offline**.
   - Standardize all CTA buttons to **"Join Lounge"** (zero occurrences of "Watch Live").
@@ -229,15 +231,15 @@ export type JoinRoomWithInviteDto = z.infer<typeof JoinRoomWithInviteSchema>;
 
 1. Host can multi-select up to 20 friends and create a social karaoke lounge in a single user action.
 2. Invited friends receive instant realtime toasts with dedicated recipient-bound tokens when online.
-3. Offline friends who log in later can view and accept invitations via `GET /api/friends/invitations/pending` without plaintext token leakage.
-4. `joinRoom` supports private lounge entry via either `inviteToken` or `invitationId`.
+3. Offline friends who log in later can view and accept invitations via `GET /api/friends/invitations/pending` without plaintext token leakage *(Verified in Phase 1)*.
+4. `joinRoom` supports private lounge entry via either `inviteToken` or `invitationId` *(Verified in Phase 1)*.
 5. Active friend activity (Singing Now, In a Lounge, Available Online, Offline) updates in real time on `/friends` without page refresh.
 6. Private room titles, room IDs, and song titles remain strictly masked to non-occupants.
 7. Public room activity offers a direct one-click **"Join Lounge"** flow (zero "Watch Live" terminology).
 8. Session recaps are strictly restricted to completed sessions (`status === 'completed'`); host-disconnected rooms show an away notice without generating invalid recaps.
-9. Zero database migrations executed; MongoDB database name remains `test`.
-10. Zero test file mutations or test runners executed.
-11. `pnpm typecheck` and `pnpm lint` pass with 0 errors across all monorepo packages.
+9. Zero database migrations executed; MongoDB database name remains `test` *(Verified in Phase 1)*.
+10. Zero test file mutations or test runners executed *(Verified in Phase 1)*.
+11. `pnpm typecheck` and `pnpm lint` pass with 0 errors across all monorepo packages *(Verified in Phase 1)*.
 
 ---
 
@@ -250,12 +252,15 @@ export type JoinRoomWithInviteDto = z.infer<typeof JoinRoomWithInviteSchema>;
 
 ---
 
-## 9. Final Pre-Implementation Verdict
+## 9. Current Phase Status & Audit Verdict
 
+**Phase 1 Implementation:** `7f12209` (Completed & Statically Verified)  
+**Independent Audit:** Sprint 5.7.1.1 (`docs/SPRINT_5_7_PHASE_1_INDEPENDENT_AUDIT.md`)  
 **Verdict:**
-### **READY FOR PHASE 1 WITH DOCUMENTED LIMITATIONS**
+### **AUDIT PASSED WITH LIMITATIONS — PHASE 2 APPROVED CONDITIONALLY**
 
-**Summary of Limitations:**
-1. Single-node in-memory presence tracking is retained (Redis is deliberately omitted under HIST-03).
-2. Abandoned room sweeps remain unautomated (retained under HIST-01); session recaps are strictly restricted to explicitly completed sessions.
+**Summary of Conditions & Limitations:**
+1. Single-node in-memory presence and batch rate limiting are retained (Redis is deliberately omitted under **HIST-03**).
+2. Abandoned room sweeps remain unautomated (retained under **HIST-01**); session recaps are strictly restricted to explicitly completed sessions.
 3. Offline invitation delivery is handled via the authenticated `GET /api/friends/invitations/pending` inbox and dual-credential room join, fully avoiding plaintext raw token persistence.
+4. In production/staging with `autoIndex: false`, the declared compound index `{ recipientId: 1, status: 1, expiresAt: 1 }` must be verified or created explicitly.
