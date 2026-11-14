@@ -6,15 +6,20 @@ import { FriendshipDto } from '@ktv/contracts';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { PresenceStatusBadge } from './presence-status-badge';
 import { useRemoveFriend } from '../hooks/use-friends';
-import { LogIn, Lock, Music2, UserMinus, Loader2 } from 'lucide-react';
+import { LogIn, Lock, Music2, UserMinus, Loader2, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface FriendActivityCardProps {
   friendship: FriendshipDto;
   section: 'singing' | 'lounge' | 'online' | 'offline';
+  onInviteToSession?: (friendId: string) => void;
 }
 
-export function FriendActivityCard({ friendship, section }: FriendActivityCardProps) {
+export function FriendActivityCard({
+  friendship,
+  section,
+  onInviteToSession,
+}: FriendActivityCardProps) {
   const [showConfirmUnfriend, setShowConfirmUnfriend] = useState(false);
   const removeFriendMutation = useRemoveFriend();
 
@@ -135,6 +140,18 @@ export function FriendActivityCard({ friendship, section }: FriendActivityCardPr
             <Lock className="w-3 h-3 text-slate-400" />
             <span>Private</span>
           </div>
+        )}
+
+        {/* Invite CTA for online friends */}
+        {isOnline && onInviteToSession && (
+          <button
+            type="button"
+            onClick={() => onInviteToSession(friend.id)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/30 text-xs font-semibold transition-all active:scale-95 shadow-sm"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Invite</span>
+          </button>
         )}
 
         {/* Unfriend Options (preserving friendship management actions) */}

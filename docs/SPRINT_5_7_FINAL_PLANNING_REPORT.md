@@ -214,13 +214,15 @@ export type JoinRoomWithInviteDto = z.infer<typeof JoinRoomWithInviteSchema>;
   - Standardized all CTA buttons to **"Join Lounge"** with zero occurrences of "Watch Live" across the entire codebase.
   - Static typecheck (`pnpm typecheck`) and linter (`pnpm lint`) passing with zero errors.
 
-- **Phase 3: Multi-Friend Session Starter Dialog** *(NEXT UP)*
-  - Implement `StartSocialSessionDialog` component on `/friends`.
-  - Multi-select checklist of accepted friends ordered by live presence.
-  - Room parameter inputs (Name, Category, Atmosphere, Visibility).
-  - Submits room creation and triggers batch invitation dispatch in one cohesive flow.
+- **Phase 3: Multi-Friend Session Starter Dialog** *(COMPLETED)*
+  - Implemented `useSocialSessionStarter` hook orchestrating selection (max 20 friends), dual mode (New Lounge vs Existing Eligible Lounge), room creation, and batch invitation dispatch.
+  - Implemented `StartSocialSessionDialog` component on `/friends` with search filter, presence-ordered friend checklist, atmosphere and visibility settings, and partial failure retry.
+  - Added "Start a Session" CTA to `FriendActivitySection` header and "Invite" action button to `FriendActivityCard` for online friends.
+  - Reused `POST /api/friends/invite-lounge-batch/:roomId` and `POST /api/rooms` with zero backend/database mutations.
+  - Zero occurrences of "Watch Live" across apps and packages.
+  - Static typecheck (`pnpm typecheck`) and linter (`pnpm lint`) passing with zero errors.
 
-- **Phase 4: Rooms Live Bar & Contextual Polish**
+- **Phase 4: Rooms Live Bar & Contextual Polish** *(NEXT UP)*
   - Implement `FriendsLiveBar` horizontal carousel strip on `/rooms`.
   - Integrate pending invitations toast/banner into `InvitationNotificationListener` for offline-to-online parity.
   - Ensure multi-tab synchronization and reconnect invalidation.

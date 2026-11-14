@@ -8,6 +8,7 @@ import {
   UserSearchQueryDto,
   PendingInvitationsResponseDto,
   DismissInvitationResponseDto,
+  BatchLoungeInviteResultDto,
 } from '@ktv/contracts';
 
 export interface PaginatedFriendsResponse {
@@ -118,6 +119,15 @@ export const friendsApi = {
   async sendLoungeInvite(roomId: string, friendUserId: string): Promise<{ success: boolean }> {
     return apiClient.post<{ success: boolean }>(`/friends/rooms/${roomId}/invite`, {
       friendUserId,
+    });
+  },
+
+  /**
+   * Send batch lounge invitations to multiple friends (up to 20).
+   */
+  async inviteLoungeBatch(roomId: string, friendUserIds: string[]): Promise<BatchLoungeInviteResultDto> {
+    return apiClient.post<BatchLoungeInviteResultDto>(`/friends/invite-lounge-batch/${roomId}`, {
+      friendUserIds,
     });
   },
 
