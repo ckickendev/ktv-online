@@ -60,6 +60,8 @@ export const UserPreferencesDtoSchema = z.object({
   showGifts: z.boolean().default(true),
   hasCompletedOnboarding: z.boolean().default(false),
   hasDismissedRoomGuide: z.boolean().default(false),
+  isHistoryPublic: z.boolean().default(false),
+  isSessionsPublic: z.boolean().default(false),
 });
 export type UserPreferencesDto = z.infer<typeof UserPreferencesDtoSchema>;
 
@@ -73,6 +75,8 @@ export const UpdateUserPreferencesSchema = z.object({
   showGifts: z.boolean().optional(),
   hasCompletedOnboarding: z.boolean().optional(),
   hasDismissedRoomGuide: z.boolean().optional(),
+  isHistoryPublic: z.boolean().optional(),
+  isSessionsPublic: z.boolean().optional(),
 });
 export type UpdateUserPreferencesDto = z.infer<typeof UpdateUserPreferencesSchema>;
 
@@ -86,4 +90,6 @@ export const DEFAULT_USER_PREFERENCES: UserPreferencesDto = {
   showGifts: true,
   hasCompletedOnboarding: false,
   hasDismissedRoomGuide: false,
+  isHistoryPublic: false,
+  isSessionsPublic: false,
 };

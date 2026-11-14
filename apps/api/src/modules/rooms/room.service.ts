@@ -28,6 +28,8 @@ import {
 } from '../../realtime/karaoke.events.js';
 import { logger } from '../../utils/logger.js';
 import { invitationService } from './invitation.service.js';
+import { karaokeHistoryService } from '../history/history.service.js';
+import { UserModel } from '../users/user.model.js';
 
 const roomReconciliationService = new RoomReconciliationService();
 
@@ -179,6 +181,21 @@ export class RoomService {
       joinedAt: new Date(),
     });
 
+    // Record session initialization for history
+    try {
+      const ownerUser = await UserModel.findById(ownerId).select('username displayName avatar').exec();
+      if (ownerUser) {
+        await karaokeHistoryService.recordSessionStarted(savedRoom, {
+          id: ownerId,
+          username: ownerUser.username,
+          displayName: ownerUser.displayName,
+          avatar: ownerUser.avatar,
+        });
+      }
+    } catch (err) {
+      logger.error({ err, roomId: savedRoom._id }, 'Error recording session initialization on room creation');
+    }
+
     return savedRoom;
   }
 
@@ -313,6 +330,13 @@ export class RoomService {
         }
       } catch (err) {
         logger.error({ err, roomId: id }, 'Error cleaning up karaoke for closed room');
+      }
+
+      // 5. Conclude authoritative karaoke session in history
+      try {
+        await karaokeHistoryService.recordSessionClosed(id, 'host_closed');
+      } catch (err) {
+        logger.error({ err, roomId: id }, 'Error closing karaoke session history');
       }
     }
 
@@ -568,6 +592,18 @@ export class RoomService {
           { id: userId, username: memberUsername, avatar: memberAvatar, role: membership!.role },
           `${memberUsername} joined the lounge`
         );
+
+        // Record participant in session history
+        await karaokeHistoryService.recordParticipantJoined(
+          roomId,
+          {
+            id: userId,
+            username: memUser?.username || memberUsername,
+            displayName: memUser?.displayName || null,
+            avatar: memberAvatar,
+          },
+          membership!.role as any
+        );
       } catch {
         // Non-blocking
       }
@@ -655,6 +691,9 @@ export class RoomService {
         { id: userId, username, avatar, role: updatedMembership.role },
         `${username} left the lounge`
       );
+
+      // Record participant departure in session history
+      await karaokeHistoryService.recordParticipantLeft(roomId, userId);
     } catch {
       // Non-blocking
     }

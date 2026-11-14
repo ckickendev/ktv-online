@@ -10,4 +10,5 @@ export * from './reaction.js';
 export * from './gift.js';
 export * from './preferences.js';
 export * from './invitation.js';
+export * from './history.js';
 

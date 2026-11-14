@@ -116,6 +116,10 @@ export class UserService {
         user.preferences.hasCompletedOnboarding ?? DEFAULT_USER_PREFERENCES.hasCompletedOnboarding,
       hasDismissedRoomGuide:
         user.preferences.hasDismissedRoomGuide ?? DEFAULT_USER_PREFERENCES.hasDismissedRoomGuide,
+      isHistoryPublic:
+        user.preferences.isHistoryPublic ?? DEFAULT_USER_PREFERENCES.isHistoryPublic,
+      isSessionsPublic:
+        user.preferences.isSessionsPublic ?? DEFAULT_USER_PREFERENCES.isSessionsPublic,
     };
   }
 
@@ -135,6 +139,10 @@ export class UserService {
       updateObj['preferences.hasCompletedOnboarding'] = data.hasCompletedOnboarding;
     if (data.hasDismissedRoomGuide !== undefined)
       updateObj['preferences.hasDismissedRoomGuide'] = data.hasDismissedRoomGuide;
+    if (data.isHistoryPublic !== undefined)
+      updateObj['preferences.isHistoryPublic'] = data.isHistoryPublic;
+    if (data.isSessionsPublic !== undefined)
+      updateObj['preferences.isSessionsPublic'] = data.isSessionsPublic;
 
     const updated = await UserModel.findByIdAndUpdate(
       userId,
@@ -162,6 +170,10 @@ export class UserService {
         updated.preferences.hasCompletedOnboarding ?? DEFAULT_USER_PREFERENCES.hasCompletedOnboarding,
       hasDismissedRoomGuide:
         updated.preferences.hasDismissedRoomGuide ?? DEFAULT_USER_PREFERENCES.hasDismissedRoomGuide,
+      isHistoryPublic:
+        updated.preferences.isHistoryPublic ?? DEFAULT_USER_PREFERENCES.isHistoryPublic,
+      isSessionsPublic:
+        updated.preferences.isSessionsPublic ?? DEFAULT_USER_PREFERENCES.isSessionsPublic,
     };
   }
 }

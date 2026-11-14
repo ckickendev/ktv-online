@@ -91,6 +91,14 @@ const UserSchema = new Schema<IUserDocument>(
         type: Boolean,
         default: false,
       },
+      isHistoryPublic: {
+        type: Boolean,
+        default: false,
+      },
+      isSessionsPublic: {
+        type: Boolean,
+        default: false,
+      },
     },
   },
   {

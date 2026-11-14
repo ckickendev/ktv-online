@@ -22,6 +22,7 @@ import {
   UnsupportedTopologyError,
 } from '../../database/transaction.js';
 import { logger } from '../../utils/logger.js';
+import { karaokeHistoryService } from '../history/history.service.js';
 
 export interface IPlaybackScheduler {
   schedule(
@@ -424,6 +425,28 @@ export class KaraokeService {
           queueItem._id.toString(),
           songDurationMs
         );
+
+        // Record authoritative performance start in history
+        karaokeHistoryService
+          .recordPerformanceStarted({
+            queueItemId: queueItem._id,
+            roomId: roomObjectId,
+            songId: songObjectId,
+            songTitle: song.title,
+            artist: song.artist,
+            thumbnailUrl: song.thumbnailUrl,
+            genre: song.genre,
+            language: song.language,
+            durationMs: songDurationMs,
+            singerId: singerObjectId,
+            singerUsername: singerUser?.username || 'singer',
+            singerDisplayName: singerUser?.displayName || null,
+            singerAvatar: singerUser?.avatar || null,
+            requestedById: userObjectId,
+            roomName: room.name,
+            startedAt: now,
+          })
+          .catch((err) => logger.error({ err }, 'Error recording direct performance start'));
       } catch (err: any) {
         // If duplicate key error (11000) on { roomId: 1, status: 'playing' },
         // another concurrent request claimed stage activation during this exact tick.
@@ -927,6 +950,10 @@ export class KaraokeService {
               { $set: { status: 'skipped', position: 0, completedAt: now } },
               { session: session || undefined }
             ).exec();
+
+            karaokeHistoryService
+              .recordPerformanceFinished(playbackState.currentQueueItemId, 'skipped')
+              .catch((err) => logger.error({ err }, 'Error recording stopped performance in history'));
           }
 
           const nextQueueVer = (playbackState.queueVersion || 1) + 1;
@@ -1058,6 +1085,10 @@ export class KaraokeService {
           { $set: { status: isSkip ? 'skipped' : 'completed', position: 0, completedAt: now } },
           { session: session || undefined }
         ).exec();
+
+        karaokeHistoryService
+          .recordPerformanceFinished(playbackState.currentQueueItemId, isSkip ? 'skipped' : 'completed')
+          .catch((err) => logger.error({ err }, 'Error recording performance outcome in advanceToNextTrack'));
       }
 
       // 3. Selection loop: find earliest valid queued item whose requester is still an active member
@@ -1201,6 +1232,30 @@ export class KaraokeService {
           songDurationMs
         );
 
+        // Record authoritative performance start in history
+        const performerDoc = (claimedItem.singer || claimedItem.requestedBy) as any;
+        const performerId = performerDoc?._id || claimedItem.singer || claimedItem.requestedBy;
+        karaokeHistoryService
+          .recordPerformanceStarted({
+            queueItemId: claimedItem._id,
+            roomId: roomObjectId,
+            songId: selectedSong._id,
+            songTitle: selectedSong.title,
+            artist: selectedSong.artist,
+            thumbnailUrl: selectedSong.thumbnailUrl,
+            genre: selectedSong.genre,
+            language: selectedSong.language,
+            durationMs: songDurationMs,
+            singerId: performerId,
+            singerUsername: performerDoc?.username || 'singer',
+            singerDisplayName: performerDoc?.displayName || null,
+            singerAvatar: performerDoc?.avatar || null,
+            requestedById: (claimedItem.requestedBy as any)?._id || claimedItem.requestedBy,
+            roomName: room.name,
+            startedAt: now,
+          })
+          .catch((err) => logger.error({ err }, 'Error recording performance start in advanceToNextTrack'));
+
         logger.info(
           {
             roomId,
@@ -1305,6 +1360,16 @@ export class KaraokeService {
   public async handleRoomClosed(roomId: string): Promise<void> {
     const roomObjectId = new Types.ObjectId(roomId);
     this.scheduler?.cancel(roomId);
+
+    // Conclude active playing performance if interrupted by room closure
+    try {
+      const activeState = await RoomPlaybackStateModel.findOne({ roomId: roomObjectId }).exec();
+      if (activeState?.currentQueueItemId) {
+        await karaokeHistoryService.recordPerformanceFinished(activeState.currentQueueItemId, 'interrupted');
+      }
+    } catch (err) {
+      logger.error({ err, roomId }, 'Error recording interrupted performance on room closed');
+    }
 
     await runInTransaction(async (session: ClientSession | null) => {
       // Stop playback and advance versions

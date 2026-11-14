@@ -43,4 +43,11 @@ export const queryKeys = {
     active: (roomId: string) => [...queryKeys.invitations.all, 'active', roomId] as const,
     preview: (token: string) => [...queryKeys.invitations.all, 'preview', token] as const,
   },
+  history: {
+    all: ['history'] as const,
+    mySongs: (params?: Record<string, unknown>) => [...queryKeys.history.all, 'my-songs', params ?? {}] as const,
+    mySessions: (params?: Record<string, unknown>) => [...queryKeys.history.all, 'my-sessions', params ?? {}] as const,
+    myStats: () => [...queryKeys.history.all, 'my-stats'] as const,
+    sessionRecap: (id: string) => [...queryKeys.history.all, 'session-recap', id] as const,
+  },
 };
