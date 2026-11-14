@@ -9,4 +9,5 @@ export * from './karaoke.js';
 export * from './reaction.js';
 export * from './gift.js';
 export * from './preferences.js';
+export * from './invitation.js';
 

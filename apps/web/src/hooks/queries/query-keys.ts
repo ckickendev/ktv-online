@@ -38,4 +38,9 @@ export const queryKeys = {
     lyrics: (songId: string) => [...queryKeys.karaoke.all, 'lyrics', songId] as const,
     audio: (songId: string) => [...queryKeys.karaoke.all, 'audio', songId] as const,
   },
+  invitations: {
+    all: ['invitations'] as const,
+    active: (roomId: string) => [...queryKeys.invitations.all, 'active', roomId] as const,
+    preview: (token: string) => [...queryKeys.invitations.all, 'preview', token] as const,
+  },
 };

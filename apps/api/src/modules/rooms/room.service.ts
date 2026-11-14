@@ -27,6 +27,7 @@ import {
   broadcastKaraokePlaybackUpdated,
 } from '../../realtime/karaoke.events.js';
 import { logger } from '../../utils/logger.js';
+import { invitationService } from './invitation.service.js';
 
 const roomReconciliationService = new RoomReconciliationService();
 
@@ -53,7 +54,12 @@ export type JoinRoomResult =
         | 'ROOM_LOCKED'
         | 'PRIVATE_ROOM'
         | 'JOIN_FAILED'
-        | 'FORBIDDEN_KICKED';
+        | 'FORBIDDEN_KICKED'
+        | 'INVITATION_REQUIRED'
+        | 'INVITATION_INVALID'
+        | 'INVITATION_EXPIRED'
+        | 'INVITATION_REVOKED'
+        | 'INVITATION_ROOM_MISMATCH';
     };
 
 export type LeaveRoomResult =
@@ -313,7 +319,7 @@ export class RoomService {
     return room;
   }
 
-  async joinRoom(roomId: string, userId: string): Promise<JoinRoomResult> {
+  async joinRoom(roomId: string, userId: string, inviteToken?: string): Promise<JoinRoomResult> {
     if (!Types.ObjectId.isValid(roomId) || !Types.ObjectId.isValid(userId)) {
       return { success: false, error: 'ROOM_NOT_FOUND' };
     }
@@ -321,17 +327,13 @@ export class RoomService {
     const roomObjectId = new Types.ObjectId(roomId);
     const userObjectId = new Types.ObjectId(userId);
 
-    // 1. Validate room existence, status, and privacy policy
+    // 1. Validate room existence and status
     const room = await RoomModel.findById(roomObjectId).exec();
     if (!room) {
       return { success: false, error: 'ROOM_NOT_FOUND' };
     }
     if (room.status === 'closed') {
       return { success: false, error: 'ROOM_CLOSED' };
-    }
-    // Private room access rule: only owner can join without direct invitation
-    if (room.visibility === 'private' && room.ownerId.toString() !== userId) {
-      return { success: false, error: 'PRIVATE_ROOM' };
     }
 
     // 2. Check if user already has an active membership (Idempotent Join)
@@ -347,12 +349,7 @@ export class RoomService {
       return { success: true, membership: existingMembership, alreadyJoined: true };
     }
 
-    // 2a. Room lock check: locked rooms reject new entries from non-owners
-    if (room.isLocked && room.ownerId.toString() !== userId) {
-      return { success: false, error: 'ROOM_LOCKED' };
-    }
-
-    // 2b. Moderation check: Kicked users cannot rejoin unless reinstated by host
+    // 2a. Moderation check: Kicked users cannot rejoin unless reinstated by host (even with invite)
     const kickedCheck = await RoomMembershipModel.findOne({
       roomId: roomObjectId,
       userId: userObjectId,
@@ -362,6 +359,32 @@ export class RoomService {
 
     if (kickedCheck && room.ownerId.toString() !== userId) {
       return { success: false, error: 'FORBIDDEN_KICKED' };
+    }
+
+    // 2b. Room lock check: locked rooms reject new entries from non-owners
+    if (room.isLocked && room.ownerId.toString() !== userId) {
+      return { success: false, error: 'ROOM_LOCKED' };
+    }
+
+    // 2c. Private room access validation: non-owners must present a valid, active invitation
+    if (room.visibility === 'private' && room.ownerId.toString() !== userId) {
+      if (!inviteToken) {
+        return { success: false, error: 'PRIVATE_ROOM' };
+      }
+      const inviteValidation = await invitationService.validateInvitation(inviteToken, roomId);
+      if (!inviteValidation.valid) {
+        const err = inviteValidation.error;
+        if (
+          err === 'INVITATION_INVALID' ||
+          err === 'INVITATION_EXPIRED' ||
+          err === 'INVITATION_REVOKED' ||
+          err === 'INVITATION_ROOM_MISMATCH' ||
+          err === 'INVITATION_REQUIRED'
+        ) {
+          return { success: false, error: err };
+        }
+        return { success: false, error: 'INVITATION_INVALID' };
+      }
     }
 
     // 3. Atomic capacity check and reservation (must not be closed)

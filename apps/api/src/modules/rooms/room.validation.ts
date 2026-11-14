@@ -6,4 +6,6 @@ export {
   MuteMemberSchema,
   TransferHostSchema,
   LockRoomSchema,
+  CreateInvitationSchema,
+  JoinRoomWithInviteSchema,
 } from '@ktv/contracts';

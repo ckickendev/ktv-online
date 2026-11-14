@@ -119,7 +119,10 @@ export class RoomController {
         return;
       }
 
-      const result = await roomService.joinRoom(roomId, req.user.id);
+      const inviteToken =
+        typeof req.body?.inviteToken === 'string' ? req.body.inviteToken.trim() : undefined;
+
+      const result = await roomService.joinRoom(roomId, req.user.id, inviteToken);
       if (!result.success) {
         switch (result.error) {
           case 'ROOM_NOT_FOUND':
@@ -131,8 +134,26 @@ export class RoomController {
           case 'ROOM_FULL':
             sendError(res, 'Room has reached maximum capacity', 409);
             return;
+          case 'ROOM_LOCKED':
+            sendError(res, 'Room is locked by host', 403);
+            return;
           case 'PRIVATE_ROOM':
             sendError(res, 'Cannot join private room without direct invitation', 403);
+            return;
+          case 'INVITATION_REQUIRED':
+            sendError(res, 'Invitation token is required for this private room', 403);
+            return;
+          case 'INVITATION_INVALID':
+            sendError(res, 'Invitation link is invalid', 403);
+            return;
+          case 'INVITATION_EXPIRED':
+            sendError(res, 'Invitation link has expired', 410);
+            return;
+          case 'INVITATION_REVOKED':
+            sendError(res, 'Invitation link has been revoked by host', 410);
+            return;
+          case 'INVITATION_ROOM_MISMATCH':
+            sendError(res, 'Invitation link does not belong to this room', 400);
             return;
           case 'FORBIDDEN_KICKED':
             sendError(res, 'You were removed from this room by the host and cannot rejoin', 403);

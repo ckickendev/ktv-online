@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { roomController } from './room.controller.js';
+import { invitationController } from './invitation.controller.js';
 import { validateBody, validateQuery } from '../../middlewares/validate.middleware.js';
 import { requireAuth, optionalAuth, requireRole } from '../../middlewares/auth.middleware.js';
 import {
@@ -10,6 +11,8 @@ import {
   MuteMemberSchema,
   TransferHostSchema,
   LockRoomSchema,
+  CreateInvitationSchema,
+  JoinRoomWithInviteSchema,
 } from './room.validation.js';
 
 export const roomRoutes = Router();
@@ -66,9 +69,36 @@ roomRoutes.post('/:id/close', requireAuth, (req, res, next) => {
   roomController.closeRoom(req, res, next);
 });
 
-roomRoutes.post('/:id/join', requireAuth, (req, res, next) => {
-  roomController.joinRoom(req, res, next);
+// Room invitation management (host only)
+roomRoutes.post(
+  '/:id/invitations',
+  requireAuth,
+  validateBody(CreateInvitationSchema),
+  (req, res, next) => {
+    invitationController.createInvitation(req, res, next);
+  }
+);
+
+roomRoutes.get('/:id/invitations', requireAuth, (req, res, next) => {
+  invitationController.getActiveInvitation(req, res, next);
 });
+
+roomRoutes.post('/:id/invitations/revoke', requireAuth, (req, res, next) => {
+  invitationController.revokeInvitation(req, res, next);
+});
+
+roomRoutes.delete('/:id/invitations', requireAuth, (req, res, next) => {
+  invitationController.revokeInvitation(req, res, next);
+});
+
+roomRoutes.post(
+  '/:id/join',
+  requireAuth,
+  validateBody(JoinRoomWithInviteSchema),
+  (req, res, next) => {
+    roomController.joinRoom(req, res, next);
+  }
+);
 
 roomRoutes.post('/:id/leave', requireAuth, (req, res, next) => {
   roomController.leaveRoom(req, res, next);

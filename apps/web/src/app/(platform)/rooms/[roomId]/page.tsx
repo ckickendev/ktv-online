@@ -38,6 +38,7 @@ import { KickMemberDialog } from '@/components/rooms/kick-member-dialog';
 import { TransferHostDialog } from '@/components/rooms/transfer-host-dialog';
 import { RoomIdentityDialog } from '@/components/rooms/room-identity-dialog';
 import { RoomCustomizationDialog } from '@/components/rooms/room-customization-dialog';
+import { InviteFriendsDialog } from '@/components/rooms/invite-friends-dialog';
 import {
   useJoinRoom,
   useLeaveRoom,
@@ -102,6 +103,7 @@ export default function RoomDetailPage() {
   // Room Identity & Atmosphere Customization Dialogs
   const [isIdentityOpen, setIsIdentityOpen] = useState(false);
   const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
   const updateRoomMutation = useUpdateRoom();
   const atmosphere = useRoomAtmosphere({ authoritativePreset: room?.atmospherePreset });
 
@@ -542,6 +544,16 @@ export default function RoomDetailPage() {
                       <Paintbrush className="w-3.5 h-3.5" />
                       <span className="hidden md:inline">Vibe</span>
                     </button>
+                    <button
+                      type="button"
+                      data-testid="invite-friends-header-button"
+                      onClick={() => setIsInviteOpen(true)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 text-xs font-semibold border border-cyan-500/30 transition-all active:scale-95"
+                      title="Invite Friends to Lounge"
+                    >
+                      <Share2 className="w-3.5 h-3.5 text-cyan-400" />
+                      <span className="hidden md:inline">Invite</span>
+                    </button>
                     <Link
                       href="/my-rooms"
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium border border-white/10 transition-colors"
@@ -580,13 +592,9 @@ export default function RoomDetailPage() {
 
             {/* Share / Invite Button */}
             <button
-              onClick={() => {
-                if (typeof window !== 'undefined') {
-                  navigator.clipboard?.writeText(window.location.href);
-                }
-              }}
+              onClick={() => setIsInviteOpen(true)}
               className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors border border-white/5"
-              title="Copy link to invite friends"
+              title="Invite friends or share lounge"
             >
               <Share2 className="w-3.5 h-3.5" />
             </button>
@@ -1260,6 +1268,14 @@ export default function RoomDetailPage() {
         sendError={virtualGifts.sendError}
         onSendGift={virtualGifts.sendGift}
         onClearError={virtualGifts.clearError}
+      />
+
+      {/* Invite Friends / Social Invitations Dialog (Sprint 5.0) */}
+      <InviteFriendsDialog
+        isOpen={isInviteOpen}
+        onClose={() => setIsInviteOpen(false)}
+        room={room}
+        isHost={isHost}
       />
     </div>
   );
