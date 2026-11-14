@@ -7,6 +7,8 @@ import { registerRoomEvents, getRoomChannel } from './room.events.js';
 import { registerChatEvents } from './chat.events.js';
 import { registerStageReactionEvents } from './stage-reaction.events.js';
 import { registerGiftEvents } from './gift.events.js';
+import { registerFriendEvents, getUserChannel } from './friend.events.js';
+import { globalPresenceManager } from './global-presence.manager.js';
 import {
   registerKaraokeEvents,
   broadcastKaraokeQueueUpdated,
@@ -48,10 +50,21 @@ export function createSocketServer(
 
   // Connection handler
   io.on('connection', (socket) => {
+    const userId = socket.data.user.id;
     logger.info(
-      { socketId: socket.id, userId: socket.data.user.id, username: socket.data.user.username },
+      { socketId: socket.id, userId, username: socket.data.user.username },
       '⚡ Socket.IO client connected and authenticated'
     );
+
+    // Join per-user channel for targeted direct updates
+    socket.join(getUserChannel(userId));
+
+    // Register into global presence tracker
+    globalPresenceManager.addSocket(userId, socket.id);
+
+    socket.on('disconnect', () => {
+      globalPresenceManager.removeSocket(userId, socket.id);
+    });
 
     // Register room lifecycle and presence event handlers
     registerRoomEvents(io, socket);
@@ -67,6 +80,9 @@ export function createSocketServer(
 
     // Register virtual gifts & performer appreciation
     registerGiftEvents(io, socket);
+
+    // Register friend presence and social interaction event handlers
+    registerFriendEvents(io, socket);
   });
 
   ioInstance = io;

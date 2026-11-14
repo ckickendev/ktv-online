@@ -342,6 +342,20 @@ export class RoomPresenceManager {
   }
 
   /**
+   * Check if a user is currently present in any active room.
+   */
+  getUserRoom(userId: string): { roomId: string; role: 'host' | 'member' | 'viewer' } | null {
+    for (const [roomId, userMap] of this.roomUsers.entries()) {
+      const userSockets = userMap.get(userId);
+      if (userSockets && userSockets.size > 0) {
+        const details = this.userDetails.get(userId);
+        return { roomId, role: details?.role || 'member' };
+      }
+    }
+    return null;
+  }
+
+  /**
    * Reset all presence state.
    */
   clear(): void {

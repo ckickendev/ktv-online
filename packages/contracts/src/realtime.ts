@@ -151,6 +151,7 @@ export const SOCKET_EVENTS = {
     KARAOKE_CLOCK_SYNC: 'karaoke:clock:sync',
     STAGE_REACTION_SEND: 'stage:reaction:send',
     GIFT_SEND: 'gift:send',
+    FRIEND_PRESENCE_REQUEST: 'friend:presence:request',
   },
   SERVER: {
     PRESENCE_SNAPSHOT: 'room:presence:snapshot',
@@ -177,6 +178,10 @@ export const SOCKET_EVENTS = {
     KARAOKE_ERROR: 'karaoke:error',
     STAGE_REACTION_NEW: 'stage:reaction:new',
     GIFT_NEW: 'gift:new',
+    FRIEND_PRESENCE_UPDATED: 'friend:presence:updated',
+    FRIEND_REQUEST_RECEIVED: 'friend:request:received',
+    FRIEND_REQUEST_ACCEPTED: 'friend:request:accepted',
+    FRIEND_INVITATION_RECEIVED: 'friend:invitation:received',
     ERROR: 'error',
   },
 } as const;

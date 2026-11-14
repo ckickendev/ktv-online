@@ -50,6 +50,10 @@ export const LANGUAGE_METADATA: Record<MusicLanguage, { label: string; flag: str
   zh: { label: 'Chinese', flag: '🇨🇳' },
 };
 
+export const PRESENCE_VISIBILITIES = ['everyone', 'friends', 'none'] as const;
+export type PresenceVisibility = (typeof PRESENCE_VISIBILITIES)[number];
+export const PresenceVisibilitySchema = z.enum(PRESENCE_VISIBILITIES);
+
 export const UserPreferencesDtoSchema = z.object({
   preferredGenres: z.array(MusicGenreSchema).default(['pop']),
   preferredLanguages: z.array(MusicLanguageSchema).default(['vi', 'en']),
@@ -62,6 +66,7 @@ export const UserPreferencesDtoSchema = z.object({
   hasDismissedRoomGuide: z.boolean().default(false),
   isHistoryPublic: z.boolean().default(false),
   isSessionsPublic: z.boolean().default(false),
+  presenceVisibility: PresenceVisibilitySchema.default('friends'),
 });
 export type UserPreferencesDto = z.infer<typeof UserPreferencesDtoSchema>;
 
@@ -77,6 +82,7 @@ export const UpdateUserPreferencesSchema = z.object({
   hasDismissedRoomGuide: z.boolean().optional(),
   isHistoryPublic: z.boolean().optional(),
   isSessionsPublic: z.boolean().optional(),
+  presenceVisibility: PresenceVisibilitySchema.optional(),
 });
 export type UpdateUserPreferencesDto = z.infer<typeof UpdateUserPreferencesSchema>;
 
@@ -92,4 +98,5 @@ export const DEFAULT_USER_PREFERENCES: UserPreferencesDto = {
   hasDismissedRoomGuide: false,
   isHistoryPublic: false,
   isSessionsPublic: false,
+  presenceVisibility: 'friends',
 };

@@ -99,6 +99,11 @@ const UserSchema = new Schema<IUserDocument>(
         type: Boolean,
         default: false,
       },
+      presenceVisibility: {
+        type: String,
+        enum: ['everyone', 'friends', 'none'],
+        default: 'friends',
+      },
     },
   },
   {

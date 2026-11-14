@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Mic2, Radio, Compass, User, Menu, X, PlusCircle, LogOut, LogIn, UserPlus } from 'lucide-react';
+import { Mic2, Radio, Compass, User, Menu, X, PlusCircle, LogOut, LogIn, UserPlus, Users } from 'lucide-react';
 import { UserAvatar } from '../shared/user-avatar';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -19,6 +19,7 @@ export function AppHeader() {
     ...(isAuthenticated
       ? [
           { href: '/my-rooms', label: 'My Lounges', icon: Mic2 },
+          { href: '/friends', label: 'Friends', icon: Users },
           { href: '/profile', label: 'My Studio', icon: User },
         ]
       : []),

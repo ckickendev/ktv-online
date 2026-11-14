@@ -20,6 +20,10 @@ import {
   useCreateInvitation,
   useRevokeInvitation,
 } from '@/hooks/queries/use-invitation';
+import { useFriends, useSendLoungeInviteToFriend } from '@/features/friends/hooks/use-friends';
+import { UserAvatar } from '../shared/user-avatar';
+import { PresenceStatusBadge } from '@/features/friends/components/presence-status-badge';
+import { Users, Send } from 'lucide-react';
 
 interface InviteFriendsRoomInfo {
   id: string;
@@ -40,6 +44,8 @@ export function InviteFriendsDialog({
   onClose,
   isHost,
 }: InviteFriendsDialogProps) {
+  const [dialogMode, setDialogMode] = useState<'link' | 'friends'>('link');
+  const [invitedFriends, setInvitedFriends] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState(false);
   const [selectedDuration, setSelectedDuration] = useState<number>(48);
   const [latestToken, setLatestToken] = useState<string | null>(null);
@@ -50,12 +56,28 @@ export function InviteFriendsDialog({
     isOpen && isHost
   );
 
+  const { data: friendsData, isLoading: isLoadingFriends } = useFriends();
+  const sendLoungeInviteMutation = useSendLoungeInviteToFriend();
+
   const createInvitationMutation = useCreateInvitation(room?.id || '');
   const revokeInvitationMutation = useRevokeInvitation(room?.id || '');
 
   if (!isOpen || !room) return null;
 
   const isPrivate = room.visibility === 'private';
+
+  const handleSendInviteToFriend = async (friendUserId: string) => {
+    if (!room) return;
+    try {
+      await sendLoungeInviteMutation.mutateAsync({
+        roomId: room.id,
+        friendUserId,
+      });
+      setInvitedFriends((prev) => ({ ...prev, [friendUserId]: true }));
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to send invite.');
+    }
+  };
 
   const handleCreate = async () => {
     setErrorMsg(null);
@@ -172,8 +194,105 @@ export function InviteFriendsDialog({
           </div>
         )}
 
-        {/* Content based on Host status */}
-        {!isHost ? (
+        {/* Host Mode Switcher */}
+        {isHost && (
+          <div className="grid grid-cols-2 gap-2 mb-4 p-1 bg-white/[0.03] border border-white/5 rounded-2xl">
+            <button
+              type="button"
+              onClick={() => setDialogMode('link')}
+              className={`py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                dialogMode === 'link'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>Share Link</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDialogMode('friends')}
+              className={`py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                dialogMode === 'friends'
+                  ? 'bg-violet-600/20 text-violet-300 border border-violet-500/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Direct Invite</span>
+            </button>
+          </div>
+        )}
+
+        {/* Content based on Host status and selected mode */}
+        {isHost && dialogMode === 'friends' ? (
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+            {isLoadingFriends ? (
+              <div className="py-8 flex flex-col items-center justify-center gap-2 text-slate-400">
+                <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
+                <span className="text-xs">Loading friends...</span>
+              </div>
+            ) : friendsData?.items && friendsData.items.length > 0 ? (
+              friendsData.items.map((friendship) => {
+                const friend = friendship.friend;
+                const isInvited = invitedFriends[friend.id];
+                const isSending =
+                  sendLoungeInviteMutation.isPending &&
+                  sendLoungeInviteMutation.variables?.friendUserId === friend.id;
+
+                return (
+                  <div
+                    key={friend.id}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.02] border border-white/5"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <UserAvatar
+                        name={friend.displayName || friend.username}
+                        avatarUrl={friend.avatar}
+                        size="sm"
+                      />
+                      <div className="min-w-0">
+                        <span className="text-xs font-semibold text-slate-200 block truncate">
+                          {friend.displayName || friend.username}
+                        </span>
+                        <PresenceStatusBadge presence={friend.presence} className="mt-0.5 scale-90 origin-left" />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSendInviteToFriend(friend.id)}
+                      disabled={isInvited || isSending}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                        isInvited
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-violet-600 hover:bg-violet-500 text-white shadow-sm shadow-violet-600/20'
+                      }`}
+                    >
+                      {isSending ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : isInvited ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>Sent</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-3 h-3" />
+                          <span>Invite</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-8 text-center text-slate-500 text-xs">
+                No friends added yet. Connect with people in the Friends tab first!
+              </div>
+            )}
+          </div>
+        ) : !isHost ? (
           <div className="space-y-4">
             <div className="p-4 rounded-2xl bg-white/5 border border-white/5 text-xs text-slate-300 leading-relaxed">
               {isPrivate ? (

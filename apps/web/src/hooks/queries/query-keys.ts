@@ -50,4 +50,11 @@ export const queryKeys = {
     myStats: () => [...queryKeys.history.all, 'my-stats'] as const,
     sessionRecap: (id: string) => [...queryKeys.history.all, 'session-recap', id] as const,
   },
+  friends: {
+    all: ['friends'] as const,
+    list: (params?: Record<string, unknown>) => [...queryKeys.friends.all, 'list', params ?? {}] as const,
+    incoming: (params?: Record<string, unknown>) => [...queryKeys.friends.all, 'incoming', params ?? {}] as const,
+    outgoing: (params?: Record<string, unknown>) => [...queryKeys.friends.all, 'outgoing', params ?? {}] as const,
+    search: (q: string) => [...queryKeys.friends.all, 'search', q] as const,
+  },
 };

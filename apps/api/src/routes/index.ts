@@ -8,6 +8,7 @@ import { voiceRoutes } from '../modules/voice/voice.routes.js';
 import { karaokeRoutes } from '../modules/karaoke/karaoke.routes.js';
 import { invitationRoutes } from '../modules/rooms/invitation.routes.js';
 import { historyRoutes } from '../modules/history/history.routes.js';
+import { friendshipRoutes } from '../modules/friends/friendship.routes.js';
 
 export const apiV1Router = Router();
 
@@ -17,6 +18,7 @@ apiV1Router.use('/users', userRoutes);
 apiV1Router.use('/rooms', roomRoutes);
 apiV1Router.use('/invitations', invitationRoutes);
 apiV1Router.use('/history', historyRoutes);
+apiV1Router.use('/friends', friendshipRoutes);
 apiV1Router.use('/', chatRoutes);
 apiV1Router.use('/', voiceRoutes);
 apiV1Router.use('/', karaokeRoutes);

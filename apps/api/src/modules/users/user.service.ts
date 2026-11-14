@@ -120,6 +120,8 @@ export class UserService {
         user.preferences.isHistoryPublic ?? DEFAULT_USER_PREFERENCES.isHistoryPublic,
       isSessionsPublic:
         user.preferences.isSessionsPublic ?? DEFAULT_USER_PREFERENCES.isSessionsPublic,
+      presenceVisibility:
+        user.preferences.presenceVisibility ?? DEFAULT_USER_PREFERENCES.presenceVisibility,
     };
   }
 
@@ -143,6 +145,8 @@ export class UserService {
       updateObj['preferences.isHistoryPublic'] = data.isHistoryPublic;
     if (data.isSessionsPublic !== undefined)
       updateObj['preferences.isSessionsPublic'] = data.isSessionsPublic;
+    if (data.presenceVisibility !== undefined)
+      updateObj['preferences.presenceVisibility'] = data.presenceVisibility;
 
     const updated = await UserModel.findByIdAndUpdate(
       userId,
@@ -174,6 +178,8 @@ export class UserService {
         updated.preferences.isHistoryPublic ?? DEFAULT_USER_PREFERENCES.isHistoryPublic,
       isSessionsPublic:
         updated.preferences.isSessionsPublic ?? DEFAULT_USER_PREFERENCES.isSessionsPublic,
+      presenceVisibility:
+        updated.preferences.presenceVisibility ?? DEFAULT_USER_PREFERENCES.presenceVisibility,
     };
   }
 }
