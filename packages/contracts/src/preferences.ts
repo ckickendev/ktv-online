@@ -58,6 +58,8 @@ export const UserPreferencesDtoSchema = z.object({
   visualEffectsIntensity: VisualEffectsIntensitySchema.default('full'),
   showReactions: z.boolean().default(true),
   showGifts: z.boolean().default(true),
+  hasCompletedOnboarding: z.boolean().default(false),
+  hasDismissedRoomGuide: z.boolean().default(false),
 });
 export type UserPreferencesDto = z.infer<typeof UserPreferencesDtoSchema>;
 
@@ -69,6 +71,8 @@ export const UpdateUserPreferencesSchema = z.object({
   visualEffectsIntensity: VisualEffectsIntensitySchema.optional(),
   showReactions: z.boolean().optional(),
   showGifts: z.boolean().optional(),
+  hasCompletedOnboarding: z.boolean().optional(),
+  hasDismissedRoomGuide: z.boolean().optional(),
 });
 export type UpdateUserPreferencesDto = z.infer<typeof UpdateUserPreferencesSchema>;
 
@@ -80,4 +84,6 @@ export const DEFAULT_USER_PREFERENCES: UserPreferencesDto = {
   visualEffectsIntensity: 'full',
   showReactions: true,
   showGifts: true,
+  hasCompletedOnboarding: false,
+  hasDismissedRoomGuide: false,
 };

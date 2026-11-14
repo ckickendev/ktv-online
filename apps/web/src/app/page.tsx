@@ -7,8 +7,8 @@ import {
   Disc3,
   Radio,
   ArrowRight,
-  Headphones,
   Sliders,
+  Lock,
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { FeaturedRooms } from '@/features/rooms/featured-rooms';
@@ -27,9 +27,9 @@ export default function LandingPage() {
           {/* Top Pill */}
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/25 text-violet-300 text-xs font-medium mb-8 backdrop-blur-md shadow-sm">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Sprint 0 Architecture Foundation Live</span>
+            <span>Live Social Karaoke Lounges</span>
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span className="text-slate-400">Next.js 15 &bull; Express &bull; Mongoose</span>
+            <span className="text-slate-400">Real-time WebRTC Voice &bull; Synchronized Lyrics</span>
           </div>
 
           {/* Main Title */}
@@ -57,11 +57,11 @@ export default function LandingPage() {
             </Link>
 
             <Link
-              href="/profile"
+              href="/rooms/create"
               className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-semibold text-sm transition-all flex items-center justify-center gap-2"
             >
-              <Headphones className="w-4 h-4 text-violet-400" />
-              <span>Studio Profile</span>
+              <Lock className="w-4 h-4 text-violet-400" />
+              <span>Host a Private Lounge</span>
             </Link>
           </div>
 

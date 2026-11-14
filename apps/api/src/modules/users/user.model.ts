@@ -83,6 +83,14 @@ const UserSchema = new Schema<IUserDocument>(
         type: Boolean,
         default: true,
       },
+      hasCompletedOnboarding: {
+        type: Boolean,
+        default: false,
+      },
+      hasDismissedRoomGuide: {
+        type: Boolean,
+        default: false,
+      },
     },
   },
   {

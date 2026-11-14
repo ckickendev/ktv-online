@@ -26,6 +26,7 @@ import {
   Paintbrush,
   Info,
   Loader2,
+  HelpCircle,
 } from 'lucide-react';
 import { RoomStatusBadge } from '@/components/shared/room-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -39,6 +40,8 @@ import { TransferHostDialog } from '@/components/rooms/transfer-host-dialog';
 import { RoomIdentityDialog } from '@/components/rooms/room-identity-dialog';
 import { RoomCustomizationDialog } from '@/components/rooms/room-customization-dialog';
 import { InviteFriendsDialog } from '@/components/rooms/invite-friends-dialog';
+import { RoomGuideDialog } from '@/components/rooms/room-guide-dialog';
+import { useOnboarding } from '@/hooks/use-onboarding';
 import {
   useJoinRoom,
   useLeaveRoom,
@@ -104,6 +107,7 @@ export default function RoomDetailPage() {
   const [isIdentityOpen, setIsIdentityOpen] = useState(false);
   const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const { showRoomGuide, dismissRoomGuide, reopenRoomGuide } = useOnboarding();
   const updateRoomMutation = useUpdateRoom();
   const atmosphere = useRoomAtmosphere({ authoritativePreset: room?.atmospherePreset });
 
@@ -597,6 +601,16 @@ export default function RoomDetailPage() {
               title="Invite friends or share lounge"
             >
               <Share2 className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Lounge Guide / Quick Tips Button */}
+            <button
+              type="button"
+              onClick={reopenRoomGuide}
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors border border-white/5"
+              title="Lounge Quick Guide & Tips"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -1276,6 +1290,13 @@ export default function RoomDetailPage() {
         onClose={() => setIsInviteOpen(false)}
         room={room}
         isHost={isHost}
+      />
+
+      {/* Room Quick Guide / First-Time Orientation Dialog (Sprint 5.1) */}
+      <RoomGuideDialog
+        isOpen={showRoomGuide}
+        onClose={dismissRoomGuide}
+        onDismissForever={dismissRoomGuide}
       />
     </div>
   );

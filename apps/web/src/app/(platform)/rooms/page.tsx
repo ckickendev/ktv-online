@@ -20,16 +20,19 @@ import {
   Radio,
   Clock,
   Sparkle,
+  HelpCircle,
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { RoomCard } from '@/components/shared/room-card';
 import { RoomCardSkeleton } from '@/components/shared/room-card-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { RoomPreviewDialog } from '@/components/rooms/room-preview-dialog';
+import { WelcomeQuickStart } from '@/components/onboarding/welcome-quick-start';
 import { useRooms } from '@/hooks/queries/use-rooms';
 import { useJoinRoom } from '@/hooks/queries/use-room';
 import { useAuth } from '@/hooks/use-auth';
 import { useUserPreferences } from '@/hooks/queries/use-user-preferences';
+import { useOnboarding } from '@/hooks/use-onboarding';
 import {
   RoomDto,
   RoomCategory,
@@ -93,6 +96,8 @@ function RoomDiscoveryContent() {
 
   const { isAuthenticated } = useAuth();
   const { preferences: userPreferences } = useUserPreferences();
+  const { showWelcome, completeOnboarding } = useOnboarding();
+  const [forceShowWelcome, setForceShowWelcome] = useState(false);
   const joinMutation = useJoinRoom();
 
   // Preview & Joining State
@@ -389,6 +394,16 @@ function RoomDiscoveryContent() {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => setForceShowWelcome((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs sm:text-sm font-medium transition-colors"
+              title="Lobby Guide & Quick Tips"
+            >
+              <HelpCircle className="w-4 h-4 text-cyan-400" />
+              <span className="hidden sm:inline">Guide</span>
+            </button>
+
             <Link
               href="/my-rooms"
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 font-medium text-xs sm:text-sm transition-all"
@@ -407,8 +422,24 @@ function RoomDiscoveryContent() {
           </div>
         </div>
 
+        {/* Welcome & Quick-Start Guidance */}
+        {(forceShowWelcome || showWelcome) && (
+          <div className="mb-6">
+            <WelcomeQuickStart
+              onDismiss={() => {
+                completeOnboarding();
+                setForceShowWelcome(false);
+              }}
+              onExploreClick={() => {
+                const el = document.getElementById('discovery-search-bar');
+                el?.scrollIntoView({ behavior: 'smooth' });
+              }}
+            />
+          </div>
+        )}
+
         {/* Search Bar & Global Filter Bar */}
-        <div className="glass-panel p-4 rounded-2xl mb-6 border border-white/5 space-y-4 shadow-xl">
+        <div id="discovery-search-bar" className="glass-panel p-4 rounded-2xl mb-6 border border-white/5 space-y-4 shadow-xl">
           <div className="flex flex-col md:flex-row items-center gap-4">
             {/* Prominent Search Input */}
             <div className="relative w-full md:flex-1">
@@ -698,11 +729,31 @@ function RoomDiscoveryContent() {
               />
             ))}
           </div>
+        ) : !hasActiveFilters && totalRooms === 0 ? (
+          <EmptyState
+            icon={Music2}
+            title="No Lounges Open Right Now"
+            description="The stage is quiet! Be the first to start a party or open an intimate private session for your friends."
+            action={{
+              label: 'Host Your Lounge',
+              onClick: () => router.push('/rooms/create'),
+            }}
+          />
+        ) : initialStatus === 'singing' && rooms.length === 0 ? (
+          <EmptyState
+            icon={Music2}
+            title="No Active Performances Right Now"
+            description="There are no rooms currently mid-song. Check out open lounges waiting in queue or host your own."
+            action={{
+              label: 'Show Open Lounges',
+              onClick: () => handleStatusChange('all'),
+            }}
+          />
         ) : (
           <EmptyState
             icon={Music2}
-            title="No Lounges Found"
-            description="We couldn't find any rooms matching your search and filter criteria. Try adjusting your filters or hosting your own lounge."
+            title="No Lounges Match Your Search"
+            description="We couldn't find any rooms matching your search and filter criteria. Try clearing filters or hosting your own lounge."
             action={{
               label: 'Reset Filters',
               onClick: handleClearAllFilters,

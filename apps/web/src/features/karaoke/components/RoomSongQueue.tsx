@@ -137,6 +137,16 @@ export function RoomSongQueue({
             <p className="text-xs text-slate-500 mt-1 max-w-[200px]">
               No songs lined up. Step up and be the first to queue a track!
             </p>
+            {canAddSongs && !isQueueFull && (
+              <button
+                type="button"
+                onClick={onOpenSearch}
+                className="mt-4 px-4 py-2 rounded-xl bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 text-xs font-semibold border border-violet-500/30 flex items-center gap-1.5 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Search &amp; Add Song</span>
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -112,6 +112,10 @@ export class UserService {
       visualEffectsIntensity: user.preferences.visualEffectsIntensity || DEFAULT_USER_PREFERENCES.visualEffectsIntensity,
       showReactions: user.preferences.showReactions ?? DEFAULT_USER_PREFERENCES.showReactions,
       showGifts: user.preferences.showGifts ?? DEFAULT_USER_PREFERENCES.showGifts,
+      hasCompletedOnboarding:
+        user.preferences.hasCompletedOnboarding ?? DEFAULT_USER_PREFERENCES.hasCompletedOnboarding,
+      hasDismissedRoomGuide:
+        user.preferences.hasDismissedRoomGuide ?? DEFAULT_USER_PREFERENCES.hasDismissedRoomGuide,
     };
   }
 
@@ -127,6 +131,10 @@ export class UserService {
     if (data.visualEffectsIntensity !== undefined) updateObj['preferences.visualEffectsIntensity'] = data.visualEffectsIntensity;
     if (data.showReactions !== undefined) updateObj['preferences.showReactions'] = data.showReactions;
     if (data.showGifts !== undefined) updateObj['preferences.showGifts'] = data.showGifts;
+    if (data.hasCompletedOnboarding !== undefined)
+      updateObj['preferences.hasCompletedOnboarding'] = data.hasCompletedOnboarding;
+    if (data.hasDismissedRoomGuide !== undefined)
+      updateObj['preferences.hasDismissedRoomGuide'] = data.hasDismissedRoomGuide;
 
     const updated = await UserModel.findByIdAndUpdate(
       userId,
@@ -150,6 +158,10 @@ export class UserService {
       visualEffectsIntensity: updated.preferences.visualEffectsIntensity || DEFAULT_USER_PREFERENCES.visualEffectsIntensity,
       showReactions: updated.preferences.showReactions ?? DEFAULT_USER_PREFERENCES.showReactions,
       showGifts: updated.preferences.showGifts ?? DEFAULT_USER_PREFERENCES.showGifts,
+      hasCompletedOnboarding:
+        updated.preferences.hasCompletedOnboarding ?? DEFAULT_USER_PREFERENCES.hasCompletedOnboarding,
+      hasDismissedRoomGuide:
+        updated.preferences.hasDismissedRoomGuide ?? DEFAULT_USER_PREFERENCES.hasDismissedRoomGuide,
     };
   }
 }
