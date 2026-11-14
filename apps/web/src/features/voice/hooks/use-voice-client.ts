@@ -733,20 +733,33 @@ export function useVoiceClient({ roomId, enabled = true }: UseVoiceClientOptions
   }, [isMuted, syncParticipants]);
 
   // Switch microphone input device
-  const switchAudioInputDevice = useCallback(async (deviceId: string) => {
-    try {
-      setErrorMessage(null);
-      setActiveAudioInputId(deviceId);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_MIC_KEY, deviceId);
+  const switchAudioInputDevice = useCallback(
+    async (deviceId: string) => {
+      try {
+        setErrorMessage(null);
+        setActiveAudioInputId(deviceId);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_MIC_KEY, deviceId);
+        }
+        if (roomRef.current) {
+          await roomRef.current.switchActiveDevice('audioinput', deviceId);
+
+          // Security check: if participant is moderated or locally muted, ensure publication remains muted
+          const perms = roomRef.current.localParticipant?.permissions;
+          const canPublish = perms ? perms.canPublish !== false : false;
+          if (!canPublish || isMuted) {
+            const micPub = roomRef.current.localParticipant?.getTrackPublication(Track.Source.Microphone);
+            if (micPub?.track && !micPub.isMuted) {
+              await micPub.track.mute();
+            }
+          }
+        }
+      } catch (err: unknown) {
+        setErrorMessage(classifyDeviceError(err));
       }
-      if (roomRef.current) {
-        await roomRef.current.switchActiveDevice('audioinput', deviceId);
-      }
-    } catch (err: unknown) {
-      setErrorMessage(classifyDeviceError(err));
-    }
-  }, []);
+    },
+    [isMuted]
+  );
 
   // Switch voice speaker output device
   const switchAudioOutputDevice = useCallback(

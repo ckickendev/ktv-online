@@ -10,6 +10,7 @@ import {
   Calendar,
   Volume2,
   Edit3,
+  Sliders,
 } from 'lucide-react';
 import { PageContainer } from '@/components/layout/page-container';
 import { UserAvatar } from '@/components/shared/user-avatar';
@@ -23,6 +24,7 @@ import {
   SessionRecapDialog,
   HistoryPrivacySettings,
 } from '@/features/history/components';
+import { MicrophoneStudioDialog } from '@/features/voice';
 import { useAuth } from '@/hooks/use-auth';
 import { useUserProfile } from '@/hooks/queries/use-user-profile';
 
@@ -31,6 +33,7 @@ export default function ProfilePage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedRecapSessionId, setSelectedRecapSessionId] = useState<string | null>(null);
   const [activeHistoryTab, setActiveHistoryTab] = useState<'songs' | 'sessions'>('songs');
+  const [isStudioOpen, setIsStudioOpen] = useState(false);
 
   const { data: userProfile } = useUserProfile(user?.id);
 
@@ -197,35 +200,52 @@ export default function ProfilePage() {
               {/* History & Privacy Controls (Sprint 5.3) */}
               <HistoryPrivacySettings />
 
-              {/* Audio Setup Settings */}
-              <div className="glass-panel rounded-2xl p-6 border border-white/5 flex flex-col justify-between">
+              {/* Audio Setup Settings & Singer Studio Trigger */}
+              <div className="glass-panel rounded-2xl p-6 border border-white/5 flex flex-col justify-between space-y-4">
                 <div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Settings className="w-4 h-4 text-violet-400" />
-                    <h2 className="text-sm font-semibold text-white uppercase tracking-wider">
-                      Audio Setup
-                    </h2>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-violet-400" />
+                      <h2 className="text-sm font-semibold text-white uppercase tracking-wider">
+                        Audio &amp; Voice Studio
+                      </h2>
+                    </div>
+
+                    <button
+                      type="button"
+                      data-testid="profile-open-studio-button"
+                      onClick={() => setIsStudioOpen(true)}
+                      className="px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-md shadow-violet-950/40 transition-all flex items-center gap-1.5 min-h-[36px]"
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                      <span>Open Studio</span>
+                    </button>
                   </div>
+
+                  <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+                    Test your microphone input level and configure vocal processing before entering any live stage.
+                  </p>
 
                   <div className="space-y-3 text-xs">
                     <div>
-                      <label className="text-slate-400 text-[11px] block mb-1">Microphone Input</label>
-                      <div className="p-2 rounded-xl bg-black/40 border border-white/10 text-slate-200 text-xs">
-                        Default - Studio USB Mic
-                      </div>
+                      <label className="text-slate-400 text-[11px] block mb-1">Microphone Studio</label>
+                      <button
+                        type="button"
+                        onClick={() => setIsStudioOpen(true)}
+                        className="w-full p-2.5 rounded-xl bg-black/40 hover:bg-black/60 border border-white/10 text-slate-200 text-xs flex items-center justify-between transition-colors min-h-[44px]"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Mic className="w-4 h-4 text-violet-400" />
+                          <span>Configure &amp; Test Microphone</span>
+                        </span>
+                        <span className="text-[10px] text-violet-400 font-semibold">Test</span>
+                      </button>
                     </div>
 
                     <div>
-                      <label className="text-slate-400 text-[11px] block mb-1">Echo Cancellation</label>
+                      <label className="text-slate-400 text-[11px] block mb-1">Acoustic Echo Cancellation</label>
                       <div className="p-2 rounded-xl bg-black/40 border border-white/10 text-emerald-400 text-xs font-medium">
                         Active (Hardware Optimized)
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-slate-400 text-[11px] block mb-1">Preferred Reverb</label>
-                      <div className="p-2 rounded-xl bg-black/40 border border-white/10 text-violet-300 text-xs font-medium">
-                        Studio Vocal Reverb
                       </div>
                     </div>
                   </div>
@@ -233,7 +253,7 @@ export default function ProfilePage() {
 
                 <div className="pt-4 border-t border-white/5 mt-4 flex items-center gap-2 text-[11px] text-slate-500">
                   <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>LiveKit Voice &amp; Web Audio</span>
+                  <span>LiveKit Voice &amp; Web Audio Engine</span>
                 </div>
               </div>
             </div>
@@ -248,6 +268,14 @@ export default function ProfilePage() {
             initialAvatar={user?.avatar || userProfile?.avatar}
             username={username}
           />
+
+          {/* Singer Studio Microphone Dialog (Sprint 5.4) */}
+          <MicrophoneStudioDialog
+            isOpen={isStudioOpen}
+            onClose={() => setIsStudioOpen(false)}
+          />
+
+          {/* Session Recap Dialog Modal (Sprint 5.3) */}
 
           {/* Session Recap Dialog Modal (Sprint 5.3) */}
           <SessionRecapDialog

@@ -182,10 +182,11 @@ export function VoiceControls({
               type="button"
               data-testid="audio-device-settings-button"
               onClick={() => setIsSettingsOpen(true)}
-              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs transition-colors"
-              title="Voice & Equalizer Settings"
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs transition-colors"
+              title="Open Singer Studio — Microphone & Vocal Setup"
             >
               <Settings2 className="w-3.5 h-3.5 text-violet-400" />
+              <span className="hidden xl:inline text-[11px] font-medium">Studio</span>
             </button>
 
             {/* Leave Voice Button */}
@@ -220,6 +221,7 @@ export function VoiceControls({
           onSelectKaraokeOutputDevice={onSwitchKaraokeOutputDevice}
           karaokeEqPreset={karaokeEqPreset}
           onSelectKaraokeEqPreset={onSwitchKaraokeEqPreset}
+          isServerMuted={isServerMuted}
         />
       </div>
     );
@@ -377,10 +379,10 @@ export function VoiceControls({
             data-testid="audio-device-settings-button"
             onClick={() => setIsSettingsOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-medium transition-colors"
-            title="Open Audio & Device Settings"
+            title="Open Singer Studio — Microphone & Vocal Setup"
           >
             <Settings2 className="w-3.5 h-3.5 text-violet-400" />
-            <span className="hidden md:inline">Settings</span>
+            <span className="hidden md:inline">Singer Studio</span>
           </button>
         </div>
       </div>
@@ -403,6 +405,7 @@ export function VoiceControls({
         onSelectKaraokeOutputDevice={onSwitchKaraokeOutputDevice}
         karaokeEqPreset={karaokeEqPreset}
         onSelectKaraokeEqPreset={onSwitchKaraokeEqPreset}
+        isServerMuted={isServerMuted}
       />
     </div>
   );

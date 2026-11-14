@@ -471,14 +471,16 @@ export default function RoomDetailPage() {
 
             {/* LiveKit Voice Header Badge */}
             {voice.isConnected && (
-              <div
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('ktv_open_audio_settings'))}
                 data-testid="header-voice-indicator"
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                title={`LiveKit Voice: connected (${voice.participants.length} in voice)`}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors cursor-pointer"
+                title={`LiveKit Voice: connected (${voice.participants.length} in voice). Click to open Singer Studio.`}
               >
                 <Mic className={cn('w-3.5 h-3.5', voice.isSpeaking && 'animate-pulse text-emerald-300')} />
                 <span>Voice ({voice.participants.length})</span>
-              </div>
+              </button>
             )}
 
             {/* Persistent Voice Controls Bar (Workstream G) */}
