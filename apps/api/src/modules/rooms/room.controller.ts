@@ -155,6 +155,9 @@ export class RoomController {
           case 'INVITATION_ROOM_MISMATCH':
             sendError(res, 'Invitation link does not belong to this room', 400);
             return;
+          case 'INVITATION_RECIPIENT_MISMATCH':
+            sendError(res, 'This invitation was issued to another user', 403);
+            return;
           case 'FORBIDDEN_KICKED':
             sendError(res, 'You were removed from this room by the host and cannot rejoin', 403);
             return;

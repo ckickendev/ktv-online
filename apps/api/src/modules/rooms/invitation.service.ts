@@ -263,9 +263,9 @@ export class InvitationService {
       };
     }
 
-    // Recipient-bound check: if invitation is dedicated to a friend, verify identity
-    if (invitation.recipientId && requestingUserId) {
-      if (invitation.recipientId.toString() !== requestingUserId) {
+    // Recipient-bound check: if invitation is dedicated to a friend, verify identity (AUD-INV-01)
+    if (invitation.recipientId) {
+      if (!requestingUserId || invitation.recipientId.toString() !== requestingUserId) {
         return {
           success: true,
           data: {
@@ -401,9 +401,9 @@ export class InvitationService {
       return { valid: false, error: 'INVITATION_EXPIRED' };
     }
 
-    // Recipient-bound validation: if token is bound to a specific friend, verify caller identity
-    if (invitation.recipientId && requestingUserId) {
-      if (invitation.recipientId.toString() !== requestingUserId) {
+    // Recipient-bound validation: if token is bound to a specific friend, verify caller identity (AUD-INV-01)
+    if (invitation.recipientId) {
+      if (!requestingUserId || invitation.recipientId.toString() !== requestingUserId) {
         return { valid: false, error: 'INVITATION_RECIPIENT_MISMATCH' };
       }
     }
@@ -415,7 +415,8 @@ export class InvitationService {
    * Resolves the room ID from a raw invitation token.
    */
   async resolveInvitationRoomId(
-    rawToken: string
+    rawToken: string,
+    requestingUserId?: string
   ): Promise<{ success: boolean; roomId?: string; error?: string }> {
     if (!rawToken || typeof rawToken !== 'string') {
       return { success: false, error: 'INVITATION_REQUIRED' };
@@ -434,6 +435,13 @@ export class InvitationService {
 
     if (invitation.expiresAt < new Date()) {
       return { success: false, error: 'INVITATION_EXPIRED' };
+    }
+
+    // Recipient-bound identity check (AUD-INV-01)
+    if (invitation.recipientId) {
+      if (!requestingUserId || invitation.recipientId.toString() !== requestingUserId) {
+        return { success: false, error: 'INVITATION_RECIPIENT_MISMATCH' };
+      }
     }
 
     return { success: true, roomId: invitation.roomId.toString() };

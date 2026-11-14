@@ -146,7 +146,7 @@ export class InvitationController {
         return;
       }
 
-      const resolveResult = await invitationService.resolveInvitationRoomId(token);
+      const resolveResult = await invitationService.resolveInvitationRoomId(token, req.user.id);
       if (!resolveResult.success || !resolveResult.roomId) {
         switch (resolveResult.error) {
           case 'INVITATION_INVALID':
@@ -157,6 +157,9 @@ export class InvitationController {
             return;
           case 'INVITATION_REVOKED':
             sendError(res, 'Invitation link has been revoked by host', 410);
+            return;
+          case 'INVITATION_RECIPIENT_MISMATCH':
+            sendError(res, 'This invitation was issued to another user', 403);
             return;
           default:
             sendError(res, 'Invalid invitation token', 400);
@@ -189,6 +192,9 @@ export class InvitationController {
             return;
           case 'INVITATION_REVOKED':
             sendError(res, 'Invitation link has been revoked by host', 410);
+            return;
+          case 'INVITATION_RECIPIENT_MISMATCH':
+            sendError(res, 'This invitation was issued to another user', 403);
             return;
           case 'FORBIDDEN_KICKED':
             sendError(res, 'You were removed from this room by the host and cannot rejoin', 403);

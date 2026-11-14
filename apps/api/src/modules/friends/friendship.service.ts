@@ -154,9 +154,10 @@ export class FriendshipService {
 
       return { success: true, data: requestDto };
     } catch (err: unknown) {
+      // Precise unique-index collision detection for canonical pairKey (AUD-FR-01)
       const isDuplicate =
         (err as { code?: number })?.code === 11000 ||
-        (err as { name?: string })?.name === 'MongoServerError';
+        (err as { codeName?: string })?.codeName === 'DuplicateKey';
 
       if (isDuplicate) {
         // Concurrency collision: another request was inserted for this pairKey during the race window.
