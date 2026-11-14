@@ -98,10 +98,18 @@ export const SongDtoSchema = z.object({
 });
 export type SongDto = z.infer<typeof SongDtoSchema>;
 
+export const SongAvailabilityFilterSchema = z.enum([
+  'all',
+  'playable',
+  'metadata_only',
+]);
+export type SongAvailabilityFilter = z.infer<typeof SongAvailabilityFilterSchema>;
+
 export const SongSearchQuerySchema = z.object({
   q: z.string().optional().default(''),
   genre: z.string().optional(),
   language: z.string().optional(),
+  availability: SongAvailabilityFilterSchema.optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(50).default(20),
 });

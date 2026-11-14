@@ -335,10 +335,18 @@ export class KaraokeService {
       throw new Error('FORBIDDEN_NOT_MEMBER');
     }
 
-    // 3. Verify song exists in catalog
+    // 3. Verify song exists in catalog and has an authorized audio backing track
     const song = await SongModel.findById(songObjectId).exec();
     if (!song) {
       throw new Error('SONG_NOT_FOUND');
+    }
+
+    if (song.audioAvailability !== 'audio_available') {
+      logger.warn(
+        { roomId, songId: dto.songId, title: song.title, audioAvailability: song.audioAvailability },
+        'Attempted to queue song with unavailable or metadata-only audio'
+      );
+      throw new Error('SONG_NOT_PLAYABLE');
     }
 
     // 4. Enforce maximum queue size limit (50 items)

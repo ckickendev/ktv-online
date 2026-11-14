@@ -78,6 +78,14 @@ export class SongService {
       filter.language = query.language.toLowerCase();
     }
 
+    if (query.availability && query.availability !== 'all') {
+      if (query.availability === 'playable') {
+        filter.audioAvailability = 'audio_available';
+      } else if (query.availability === 'metadata_only') {
+        filter.audioAvailability = 'metadata_only';
+      }
+    }
+
     const page = Math.max(1, query.page || 1);
     const limit = Math.min(50, Math.max(1, query.limit || 20));
     const skip = (page - 1) * limit;

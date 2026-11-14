@@ -22,6 +22,7 @@ export interface CatalogSongItem {
 export interface SongSearchOptions {
   genre?: string;
   language?: string;
+  availability?: string;
   limit?: number;
   offset?: number;
 }
@@ -292,6 +293,14 @@ export class FixtureCatalogProvider implements ISongCatalogProvider {
       filtered = filtered.filter(
         (s) => s.language.toLowerCase() === options.language!.toLowerCase()
       );
+    }
+
+    if (options?.availability && options.availability !== 'all') {
+      if (options.availability === 'playable') {
+        filtered = filtered.filter((s) => s.audioAvailability === 'audio_available');
+      } else if (options.availability === 'metadata_only') {
+        filtered = filtered.filter((s) => s.audioAvailability === 'metadata_only');
+      }
     }
 
     const total = filtered.length;

@@ -106,6 +106,14 @@ export class KaraokeController {
         sendError(res, 'Song not found in catalog', 404);
         return;
       }
+      if (msg === 'SONG_NOT_PLAYABLE' || msg === 'SONG_AUDIO_UNAVAILABLE') {
+        sendError(
+          res,
+          'This song does not have an approved karaoke audio track and cannot be queued for playback.',
+          400
+        );
+        return;
+      }
       if (msg === 'MAX_QUEUE_SIZE_EXCEEDED') {
         sendError(res, 'Room queue capacity reached (maximum 50 songs)', 400);
         return;

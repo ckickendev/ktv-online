@@ -24,6 +24,7 @@ export const karaokeApi = {
         q: query.q,
         genre: query.genre,
         language: query.language,
+        availability: query.availability,
         page: query.page,
         limit: query.limit,
       },
