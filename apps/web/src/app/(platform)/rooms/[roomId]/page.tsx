@@ -235,8 +235,13 @@ export default function RoomDetailPage() {
   const handleJoin = async () => {
     setJoinErrorMessage(null);
     try {
-      const invitationId = searchParams?.get('invitationId') || undefined;
-      const inviteToken = searchParams?.get('inviteToken') || undefined;
+      const rawInvitationId = searchParams?.get('invitationId')?.trim();
+      const rawInviteToken = searchParams?.get('inviteToken')?.trim();
+
+      // Enforce client credential precedence: invitationId takes precedence as sole credential
+      const invitationId = rawInvitationId ? rawInvitationId : undefined;
+      const inviteToken = invitationId ? undefined : (rawInviteToken ? rawInviteToken : undefined);
+
       await joinMutation.mutateAsync({ roomId, invitationId, inviteToken });
       refreshState();
     } catch (err: unknown) {

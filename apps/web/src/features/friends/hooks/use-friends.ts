@@ -30,12 +30,17 @@ export function useFriends(params?: Partial<FriendQueryDto>) {
 
     const handlePresenceUpdated = (payload: FriendPresenceUpdatedPayload) => {
       queryClient.setQueriesData<PaginatedFriendsResponse>(
-        { queryKey: queryKeys.friends.all },
+        { queryKey: queryKeys.friends.lists() },
         (oldData) => {
-          if (!oldData?.items) return oldData;
+          if (!oldData?.items || !Array.isArray(oldData.items)) return oldData;
           return {
             ...oldData,
             items: oldData.items.map((item) => {
+              // Defensive check for malformed or non-conforming cache entries
+              if (!item || !item.friend || typeof item.friend !== 'object' || !item.friend.id) {
+                return item;
+              }
+
               if (item.friend.id === payload.userId) {
                 // Ignore out-of-order presence updates with older timestamps
                 if (

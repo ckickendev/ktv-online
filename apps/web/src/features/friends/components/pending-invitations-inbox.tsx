@@ -6,8 +6,11 @@ import { UserAvatar } from '@/components/shared/user-avatar';
 import { usePendingInvitations, useDismissInvitation } from '../hooks/use-friend-activity';
 import { Mail, LogIn, X, Users, Lock, Clock, Loader2 } from 'lucide-react';
 
-function formatExpiresIn(expiresAt: string): string {
-  const diffMs = new Date(expiresAt).getTime() - Date.now();
+function formatExpiresIn(expiresAt: string | null | undefined): string {
+  if (!expiresAt) return 'Expired';
+  const timestamp = new Date(expiresAt).getTime();
+  if (Number.isNaN(timestamp)) return 'Expired';
+  const diffMs = timestamp - Date.now();
   if (diffMs <= 0) return 'Expired';
   const diffMinutes = Math.floor(diffMs / 60000);
   if (diffMinutes < 1) return 'Expires in < 1m';
