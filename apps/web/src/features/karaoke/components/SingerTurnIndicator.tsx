@@ -35,6 +35,7 @@ export interface SingerTurnIndicatorProps {
   className?: string;
   onSendReaction?: (emoji: StageReactionEmoji) => void;
   activeReactions?: StageReactionParticle[];
+  cheerCount?: number;
   prefersReducedMotion?: boolean;
   onOpenGiftSelector?: () => void;
 }
@@ -60,6 +61,7 @@ export function SingerTurnIndicator({
   className,
   onSendReaction,
   activeReactions,
+  cheerCount,
   prefersReducedMotion = false,
   onOpenGiftSelector,
 }: SingerTurnIndicatorProps) {
@@ -206,6 +208,11 @@ export function SingerTurnIndicator({
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-500/30 text-violet-200 border border-violet-400/30">
                     Lead Singer
                   </span>
+                  {cheerCount !== undefined && cheerCount > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                      🔥 {cheerCount} {cheerCount === 1 ? 'cheer' : 'cheers'} from room
+                    </span>
+                  )}
                   {isSingerSpeaking && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                       <Radio className="w-2.5 h-2.5 animate-pulse text-emerald-400" />
@@ -402,6 +409,11 @@ export function SingerTurnIndicator({
                   <span className="hidden xs:inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-slate-300">
                     Performer
                   </span>
+                  {cheerCount !== undefined && cheerCount > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      🔥 {cheerCount} {cheerCount === 1 ? 'cheer' : 'cheers'}
+                    </span>
+                  )}
                   {isSingerSpeaking && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                       <Radio className="w-2.5 h-2.5 animate-pulse text-emerald-400" />

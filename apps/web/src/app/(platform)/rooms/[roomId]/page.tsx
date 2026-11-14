@@ -184,6 +184,12 @@ export default function RoomDetailPage() {
     currentUserId: currentUser?.id,
   });
 
+  // Reset stage audience cheer counter whenever song changes (Sprint 5.5)
+  const currentSongId = karaoke.playback?.currentItem?.id;
+  React.useEffect(() => {
+    stageReactions.resetCheerCount();
+  }, [currentSongId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Real-time Virtual Gifts & Performer Appreciation (Sprint 3.4)
   const [isGiftSelectorOpen, setIsGiftSelectorOpen] = useState(false);
   const virtualGifts = useVirtualGifts(roomId, {
@@ -832,6 +838,7 @@ export default function RoomDetailPage() {
             atmosphereStyles={atmosphere.activeConfig.styles}
             onSendReaction={stageReactions.sendReaction}
             activeReactions={stageReactions.particles}
+            cheerCount={stageReactions.cheerCount}
             prefersReducedMotion={stageReactions.prefersReducedMotion}
             activeGifts={virtualGifts.activeGifts}
             onOpenGiftSelector={() => setIsGiftSelectorOpen(true)}

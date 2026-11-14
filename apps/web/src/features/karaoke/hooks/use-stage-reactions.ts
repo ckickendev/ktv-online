@@ -33,6 +33,7 @@ export function useStageReactions(roomId: string, options: UseStageReactionsOpti
   const [particles, setParticles] = useState<StageReactionParticle[]>([]);
   const [lastReaction, setLastReaction] = useState<StageReactionParticle | null>(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [cheerCount, setCheerCount] = useState<number>(0);
 
   // Bounded FIFO deduplication set
   const seenIdsQueueRef = useRef<string[]>([]);
@@ -65,10 +66,15 @@ export function useStageReactions(roomId: string, options: UseStageReactionsOpti
   const spawnParticle = useCallback((particle: StageReactionParticle) => {
     setParticles((prev) => [...prev.slice(-(MAX_PARTICLES - 1)), particle]);
     setLastReaction(particle);
+    setCheerCount((prev) => prev + 1);
 
     setTimeout(() => {
       setParticles((prev) => prev.filter((p) => p.id !== particle.id));
     }, PARTICLE_TTL_MS);
+  }, []);
+
+  const resetCheerCount = useCallback(() => {
+    setCheerCount(0);
   }, []);
 
   // Subscribe to real-time stage reaction broadcasts
@@ -154,6 +160,8 @@ export function useStageReactions(roomId: string, options: UseStageReactionsOpti
     particles,
     lastReaction,
     sendReaction,
+    cheerCount,
+    resetCheerCount,
     prefersReducedMotion,
     availableEmojis: STAGE_REACTION_EMOJIS,
   };

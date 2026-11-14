@@ -65,6 +65,7 @@ interface KaraokePlayerProps {
   currentEqPreset?: KaraokeEqPreset;
   onSendReaction?: (emoji: StageReactionEmoji) => void;
   activeReactions?: StageReactionParticle[];
+  cheerCount?: number;
   prefersReducedMotion?: boolean;
   activeGifts?: GiftNewPayload[];
   onOpenGiftSelector?: () => void;
@@ -103,6 +104,7 @@ export function KaraokePlayer({
   currentEqPreset,
   onSendReaction,
   activeReactions,
+  cheerCount,
   prefersReducedMotion,
   activeGifts,
   onOpenGiftSelector,
@@ -214,6 +216,7 @@ export function KaraokePlayer({
         onOpenSearch={onOpenSearch}
         onSendReaction={onSendReaction}
         activeReactions={effectiveReactions}
+        cheerCount={cheerCount}
         prefersReducedMotion={prefersReducedMotion}
         onOpenGiftSelector={onOpenGiftSelector}
       />

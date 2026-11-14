@@ -262,6 +262,55 @@ export function LyricsStage({
     );
   }
 
+  if (!hasTimedLyrics && lines.length > 0) {
+    return (
+      <div
+        data-testid="lyrics-untimed-reader"
+        className={cn(
+          'relative w-full max-h-[280px] overflow-y-auto px-4 py-6 space-y-4 text-center select-none transition-all scrollbar-none',
+          className
+        )}
+      >
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-300 text-[11px] font-semibold mb-2">
+          <Mic2 className="w-3.5 h-3.5 text-violet-400" />
+          <span>Lyrics Reader (Untimed) &bull; Sing Along</span>
+        </div>
+
+        <div className="space-y-3 max-w-xl mx-auto">
+          {lines.map((line, idx) => (
+            <p
+              key={line.id || idx}
+              className={cn(
+                'text-slate-200 font-medium transition-colors leading-relaxed',
+                fontSize === 'compact'
+                  ? 'text-sm'
+                  : fontSize === 'large'
+                  ? 'text-xl'
+                  : 'text-base sm:text-lg'
+              )}
+            >
+              {line.text}
+            </p>
+          ))}
+        </div>
+
+        {onSwitchToVisualizer && (
+          <div className="pt-2">
+            <button
+              type="button"
+              data-testid="switch-to-visualizer-btn"
+              onClick={onSwitchToVisualizer}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10 text-xs font-semibold transition-all active:scale-95"
+            >
+              <Activity className="w-3.5 h-3.5 text-violet-400" />
+              <span>Switch to Audio Wave Visualizer</span>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (!hasTimedLyrics) {
     return (
       <div
