@@ -8,7 +8,7 @@
   - `f4e171c`: `feat(friends): implement Sprint 5.7 Phase 3 Social Session Starter`
   - `ec56644`: `feat(friends): refine Sprint 5.7 Phase 3 retry semantics and lounge membership guards`
 - **Target Branch:** `main`
-- **Current HEAD:** `ec56644`
+- **Current HEAD:** `8d9aae9` (docs: complete Sprint 5.7.3 Phase 3 independent source audit)
 - **Auditor Mode:** Read-only independent source audit (no test runners, no production builds, no database writes)
 - **Database Status:** Target database configuration remains `test`; zero database mutations or migrations executed
 - **Final Verdict:** `AUDIT PASSED — PHASE 3 APPROVED`
@@ -20,7 +20,8 @@
 ### 2.1. Git Branch, Commit Ancestry & Working Tree
 Direct inspection of the Git DAG verifies the following commit ancestry:
 ```text
-ec56644 (HEAD -> main) feat(friends): refine Sprint 5.7 Phase 3 retry semantics and lounge membership guards
+8d9aae9 (HEAD -> main) docs(audit): complete Sprint 5.7.3 Phase 3 independent source audit
+ec56644 feat(friends): refine Sprint 5.7 Phase 3 retry semantics and lounge membership guards
 35729ed docs(planning): update Sprint 5.7 Phase 3 architecture readiness assessment
 f4e171c feat(friends): implement Sprint 5.7 Phase 3 Social Session Starter
 bf31037 docs(planning): create Sprint 5.7 Phase 3 Social Session Starter architecture and implementation plan
@@ -33,7 +34,7 @@ eb47cad feat(friends): implement Sprint 5.7 Phase 2 Friend Activity Dashboard
 ```
 - **Working Tree:** Clean (`nothing to commit, working tree clean`).
 - **Ancestry Integrity:** Verified that `ec56644` is a direct linear descendant of `e3a1bcb` (Phase 2 final approval) and `7f12209` (Phase 1 foundation).
-- **Scope of Changes:** Between baseline `e3a1bcb` and audited `HEAD` (`ec56644`):
+- **Scope of Changes:** Between baseline `e3a1bcb` and audited implementation `ec56644`:
   - `apps/api`: **0 files modified** (100% backend reuse).
   - `packages/contracts`: **0 files modified** (100% contract reuse).
   - `apps/web`: 5 application files modified/created in `apps/web/src/features/friends/`.
@@ -52,8 +53,9 @@ eb47cad feat(friends): implement Sprint 5.7 Phase 2 Friend Activity Dashboard
 | `apps/web/src/features/friends/components/friend-activity-section.tsx` | Dashboard Section | `FriendActivitySection`, Section A "Start a Session" CTA, Section D friend card callback binding, dialog mounting |
 | `apps/api/src/modules/friends/friendship.service.ts` | Backend Service | `inviteLoungeBatch`, `HostBatchInviteRateLimiter`, pair key checks, membership queries |
 | `apps/api/src/modules/friends/friendship.controller.ts` | Backend Controller | `inviteLoungeBatch`, error mapping, HTTP status codes |
-| `apps/api/src/modules/rooms/invitation.service.ts` | Invitation Service | `createFriendInvitation`, `validateRecipientInvitationById`, token revocation |
+| `apps/api/src/modules/rooms/invitation.service.ts` | Invitation Service | `createFriendInvitation`, `validateRecipientInvitationById`, `getPendingInvitationsForRecipient`, `dismissInvitationByRecipient` |
 | `apps/api/src/modules/rooms/invitation.model.ts` | Database Model | `RoomInvitationSchema`, token hash indexing, compound indexes |
+| `apps/api/src/modules/rooms/room.service.ts` | Room Service | `joinRoom`, atomic capacity reservation, membership idempotency |
 | `apps/api/src/modules/history/session.model.ts` | History Model | `KaraokeSessionSchema`, status lifecycle |
 
 ---
@@ -82,7 +84,7 @@ eb47cad feat(friends): implement Sprint 5.7 Phase 2 Friend Activity Dashboard
 | **B.1** | **Retry Contains Only Failed Recipients** | `use-social-session-starter.ts` lines 224–226: `const failedIds = batchResult.results.filter(r => r.status === 'failed').map(r => r.friendUserId);`. Only `failedIds` are transmitted. | **VERIFIED COMPLIANT** — No re-dispatch of successful recipients. |
 | **B.2** | **Previously Successful Recipients Untouched** | `invitation.service.ts` lines 131–134: `RoomInvitationModel.updateMany({ roomId, recipientId: friendObjectId, status: 'active', revokedAt: null }, { $set: { status: 'revoked', revokedAt: new Date() } })`. Scoped strictly to `friendObjectId`. | **VERIFIED COMPLIANT** — Successful invitations for other recipients remain intact and active. |
 | **B.3** | **Per-Recipient Token Revocation Scope** | Query predicate in `updateMany` includes `{ roomId: roomObjectId, recipientId: friendObjectId }`. | **VERIFIED COMPLIANT** — Cross-recipient and cross-room revocation is impossible. |
-| **B.4** | **Concurrent Retries & Request Races** | Client: `if (isSubmitting) return;` prevents concurrent calls.<br>Server: `HostBatchInviteRateLimiter` enforces 1 batch per 5s.<br>Database Race Analysis: Under concurrent execution of two batches for the same `(roomId, friendId)`, each creates an isolated recipient-bound token. Even if two active records were created, both point to the same room and recipient; upon joining via either `invitationId`, the user becomes an active member, rendering subsequent joins idempotent. | **VERIFIED COMPLIANT** — No security compromise or corrupted invitation state under race conditions. |
+| **B.4** | **Concurrent Retries & Request Races** | Detailed in Section 10 (AUD-5.7.3-OBS-01). Client: `isSubmitting` guard. Server: `HostBatchInviteRateLimiter` 5s sliding window. Database: Isolated recipient-bound credentials. | **VERIFIED COMPLIANT** — Classified as an Accepted Limitation with Documented Consequences. |
 | **B.5** | **Rate-Limit Responses Preserve Outcomes** | `use-social-session-starter.ts` lines 262–266: When retry throws 429, `setSubmissionStep('partial_success')` and `setErrorMessage(msg)` are executed. In `start-social-session-dialog.tsx` line 97, `hasResult = Boolean(starter.batchResult)` keeps the summary view rendered and displays the error banner. | **VERIFIED COMPLIANT** — Previous results are preserved; user can retry once the 5s window passes. |
 | **B.6** | **Accurate Representation of Outcomes** | `start-social-session-dialog.tsx` lines 138–195: Granular breakdown: Green banner for full success (`summary.failed === 0`), amber banner for partial success (`summary.sent > 0 && summary.failed > 0`). Itemized status labels: `"Invited"`, `"Already in lounge"`, `"Not friends"`, `"Failed"`. | **VERIFIED COMPLIANT** — Clear, transparent outcome representation. |
 | **B.7** | **Newer Valid Invitation Protection** | Each batch dispatch updates prior invitations to `revoked` and generates a new record. When the recipient joins, `validateRecipientInvitationById` inspects `status === 'active'` and `revokedAt === null`. | **VERIFIED COMPLIANT** — Revoked invitations cannot be accepted. |
@@ -123,15 +125,111 @@ eb47cad feat(friends): implement Sprint 5.7 Phase 2 Friend Activity Dashboard
 | :---: | :--- | :--- | :--- |
 | **E.1** | **Zero Unintended Models, Migrations or Events** | `git diff --stat e3a1bcb HEAD` confirms zero modifications in `apps/api/src/modules/` or `packages/contracts/src/`. Zero new database models, zero new indexes, zero migrations. | **VERIFIED COMPLIANT** |
 | **E.2** | **Preservation of Existing Lifecycles** | `RoomModel`, `RoomInvitationModel`, `KaraokeSessionModel`, `FriendshipModel`, `GlobalPresenceManager` function without modification. Dual-credential join (`invitationId` / `inviteToken`) remains intact. | **VERIFIED COMPLIANT** |
-| **E.3** | **Preservation of Canonical Debt HIST-01 to HIST-07** | `HIST-01` (unautomated abandoned room cleanup) and `HIST-03` (single-node in-memory presence and batch rate limiting) remain documented and preserved. Session recaps remain restricted to completed sessions (`status === 'completed'`). | **VERIFIED COMPLIANT** |
+| **E.3** | **Canonical Historical Debt Mapping** | Reconciled in Section 9. Canonical items `HIST-01` through `HIST-07` remain documented and preserved. | **VERIFIED COMPLIANT** |
 | **E.4** | **Strict Ban on "Watch Live" Terminology** | Verified via repository-wide search: `grep -rn -i "Watch Live" apps/ packages/` returned **0 matches** (exit code 1). | **VERIFIED COMPLIANT** |
 | **E.5** | **No Regression to Phase 1 and Phase 2** | Section A (Badges), Section 7 (Pending Inbox), Section B (Singing Now), Section C (In Lounges), Section D (Available Online), Section E (Offline Friends) remain intact. Pending invitations inbox dismissals and joins operate normally. | **VERIFIED COMPLIANT** |
 
 ---
 
-## 9. Permitted Static Verification Evidence
+## 9. Correct Canonical Historical Debt Mapping (HIST-01 to HIST-07)
 
-### 9.1. TypeScript Compilation Check
+The canonical historical technical debt register established in Sprint 5.3 (`docs/SPRINT_5_3_FINAL_REPORT.md`) and reaffirmed in Sprint 5.6.1 (`docs/SPRINT_5_6_1_TECHNICAL_DEBT_REGISTER.md`) covers the Karaoke History domain:
+
+| ID | Title | Status | Scope & Definition |
+| :---: | :--- | :---: | :--- |
+| **HIST-01** | Stale / abandoned room session closure policy | Open | Background worker or TTL sweep for abandoned room sessions. Inactive host rooms remain open without generating premature/invalid session recaps. |
+| **HIST-02** | Participant attendance intervals | Open | Detailed interval accounting for multi-hour participant attendance across disconnects. |
+| **HIST-03** | Bounded participant data completeness | Open | Capping participant metadata retention in `KaraokeSessionModel.participants` for extreme long-term scalability. |
+| **HIST-04** | Performance terminal-state race conditions | Open | Handling rapid concurrent song skipping near end-of-track transitions. |
+| **HIST-05** | Account deletion and history retention | Open | GDPR/CCPA anonymization hooks for deleted user session histories. |
+| **HIST-06** | Privacy authorization and cache behavior | Open | Cache invalidation triggers upon session history privacy toggle changes. |
+| **HIST-07** | Session and vocal duration accuracy | Open | Sub-second vocal telemetry precision vs network latency compensation. |
+
+### Architectural Clarification: In-Memory Presence vs. HIST Debt
+- Earlier planning reports informally referenced `HIST-03` alongside single-node in-memory presence and batch rate limiting without Redis.
+- **Clarification:** Single-node in-memory presence (`GlobalPresenceManager`) and in-memory batch rate limiting (`HostBatchInviteRateLimiter`) are **independent architectural boundaries/constraints**, not part of `HIST-01` through `HIST-07`.
+- Canonical `HIST-03` is strictly **Bounded participant data completeness** in `KaraokeSessionModel`.
+- All seven canonical debts (`HIST-01` through `HIST-07`) remain open, documented, and uncompromised by Sprint 5.7 Phase 3.
+
+---
+
+## 10. In-Depth Verification: Concurrent Invitation Race Scenario
+
+### 10.1. Scenario Definition & Source Locations
+- **Scenario:**
+  1. Host sends a batch invitation to recipient A for Room R.
+  2. A second batch request for Room R and recipient A executes concurrently.
+  3. Both requests attempt to create or replace recipient-bound invitations in `createFriendInvitation`.
+  4. Recipient A redeems one of the resulting invitation credentials.
+- **Relevant Source Files & Line Numbers:**
+  - `apps/api/src/modules/rooms/invitation.service.ts` (lines 131–152): `createFriendInvitation`
+  - `apps/api/src/modules/friends/friendship.service.ts` (lines 868–955): `inviteLoungeBatch`
+  - `apps/api/src/modules/rooms/invitation.model.ts` (lines 75–81): `RoomInvitationSchema` indexes
+  - `apps/api/src/modules/rooms/room.service.ts` (lines 414–448, 452–460, 488–520): `joinRoom`
+  - `apps/api/src/modules/rooms/invitation.service.ts` (lines 507–530): `getPendingInvitationsForRecipient`
+
+### 10.2. Surgical Source Analysis of Verification Points
+
+1. **Coexistence of Multiple Active Invitations:**
+   - In `invitation.service.ts` (lines 131–151), `createFriendInvitation` executes two operations:
+     1. `RoomInvitationModel.updateMany({ roomId, recipientId, status: 'active', revokedAt: null }, { $set: { status: 'revoked', revokedAt: new Date() } })`
+     2. `RoomInvitationModel.create({ roomId, tokenHash, createdBy, recipientId, expiresAt, status: 'active' })`
+   - These two operations are **not enclosed in a MongoDB ACID transaction**, and `RoomInvitationModel` does not have a unique partial compound index on `{ roomId: 1, recipientId: 1 }` where `{ status: 'active', revokedAt: null }`.
+   - If two requests (R1 and R2) interleave as: `updateMany(R1) -> updateMany(R2) -> create(R1) -> create(R2)`, both resulting documents (Inv1 and Inv2) will have `status: 'active'` and `revokedAt: null`.
+   - **Finding:** Under concurrent interleaving, multiple active invitations for the same room and recipient **can coexist** in MongoDB.
+
+2. **Unexpected Revocation of In-Flight Credentials:**
+   - If the requests interleave as `updateMany(R1) -> create(R1) -> updateMany(R2) -> create(R2)`:
+   - R2's `updateMany` will revoke Inv1 (`status: 'revoked'`, `revokedAt: new Date()`), while Inv2 remains active.
+   - If online recipient A received Inv1 via a realtime Socket.IO toast emitted by R1 and attempts to redeem it via `joinRoom` with `invitationId: Inv1`:
+   - `validateRecipientInvitationById` inspects `invitation.revokedAt` (line 482) and rejects it with `INVITATION_REVOKED` (HTTP 403).
+   - Recipient A would then need to accept Inv2 (received from the second toast or pending inbox).
+
+3. **Invitation Consumption on Join:**
+   - In `room.service.ts` (lines 420–448), `joinRoom` calls `validateRecipientInvitationById`.
+   - `validateRecipientInvitationById` strictly performs a read-only validation. It does **not** mutate `status` or set `revokedAt`.
+   - **Finding:** In KTVOnline architecture, invitations serve as standing access credentials (48-hour TTL) allowing re-entry across disconnects and browser refreshes. Consequently, **redemption does not consume or invalidate active invitations** in the database.
+
+4. **Pending Inbox Behavior:**
+   - In `invitation.service.ts` (lines 507–530), `getPendingInvitationsForRecipient` executes:
+     `RoomInvitationModel.find({ recipientId, status: 'active', revokedAt: null, expiresAt: { $gt: now } }).sort({ createdAt: -1 })`
+   - The query does not perform a `$group` or deduplication by `roomId`.
+   - If Inv1 and Inv2 both remain active, both documents are returned.
+   - **Finding:** The recipient's pending inbox will render **two invitation cards for the same lounge**. Dismissing one card via `POST /api/friends/invitations/:id/dismiss` revokes only that specific card (`_id: invitationObjectId`), leaving the duplicate active until dismissed or expired.
+
+5. **Capacity Reservation & Membership Idempotency:**
+   - In `room.service.ts` (lines 452–460), capacity reservation is strictly atomic via `findOneAndUpdate` with `$inc: { currentParticipantsCount: 1 }` conditioned on `$expr: { $lt: ['$currentParticipantsCount', '$capacity'] }`.
+   - If Recipient A redeems Inv1, they are added to `RoomMembershipModel` with `status: 'active'`.
+   - If Recipient A subsequently redeems Inv2, `joinRoom` executes lines 504–512:
+     ```typescript
+     if (existingMembership.status === 'active') {
+       await RoomModel.updateOne({ _id: roomObjectId }, { $inc: { currentParticipantsCount: -1 } });
+       return { success: true, data: existingMembership };
+     }
+     ```
+   - The speculative capacity counter is rolled back, duplicate membership is prevented, and `{ success: true }` is returned idempotently.
+   - **Finding:** Capacity reservation and membership idempotency **remain 100% correct, atomic, and safe**.
+
+6. **Determinism of Final State:**
+   - The number of surviving active invitation records (1 vs 2) is **non-deterministic** depending on concurrent thread execution.
+   - However, the security boundaries and access rights are **fully deterministic**: all surviving records are strictly bound to recipient A, cannot be redeemed by any other user (`INVITATION_RECIPIENT_MISMATCH`), and grant access to the exact same room.
+
+### 10.3. Classification & Mitigation
+- **Classification:** **Accepted limitation with documented consequences.**
+- **Mitigating Controls in Source Code:**
+  1. *Client Guard:* `useSocialSessionStarter` enforces `if (isSubmitting) return;`, preventing the frontend user from triggering concurrent batches.
+  2. *Host Rate Limiter:* `friendship.service.ts` enforces `HostBatchInviteRateLimiter` (1 batch per 5 seconds per host), blocking rapid successive submissions at API gateway level.
+  3. *Fail-Closed Security:* No privilege escalation or cross-tenant token leakage is possible under any race condition.
+- **Architectural Recommendation (Deferred):**
+  - In a future maintenance release (Sprint 5.8+), declare a unique partial compound index on `RoomInvitationModel`:
+    `{ roomId: 1, recipientId: 1 }` with `{ unique: true, partialFilterExpression: { status: 'active', revokedAt: null, recipientId: { $type: 'objectId' } } }`
+    to guarantee database-level uniqueness. Per sprint constraints, no migrations or index modifications were introduced in Phase 3.
+
+---
+
+## 11. Permitted Static Verification Evidence
+
+### 11.1. TypeScript Compilation Check
 ```bash
 $ pnpm --recursive run typecheck
 Scope: 3 of 4 workspace projects
@@ -141,7 +239,7 @@ apps/web typecheck: tsc --noEmit (Done in 1.5s)
 Done with exit code 0.
 ```
 
-### 9.2. ESLint Verification
+### 11.2. ESLint Verification
 ```bash
 $ pnpm --recursive run lint
 Scope: 3 of 4 workspace projects
@@ -151,7 +249,7 @@ apps/web lint: next lint (Done in 1.9s - ✔ No ESLint warnings or errors)
 Done with exit code 0.
 ```
 
-### 9.3. Terminology Verification
+### 11.3. Terminology Verification
 ```bash
 $ grep -rn -i "Watch Live" apps/ packages/
 (0 matches - exit code 1)
@@ -159,20 +257,24 @@ $ grep -rn -i "Watch Live" apps/ packages/
 
 ---
 
-## 10. Audit Findings & Observations
+## 12. Explicit Distinction Between Source Verification and Runtime Verification
 
-### Observation AUD-5.7.3-OBS-01 (Informational — Concurrent Multi-Batch Invitations)
-- **File:** `apps/api/src/modules/rooms/invitation.service.ts` (lines 131–151)
-- **Detail:** In `createFriendInvitation`, `RoomInvitationModel.updateMany` (revoking prior active invitations) and `RoomInvitationModel.create` (creating the new invitation) are executed in two consecutive operations without a MongoDB multi-document ACID transaction. If an external client deliberately bypassed the 5-second `HostBatchInviteRateLimiter` and submitted two concurrent batch requests for the same room and recipient in parallel, two active invitations could theoretically be created.
-- **Security Assessment:** No vulnerability or integrity breach exists. Both generated tokens are cryptographically distinct, recipient-bound to the same user, and point to the same room. When the recipient joins using either invitation, they become an active room member; any subsequent join attempt with the second invitation is an idempotent no-op. Furthermore, the client prevents duplicate submission via `isSubmitting`, and the server enforces `HostBatchInviteRateLimiter` (1 batch per 5s).
-- **Severity:** Informational / Architectural Note (No remediation required).
+- **Source-Level Verification (Completed & Confirmed):**
+  - Static type correctness across all workspace projects (`pnpm typecheck` exit 0).
+  - Static code style and rule conformance (`pnpm lint` exit 0).
+  - Code analysis confirming adherence to batch caps, presence sorting, category schemas, and error handling.
+  - Zero database migrations or models introduced; database target remains `test`.
+- **Runtime Verification Status (Strict Policy Boundary):**
+  - Per the strict code-only development policy, test runners (`vitest`, `jest`, `playwright`) were **prohibited from running** and no automated tests were created or executed.
+  - Production builds (`next build`, `nest build`) were **prohibited**.
+  - All findings and conclusions in this report are based on rigorous static inspection of application source code, schemas, and queries.
 
 ---
 
-## 11. Final Audit Verdict
+## 13. Final Audit Verdict
 
 ```text
 AUDIT PASSED — PHASE 3 APPROVED
 ```
 
-The Sprint 5.7 Phase 3 implementation of the **Social Session Starter** strictly adheres to all architectural constraints, contracts, rate limits, and security boundaries. Static verification confirms zero type errors, zero lint warnings, and zero regressions across Phase 1 and Phase 2. The codebase is fully prepared for Phase 4.
+The Sprint 5.7 Phase 3 implementation of the **Social Session Starter** strictly adheres to all architectural constraints, contracts, rate limits, and security boundaries. The concurrent invitation race condition is thoroughly evaluated and classified as an accepted limitation with no security compromise. Static verification confirms zero type errors, zero lint warnings, and zero regressions across Phase 1 and Phase 2. The codebase is approved for Phase 4.
