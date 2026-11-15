@@ -27,6 +27,8 @@ interface StartSocialSessionDialogProps {
   onClose: () => void;
   friends: FriendshipDto[];
   initialFriendId?: string;
+  fixedRoomId?: string;
+  fixedRoomName?: string;
 }
 
 const ATMOSPHERE_OPTIONS: Array<{ id: RoomAtmospherePreset; label: string; accent: string }> = [
@@ -42,15 +44,17 @@ export function StartSocialSessionDialog({
   onClose,
   friends,
   initialFriendId,
+  fixedRoomId,
+  fixedRoomName,
 }: StartSocialSessionDialogProps) {
   const starter = useSocialSessionStarter();
   const { open } = starter;
 
   useEffect(() => {
     if (isOpen) {
-      open(initialFriendId);
+      open(initialFriendId, fixedRoomId);
     }
-  }, [isOpen, initialFriendId, open]);
+  }, [isOpen, initialFriendId, fixedRoomId, open]);
 
   const handleClose = () => {
     starter.close();
@@ -124,10 +128,12 @@ export function StartSocialSessionDialog({
           </div>
           <div>
             <h2 id="social-session-dialog-title" className="text-base sm:text-lg font-bold text-white">
-              Start a Karaoke Session
+              {fixedRoomId ? 'Invite Friends to Lounge' : 'Start a Karaoke Session'}
             </h2>
             <p className="text-xs text-slate-400">
-              Pick friends and start singing together in a shared lounge.
+              {fixedRoomId
+                ? 'Select friends to invite directly into your current lounge.'
+                : 'Pick friends and start singing together in a shared lounge.'}
             </p>
           </div>
         </div>
@@ -225,14 +231,25 @@ export function StartSocialSessionDialog({
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={starter.navigateToRoom}
-                className="w-full flex-1 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-xs font-bold shadow-lg shadow-violet-600/30 transition-all flex items-center justify-center gap-2"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>Enter Lounge Now</span>
-              </button>
+              {fixedRoomId ? (
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="w-full flex-1 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-xs font-bold shadow-lg shadow-violet-600/30 transition-all flex items-center justify-center gap-2"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Back to Lounge</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={starter.navigateToRoom}
+                  className="w-full flex-1 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-xs font-bold shadow-lg shadow-violet-600/30 transition-all flex items-center justify-center gap-2"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Enter Lounge Now</span>
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -258,38 +275,47 @@ export function StartSocialSessionDialog({
             )}
 
             {/* Mode Switcher: New vs Existing */}
-            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-white/[0.03] border border-white/5 shrink-0">
-              <button
-                type="button"
-                onClick={() => starter.setLoungeMode('new')}
-                className={cn(
-                  'flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all',
-                  starter.loungeMode === 'new'
-                    ? 'bg-violet-600 text-white shadow-md shadow-violet-600/20'
-                    : 'text-slate-400 hover:text-white'
-                )}
-              >
-                <PlusCircle className="w-3.5 h-3.5" />
-                <span>Create New Lounge</span>
-              </button>
+            {!fixedRoomId && (
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-white/[0.03] border border-white/5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => starter.setLoungeMode('new')}
+                  className={cn(
+                    'flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all',
+                    starter.loungeMode === 'new'
+                      ? 'bg-violet-600 text-white shadow-md shadow-violet-600/20'
+                      : 'text-slate-400 hover:text-white'
+                  )}
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span>Create New Lounge</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => starter.setLoungeMode('existing')}
-                className={cn(
-                  'flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all',
-                  starter.loungeMode === 'existing'
-                    ? 'bg-violet-600 text-white shadow-md shadow-violet-600/20'
-                    : 'text-slate-400 hover:text-white'
-                )}
-              >
-                <FolderSync className="w-3.5 h-3.5" />
-                <span>Use Existing Lounge</span>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => starter.setLoungeMode('existing')}
+                  className={cn(
+                    'flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all',
+                    starter.loungeMode === 'existing'
+                      ? 'bg-violet-600 text-white shadow-md shadow-violet-600/20'
+                      : 'text-slate-400 hover:text-white'
+                  )}
+                >
+                  <FolderSync className="w-3.5 h-3.5" />
+                  <span>Use Existing Lounge</span>
+                </button>
+              </div>
+            )}
 
             {/* Lounge Configuration Section */}
-            {starter.loungeMode === 'new' ? (
+            {fixedRoomId ? (
+              <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 space-y-1 shrink-0">
+                <span className="text-[11px] font-semibold text-slate-400 block">Inviting to Lounge</span>
+                <div className="flex items-center gap-2 text-xs font-semibold text-white">
+                  <span>{fixedRoomName || 'Current Lounge'}</span>
+                </div>
+              </div>
+            ) : starter.loungeMode === 'new' ? (
               <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 space-y-3 shrink-0">
                 <div>
                   <label className="text-[11px] font-semibold text-slate-400 block mb-1">

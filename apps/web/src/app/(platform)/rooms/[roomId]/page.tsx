@@ -40,6 +40,7 @@ import { TransferHostDialog } from '@/components/rooms/transfer-host-dialog';
 import { RoomIdentityDialog } from '@/components/rooms/room-identity-dialog';
 import { RoomCustomizationDialog } from '@/components/rooms/room-customization-dialog';
 import { InviteFriendsDialog } from '@/components/rooms/invite-friends-dialog';
+import { StartSocialSessionDialog, useFriends } from '@/features/friends';
 import { RoomGuideDialog } from '@/components/rooms/room-guide-dialog';
 import { useOnboarding } from '@/hooks/use-onboarding';
 import {
@@ -108,6 +109,9 @@ export default function RoomDetailPage() {
   const [isIdentityOpen, setIsIdentityOpen] = useState(false);
   const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [isHostSocialStarterOpen, setIsHostSocialStarterOpen] = useState(false);
+  const { data: friendsData } = useFriends();
+  const acceptedFriends = friendsData?.items || [];
   const { showRoomGuide, dismissRoomGuide, reopenRoomGuide } = useOnboarding();
   const updateRoomMutation = useUpdateRoom();
   const atmosphere = useRoomAtmosphere({ authoritativePreset: room?.atmospherePreset });
@@ -567,7 +571,7 @@ export default function RoomDetailPage() {
                     <button
                       type="button"
                       data-testid="invite-friends-header-button"
-                      onClick={() => setIsInviteOpen(true)}
+                      onClick={() => setIsHostSocialStarterOpen(true)}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 text-xs font-semibold border border-cyan-500/30 transition-all active:scale-95"
                       title="Invite Friends to Lounge"
                     >
@@ -612,7 +616,7 @@ export default function RoomDetailPage() {
 
             {/* Share / Invite Button */}
             <button
-              onClick={() => setIsInviteOpen(true)}
+              onClick={() => (isHost ? setIsHostSocialStarterOpen(true) : setIsInviteOpen(true))}
               className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors border border-white/5"
               title="Invite friends or share lounge"
             >
@@ -959,6 +963,19 @@ export default function RoomDetailPage() {
 
             {activeTab === 'people' && (
               <div className="flex-1 flex flex-col min-h-0 h-full">
+                {isHost && (
+                  <div className="p-3 border-b border-white/5 bg-white/[0.02] shrink-0">
+                    <button
+                      type="button"
+                      data-testid="lounge-host-invite-friends-button"
+                      onClick={() => setIsHostSocialStarterOpen(true)}
+                      className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-xs font-bold shadow-md shadow-violet-600/20 transition-all active:scale-95"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Invite Friends to Lounge</span>
+                    </button>
+                  </div>
+                )}
                 <RoomMemberList
                   roomId={roomId}
                   currentUserId={currentUser?.id}
@@ -1178,7 +1195,24 @@ export default function RoomDetailPage() {
               )}
 
               {mobileDrawer === 'people' && (
-                <RoomMemberList
+                <div className="flex-1 flex flex-col min-h-0">
+                  {isHost && (
+                    <div className="p-3 border-b border-white/5 bg-white/[0.02] shrink-0">
+                      <button
+                        type="button"
+                        data-testid="lounge-host-invite-friends-mobile-button"
+                        onClick={() => {
+                          setMobileDrawer(null);
+                          setIsHostSocialStarterOpen(true);
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-xs font-bold shadow-md shadow-violet-600/20 transition-all active:scale-95"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Invite Friends to Lounge</span>
+                      </button>
+                    </div>
+                  )}
+                  <RoomMemberList
                   roomId={roomId}
                   currentUserId={currentUser?.id}
                   members={members}
@@ -1201,7 +1235,8 @@ export default function RoomDetailPage() {
                   currentSingerUserId={karaoke.currentItem?.requestedBy.id}
                   className="border-0 bg-transparent p-0"
                 />
-              )}
+              </div>
+            )}
 
               {mobileDrawer === 'activities' && (
                 <RoomActivityTimeline activities={activities} />
@@ -1308,6 +1343,17 @@ export default function RoomDetailPage() {
         room={room}
         isHost={isHost}
       />
+
+      {/* Social Session Starter - In-Lounge Host Batch Invites (Sprint 5.7 Phase 4) */}
+      {isHost && room && (
+        <StartSocialSessionDialog
+          isOpen={isHostSocialStarterOpen}
+          onClose={() => setIsHostSocialStarterOpen(false)}
+          friends={acceptedFriends}
+          fixedRoomId={room.id}
+          fixedRoomName={room.name}
+        />
+      )}
 
       {/* Room Quick Guide / First-Time Orientation Dialog (Sprint 5.1) */}
       <RoomGuideDialog

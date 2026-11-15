@@ -69,11 +69,18 @@ export function useSocialSessionStarter() {
   }, [myRoomsData?.items, currentUser?.id]);
 
   const open = useCallback(
-    (initialFriendId?: string) => {
+    (initialFriendId?: string, fixedRoomId?: string) => {
       setIsOpen(true);
       setSelectedFriendIds(initialFriendId ? [initialFriendId] : []);
-      setLoungeMode('new');
-      setSelectedRoomId(null);
+      if (fixedRoomId) {
+        setLoungeMode('existing');
+        setSelectedRoomId(fixedRoomId);
+        setActiveRoomId(fixedRoomId);
+      } else {
+        setLoungeMode('new');
+        setSelectedRoomId(null);
+        setActiveRoomId(null);
+      }
       setNewRoomName(defaultLoungeName);
       setNewRoomVisibility('private');
       setNewRoomAtmosphere('midnight_lounge');
@@ -81,7 +88,6 @@ export function useSocialSessionStarter() {
       setSearchQuery('');
       setSubmissionStep('idle');
       setBatchResult(null);
-      setActiveRoomId(null);
       setErrorMessage(null);
     },
     [defaultLoungeName]

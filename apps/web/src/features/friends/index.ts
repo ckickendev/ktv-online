@@ -4,6 +4,7 @@ export * from './hooks/use-friend-activity';
 export * from './hooks/use-social-session-starter';
 export * from './components/friend-activity-card';
 export * from './components/friend-activity-section';
+export * from './components/friends-live-bar';
 export * from './components/start-social-session-dialog';
 export * from './components/pending-invitations-inbox';
 export * from './components/presence-status-badge';

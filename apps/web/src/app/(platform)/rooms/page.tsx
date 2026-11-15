@@ -28,6 +28,7 @@ import { RoomCardSkeleton } from '@/components/shared/room-card-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { RoomPreviewDialog } from '@/components/rooms/room-preview-dialog';
 import { WelcomeQuickStart } from '@/components/onboarding/welcome-quick-start';
+import { FriendsLiveBar } from '@/features/friends';
 import { useRooms } from '@/hooks/queries/use-rooms';
 import { useJoinRoom } from '@/hooks/queries/use-room';
 import { useAuth } from '@/hooks/use-auth';
@@ -437,6 +438,9 @@ function RoomDiscoveryContent() {
             />
           </div>
         )}
+
+        {/* Live Friends Bar (Sprint 5.7 Phase 4) */}
+        <FriendsLiveBar />
 
         {/* Search Bar & Global Filter Bar */}
         <div id="discovery-search-bar" className="glass-panel p-4 rounded-2xl mb-6 border border-white/5 space-y-4 shadow-xl">
