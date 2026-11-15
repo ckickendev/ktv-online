@@ -33,9 +33,10 @@ cp apps/web/.env.example apps/web/.env
 ```
 
 ### Backend Variables (`apps/api/.env`)
-- `NODE_ENV`: Application environment (`development` | `production` | `test`)
+- `NODE_ENV`: Application environment (`development` | `production` | `test` | `staging`)
 - `PORT`: HTTP port for Express server (`5001`)
-- `MONGODB_URI`: Connection string (default: `mongodb://127.0.0.1:27017/ktv_online`)
+- `MONGODB_URI`: Connection string (default: `mongodb://127.0.0.1:27017/test`)
+- `MONGODB_DB_NAME`: Explicit target database name (default: `test`)
 - `JWT_ACCESS_SECRET`: Secret key for signing access tokens (min 16 chars)
 - `JWT_REFRESH_SECRET`: Secret key for signing refresh tokens (min 16 chars)
 - `JWT_ACCESS_EXPIRES_IN`: Access token TTL (e.g. `15m`)
@@ -65,14 +66,22 @@ pnpm docker:down
 Alternatively, if you run a native MongoDB instance on `mongodb://127.0.0.1:27017`, the application connects automatically.
 
 ### Standalone vs. Replica Set Development Note
-- **Default Standalone Mode**: The default `docker-compose.yml` runs a standalone MongoDB container. Standalone MongoDB **does not support multi-document ACID transactions**. In standalone mode, `reorderQueue` is disabled (Option A) and will return HTTP 501 / `UNSUPPORTED_TOPOLOGY_FOR_REORDER`.
-- **Testing Queue Reordering Locally**: If you need to test multi-document queue reordering locally or match production transaction semantics, run MongoDB with a single-node replica set:
+- **Default Standalone Mode**: The default `docker-compose.yml` (`pnpm docker:up`) runs a standalone MongoDB container. Standalone MongoDB **does not support multi-document ACID transactions**. In standalone mode, atomic queue reordering is disabled and runs in CAS fallback mode.
+- **Local Replica Set Mode (Sprint 5.8+)**: To test multi-document transactions locally or match staging/production topology, use the dedicated replica set compose configuration:
   ```bash
-  # Start native mongod with replica set rs0
-  mongod --dbpath /data/db --replSet rs0 --bind_ip 127.0.0.1
-  
-  # In another terminal, initiate the replica set (once)
-  mongosh --eval "rs.initiate()"
+  # Launch single-node Replica Set (rs0) on port 27017
+  pnpm docker:replica:up
+
+  # Check replica set status & logs
+  pnpm docker:replica:logs
+
+  # Stop Replica Set container
+  pnpm docker:replica:down
+  ```
+  Set your backend connection string in `apps/api/.env`:
+  ```env
+  MONGODB_URI=mongodb://127.0.0.1:27017/test?replicaSet=rs0
+  MONGODB_DB_NAME=test
   ```
 
 ---

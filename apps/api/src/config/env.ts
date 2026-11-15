@@ -10,7 +10,8 @@ export const EnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'production', 'test', 'staging']).default('development'),
     PORT: z.coerce.number().int().positive().default(5001),
-    MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/ktv_online'),
+    MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/test'),
+    MONGODB_DB_NAME: z.string().min(1).default('test'),
     JWT_ACCESS_SECRET: z.string().min(16).default(DEV_DEFAULT_ACCESS_SECRET),
     JWT_REFRESH_SECRET: z.string().min(16).default(DEV_DEFAULT_REFRESH_SECRET),
     JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
@@ -38,6 +39,32 @@ export const EnvSchema = z
     LIVEKIT_WEBHOOK_SECRET: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    // If any LiveKit setting is provided in development, all core credentials must be provided
+    const hasAnyLiveKit = Boolean(data.LIVEKIT_URL || data.LIVEKIT_API_KEY || data.LIVEKIT_API_SECRET);
+    if (hasAnyLiveKit && (!data.LIVEKIT_URL || !data.LIVEKIT_API_KEY || !data.LIVEKIT_API_SECRET)) {
+      if (!data.LIVEKIT_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['LIVEKIT_URL'],
+          message: 'LIVEKIT_URL is required when LiveKit voice is configured',
+        });
+      }
+      if (!data.LIVEKIT_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['LIVEKIT_API_KEY'],
+          message: 'LIVEKIT_API_KEY is required when LiveKit voice is configured',
+        });
+      }
+      if (!data.LIVEKIT_API_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['LIVEKIT_API_SECRET'],
+          message: 'LIVEKIT_API_SECRET is required when LiveKit voice is configured',
+        });
+      }
+    }
+
     if (data.NODE_ENV === 'production' || data.NODE_ENV === 'staging') {
       if (!data.LIVEKIT_URL) {
         ctx.addIssue({

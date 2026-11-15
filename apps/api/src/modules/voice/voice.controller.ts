@@ -45,6 +45,7 @@ export class VoiceController {
 
       switch (errorMessage) {
         case 'VOICE_SERVICE_NOT_CONFIGURED':
+        case 'VOICE_NOT_CONFIGURED':
           res.status(503).json({
             success: false,
             error: {

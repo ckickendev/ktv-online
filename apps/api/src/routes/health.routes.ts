@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { env } from '../config/env.js';
 import { getDatabaseStatus } from '../database/connection.js';
 import { sendSuccess } from '../utils/response.js';
@@ -68,7 +69,7 @@ healthRoutes.get('/health', (_req: Request, res: Response) => {
     uptime: process.uptime(),
     database: {
       status: dbStatus,
-      name: 'ktv_online',
+      name: mongoose.connection.db?.databaseName || env.MONGODB_DB_NAME,
     },
   };
 
@@ -84,4 +85,33 @@ healthRoutes.get('/health', (_req: Request, res: Response) => {
   }
 
   sendSuccess(res, healthData, 'Service healthy', 200);
+});
+
+// Voice service configuration probe: returns 200 if LiveKit credentials are configured, 503 if unconfigured
+healthRoutes.get('/health/voice', (_req: Request, res: Response) => {
+  const isConfigured = Boolean(env.LIVEKIT_URL && env.LIVEKIT_API_KEY && env.LIVEKIT_API_SECRET);
+
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+  if (!isConfigured) {
+    res.status(503).json({
+      success: false,
+      message: 'LiveKit voice service is not configured on this server',
+      data: {
+        status: 'not_configured',
+        configured: false,
+      },
+    });
+    return;
+  }
+
+  sendSuccess(
+    res,
+    {
+      status: 'configured',
+      configured: true,
+    },
+    'LiveKit voice service is configured',
+    200
+  );
 });

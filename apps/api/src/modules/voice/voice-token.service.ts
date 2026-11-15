@@ -11,7 +11,7 @@ export class VoiceTokenService {
    */
   public async generateToken(options: GenerateVoiceTokenOptions): Promise<{ token: string; expiresAt: Date }> {
     if (!env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
-      throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be configured');
+      throw new Error('VOICE_SERVICE_NOT_CONFIGURED');
     }
 
     const ttlSeconds = options.ttlSeconds ?? this.defaultTtlSeconds;

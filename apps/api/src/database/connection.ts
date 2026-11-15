@@ -12,7 +12,8 @@ export async function connectDatabase(): Promise<boolean> {
   try {
     mongoose.connection.on('connected', () => {
       isConnected = true;
-      logger.info('📦 MongoDB connected successfully');
+      const targetDb = mongoose.connection.db?.databaseName || env.MONGODB_DB_NAME;
+      logger.info(`📦 MongoDB connected successfully to database: "${targetDb}"`);
     });
 
     mongoose.connection.on('error', (err) => {
@@ -26,6 +27,7 @@ export async function connectDatabase(): Promise<boolean> {
     });
 
     await mongoose.connect(env.MONGODB_URI, {
+      dbName: env.MONGODB_DB_NAME,
       serverSelectionTimeoutMS: 3000,
       connectTimeoutMS: 5000,
     });

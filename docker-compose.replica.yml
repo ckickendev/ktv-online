@@ -1,0 +1,42 @@
+version: "3.8"
+
+# Sprint 5.8: Safe Local MongoDB Replica Set Configuration
+# Runs a single-node MongoDB 7.0 Replica Set ('rs0') supporting multi-document ACID transactions
+# under staging-like configuration (NODE_ENV=staging) without modifying standalone 'mongodb_data'.
+#
+# Startup:
+#   docker compose -f docker-compose.replica.yml up -d
+#
+# Teardown:
+#   docker compose -f docker-compose.replica.yml down
+#
+# Connection string:
+#   mongodb://127.0.0.1:27017/test?replicaSet=rs0
+
+services:
+  mongodb-replica:
+    image: mongo:7.0
+    container_name: ktv-mongodb-replica
+    restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "${MONGODB_PORT:-27017}:27017"
+    volumes:
+      - mongodb_rs_data:/data/db
+    healthcheck:
+      test:
+        - "CMD"
+        - "mongosh"
+        - "--port"
+        - "27017"
+        - "--quiet"
+        - "--eval"
+        - "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: '127.0.0.1:27017' }] }).ok }"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  mongodb_rs_data:
+    driver: local

@@ -93,7 +93,7 @@ export class VoiceService {
 
     // Check if LiveKit configuration is available
     if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
-      throw new Error('VOICE_NOT_CONFIGURED');
+      throw new Error('VOICE_SERVICE_NOT_CONFIGURED');
     }
 
     // 1. Verify user exists and is active (not suspended/deactivated)

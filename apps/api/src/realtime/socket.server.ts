@@ -238,6 +238,7 @@ export function closeSocketServer(): Promise<void> {
     }
 
     presenceManager.clear();
+    globalPresenceManager.clear();
     ioInstance.close((err) => {
       if (err) {
         logger.error({ err }, 'Error closing Socket.IO server');

@@ -17,7 +17,10 @@
     "test": "pnpm --recursive run test",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f"
+    "docker:logs": "docker compose logs -f",
+    "docker:replica:up": "docker compose -f docker-compose.replica.yml up -d",
+    "docker:replica:down": "docker compose -f docker-compose.replica.yml down",
+    "docker:replica:logs": "docker compose -f docker-compose.replica.yml logs -f"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
