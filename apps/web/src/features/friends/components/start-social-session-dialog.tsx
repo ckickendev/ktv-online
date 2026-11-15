@@ -94,7 +94,7 @@ export function StartSocialSessionDialog({
 
   const isCompleteSuccess = starter.submissionStep === 'success';
   const isPartialSuccess = starter.submissionStep === 'partial_success';
-  const hasResult = isCompleteSuccess || isPartialSuccess;
+  const hasResult = Boolean(starter.batchResult);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
@@ -194,6 +194,14 @@ export function StartSocialSessionDialog({
               })}
             </div>
 
+            {/* Error Banner during retry if any */}
+            {starter.errorMessage && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span className="flex-1">{starter.errorMessage}</span>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-3 border-t border-white/10">
               {isPartialSuccess && (
@@ -201,10 +209,19 @@ export function StartSocialSessionDialog({
                   type="button"
                   onClick={starter.retryFailedInvitations}
                   disabled={starter.isSubmitting}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-all flex items-center justify-center gap-2"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Retry Failed</span>
+                  {starter.isSubmitting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Retrying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Retry Failed</span>
+                    </>
+                  )}
                 </button>
               )}
 
@@ -462,7 +479,12 @@ export function StartSocialSessionDialog({
                   const friend = friendship.friend;
                   const isSelected = starter.selectedFriendIds.includes(friend.id);
                   const isMaxReached = starter.selectedFriendIds.length >= 20;
-                  const isCheckDisabled = !isSelected && isMaxReached;
+                  const isAlreadyInSelectedRoom =
+                    starter.loungeMode === 'existing' &&
+                    Boolean(starter.selectedRoomId) &&
+                    friend.presence?.roomId === starter.selectedRoomId;
+                  const isCheckDisabled =
+                    (!isSelected && isMaxReached) || isAlreadyInSelectedRoom;
 
                   return (
                     <div
@@ -507,10 +529,16 @@ export function StartSocialSessionDialog({
                             )}
                           </div>
                           <div className="mt-0.5">
-                            <PresenceStatusBadge
-                              presence={friend.presence}
-                              className="scale-90 origin-left"
-                            />
+                            {isAlreadyInSelectedRoom ? (
+                              <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-medium">
+                                In this lounge
+                              </span>
+                            ) : (
+                              <PresenceStatusBadge
+                                presence={friend.presence}
+                                className="scale-90 origin-left"
+                              />
+                            )}
                           </div>
                         </div>
                       </div>

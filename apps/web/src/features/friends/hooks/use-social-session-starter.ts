@@ -219,6 +219,7 @@ export function useSocialSessionStarter() {
   ]);
 
   const retryFailedInvitations = useCallback(async () => {
+    if (isSubmitting) return;
     if (!activeRoomId || !batchResult) return;
     const failedIds = batchResult.results
       .filter((r) => r.status === 'failed')
@@ -255,17 +256,15 @@ export function useSocialSessionStarter() {
 
       if (totalFailed === 0) {
         setSubmissionStep('success');
-      } else if (totalSent > 0) {
-        setSubmissionStep('partial_success');
       } else {
-        setSubmissionStep('failed');
+        setSubmissionStep('partial_success');
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error retrying invitations.';
       setErrorMessage(msg);
-      setSubmissionStep('failed');
+      setSubmissionStep('partial_success');
     }
-  }, [activeRoomId, batchResult]);
+  }, [activeRoomId, batchResult, isSubmitting]);
 
   const navigateToRoom = useCallback(() => {
     if (activeRoomId) {

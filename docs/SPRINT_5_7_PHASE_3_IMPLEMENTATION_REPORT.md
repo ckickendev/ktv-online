@@ -2,118 +2,149 @@
 
 ## 1. Executive Summary
 
-- **Sprint:** Sprint 5.7 — Phase 3 (3.1 & 3.2: Social Session Starter Implementation)
-- **Baseline Commit:** `bf31037` (docs: produce Sprint 5.7 Phase 3 architecture planning report)
-- **Status:** **COMPLETED**
-- **Verification Verdict:** `PHASE 3 COMPLETE — STATIC VERIFICATION PASSED`
+- **Sprint:** Sprint 5.7 — Phase 3 (Social Session Starter Implementation)
+- **Baseline Commit:** `e3a1bcb` (docs: complete Sprint 5.7.2.2 final independent remediation verification)
+- **Planning Baseline:** `bf31037` (docs: create Sprint 5.7 Phase 3 Social Session Starter architecture and implementation plan)
+- **Current HEAD:** `35729ed`
+- **Target Branch:** `main`
+- **Database:** `test` (zero database writes, mutations, or migrations executed)
+- **Final Verdict:** `PHASE 3 COMPLETE — STATIC VERIFICATION PASSED`
 
 Sprint 5.7 Phase 3 delivers the **Social Session Starter** experience on `/friends`. Users can select multiple accepted friends (up to 20), choose to create a brand new lounge or select an eligible existing active lounge, and dispatch lounge invitations using the batch invitation API introduced in Phase 1 (`POST /api/friends/invite-lounge-batch/:roomId`).
 
 ---
 
-## 2. Implementation Scope & Boundaries
+## 2. Mandatory Pre-Implementation Checks & Resolutions
 
-### 2.1. Strictly Followed Boundaries
-1. **Frontend Integration Only:** Full reuse of existing backend endpoints, database schemas, and contracts.
-2. **Zero Database Modifications:** No new database models, migrations, indexes, or database writes. MongoDB database name remains `test`.
-3. **No Distributed Infrastructure:** Strict adherence to single-node architecture; no Redis dependencies introduced (preserving **HIST-03**).
-4. **No Code-Breaking Changes:** Existing friendship and invitation flows (`inviteFriendToRoom`, `joinRoom`) continue to function without disruption.
-5. **Strict Terminology Prohibition:** Zero occurrences of `"Watch Live"` across the codebase. All actions use `"Start a Session"`, `"Join Lounge"`, or `"Invite"`.
-6. **Code-Only Development Policy:** No test runners or production builds executed. Only permitted static checks (`pnpm typecheck`, `pnpm lint`, and curl compilation check) were run.
+### 2.1. Room Category Discrepancy Resolution
+- **Source Inspection:**
+  - `packages/contracts/src/room.ts`: `RoomCategorySchema = z.enum(['all', 'pop', 'anime', 'rock', 'ballad', 'hiphop', 'rnb'])` with default `'all'`.
+  - `apps/api/src/modules/rooms/room.model.ts`: `category: { type: String, enum: ['all', 'pop', 'anime', 'rock', 'ballad', 'hiphop', 'rnb'], default: 'all' }`.
+- **Resolution:**
+  - Earlier planning documents referenced an unsupported `'general'` category.
+  - The implementation strictly uses the canonical supported default `'all'` in `use-social-session-starter.ts` and `start-social-session-dialog.tsx`.
+
+### 2.2. Retry Failed Semantics & Rate Limiting Verification
+- **Source Inspection:**
+  - `apps/api/src/modules/rooms/invitation.service.ts`: `createFriendInvitation` executes:
+    ```typescript
+    await RoomInvitationModel.updateMany(
+      { roomId: roomObjectId, recipientId: friendObjectId, status: 'active', revokedAt: null },
+      { $set: { status: 'revoked', revokedAt: new Date() } }
+    ).exec();
+    ```
+    This selectively revokes prior invitations **only for that specific friend in that specific room**. Previously successful invitations issued to other recipients in the batch are untouched and remain active.
+  - `apps/api/src/modules/friends/friendship.service.ts`: `HostBatchInviteRateLimiter` enforces 1 batch per 5 seconds and 60 recipients per 10 minutes per host.
+- **Resolution:**
+  - `use-social-session-starter.ts` filters `batchResult.results` for only `failed` recipients (`status === 'failed'`).
+  - Guards against concurrent submissions with `isSubmitting`.
+  - If a retry triggers a rate limit (HTTP 429), existing sent invitations are preserved and the summary view remains intact, presenting the server message and enabling safe retry after the 5-second window.
+
+### 2.3. Friend Card Invite Integration
+- **Source Inspection:**
+  - `FriendActivityCard` for online friends renders an "Invite" action button calling `onInviteToSession(friend.id)`.
+  - `FriendActivitySection` receives `friendId` and opens `<StartSocialSessionDialog>` with `initialFriendId={starterFriendId}`.
+- **Resolution:**
+  - `StartSocialSessionDialog` passes `initialFriendId` to `useSocialSessionStarter.open(initialFriendId)`.
+  - The target friend is preselected while reusing the exact same orchestration pipeline, eligibility filtering, and backend authorization. No duplicate or bypass invitation logic exists.
 
 ---
 
-## 3. Key Components & Implementation Details
+## 3. Exact Files Modified & Created
 
-### 3.1. API Layer (`apps/web/src/features/friends/api/friends-api.ts`)
+```text
+created:
+  apps/web/src/features/friends/components/start-social-session-dialog.tsx
+  apps/web/src/features/friends/hooks/use-social-session-starter.ts
+  docs/SPRINT_5_7_PHASE_3_IMPLEMENTATION_REPORT.md
+
+modified:
+  apps/web/src/features/friends/api/friends-api.ts
+  apps/web/src/features/friends/components/friend-activity-card.tsx
+  apps/web/src/features/friends/components/friend-activity-section.tsx
+  apps/web/src/features/friends/index.ts
+  apps/web/tsconfig.tsbuildinfo
+  docs/SPRINT_5_7_FINAL_PLANNING_REPORT.md
+  docs/SPRINT_5_7_PHASE_3_PLANNING_REPORT.md
+```
+
+---
+
+## 4. Architectural & Implementation Details
+
+### 4.1. Batch API Integration (`friends-api.ts`)
 - Added `inviteLoungeBatch(roomId: string, friendUserIds: string[])`:
-  - Calls `POST /friends/invite-lounge-batch/${roomId}` with payload `{ friendUserIds }`.
+  - Calls `POST /api/friends/invite-lounge-batch/${roomId}` with payload `{ friendUserIds }`.
   - Returns typed `BatchLoungeInviteResultDto` from `@ktv/contracts`.
 
-### 3.2. Orchestration Hook (`apps/web/src/features/friends/hooks/use-social-session-starter.ts`)
-- Manages complete multi-step social session lifecycle:
-  - **State Management:** Selected friend IDs (enforcing max 20), active tab (`new` vs `existing`), new lounge configuration (name, visibility, atmosphere, category), search filter, submission steps (`idle` | `creating_room` | `sending_invitations` | `success` | `partial_success` | `failed`), error state, and batch result.
-  - **Eligible Room Filtering:** Queries `useMyRooms()` and filters rooms where `ownerId === currentUser.id`, `status !== 'closed'`, `!isLocked`, and `currentParticipantsCount < capacity`.
-  - **Composite Room Creation & Batch Invite:**
-    1. Validates selected friend count (1 to 20).
-    2. If `new`, calls `createRoomMutation.mutateAsync` to provision lounge.
-    3. Dispatches `friendsApi.inviteLoungeBatch(roomId, friendUserIds)`.
-    4. Evaluates `BatchLoungeInviteResultDto`: If all succeed (`summary.failed === 0`), transitions to `success`. If some failed, transitions to `partial_success` allowing retry.
-  - **Retry Semantics:** `retryFailedInvitations()` extracts `results.filter(r => r.status === 'failed')` and re-dispatches batch invitation only for failed recipients.
-  - **Navigation:** `navigateToRoom()` pushes to `/rooms/${activeRoomId}`.
+### 4.2. Orchestration Hook (`use-social-session-starter.ts`)
+- **Friend Selection:** Maintains `selectedFriendIds` state with client-side cap of 20 friends.
+- **Lounge Selection Flow:**
+  - Mode toggle: `'new'` vs `'existing'`.
+  - Mode A (New Lounge): Configures room name (default `"[User]'s Karaoke Lounge"`), atmosphere preset (`midnight_lounge`), visibility (`private` default), and category (`all`). Executes `createRoomMutation.mutateAsync`.
+  - Mode B (Existing Lounge): Queries `useMyRooms()` and filters rooms satisfying all eligibility criteria: `ownerId === currentUser.id`, `status !== 'closed'`, `!room.isLocked`, and `currentParticipantsCount < room.capacity`.
+- **Batch Invitation Dispatch:** Dispatches batch invitation with duplicate submission protection (`isSubmitting` flag).
+- **Failure & Retry Handling:**
+  - If room creation fails, invitations are not dispatched.
+  - If room creation succeeds but invitations fail, room is preserved and user can enter.
+  - Handles itemized partial success (`sent` vs `failed`) with specific error codes (`ALREADY_IN_ROOM`, `NOT_FRIENDS`, `CREATION_FAILED`).
+  - `retryFailedInvitations()` dispatches only for failed recipient IDs, preserving previously successful invitations.
+- **Lounge Navigation:** `navigateToRoom()` transitions the user to `/rooms/:roomId`.
 
-### 3.3. Dialog Component (`apps/web/src/features/friends/components/start-social-session-dialog.tsx`)
-- Dark-themed, responsive modal dialog:
-  - **Presence-Ordered Friends List:** Friends ordered dynamically: `Online` (1) > `In Lounge` (2) > `Singing` (3) > `Offline` (4).
-  - **Search Filtering:** Live client-side search by display name and username.
-  - **Batch Selection Helpers:** "Select All Online" (capped at 20) and "Clear" buttons.
-  - **Lounge Configuration Mode:**
-    - Segmented toggle: "Create New Lounge" vs "Use Existing Lounge".
-    - Atmosphere Preset picker: `Midnight Lounge`, `Neon Stage`, `Cozy Acoustic`, `Classic Karaoke`, `Minimal Studio`.
-    - Room Visibility picker: `Private (Friends Only)` vs `Public Lounge`.
-    - Existing room dropdown with live participant counters and locked status indicators.
-  - **Post-Submission Summary View:**
-    - Green banner on full success; amber banner on partial success.
-    - Recipient breakdown with individual statuses (`Invited`, `Already in lounge`, `Not friends`, etc.).
-    - "Retry Failed" button for partial errors.
-    - "Enter Lounge Now" primary action button.
+### 4.3. Social Session Dialog (`start-social-session-dialog.tsx`)
+- Single, dark-themed responsive modal dialog.
+- Friend checklist ordered dynamically by live engagement: `Online` (1) > `In Lounge` (2) > `Singing Now` (3) > `Offline` (4).
+- Offline friends selectable (receive authenticated pending inbox invitations).
+- Friends already in the selected existing lounge display an `"In this lounge"` badge and have their selection disabled.
+- Real-time text search filtering by name and username.
+- Atmosphere selector (`Midnight Lounge`, `Neon Stage`, `Cozy Acoustic`, `Classic Karaoke`, `Minimal Studio`).
+- Visibility toggle (`Private (Friends Only)` vs `Public Lounge`).
+- Post-submission outcome breakdown showing per-recipient statuses, error alerts, retry button, and "Enter Lounge Now" CTA.
 
-### 3.4. Friend Activity Dashboard Integration
-- **`apps/web/src/features/friends/components/friend-activity-card.tsx`:**
-  - Added `onInviteToSession?: (friendId: string) => void` prop.
-  - Rendered "Invite" CTA button with sparkles icon on online friend cards. Clicking opens the starter pre-populated with that friend.
-- **`apps/web/src/features/friends/components/friend-activity-section.tsx`:**
-  - Integrated "Start a Session" primary CTA button in Section A header.
-  - Passed `onInviteToSession` handler to Section D (Available Online) friend cards.
-  - Mounted `<StartSocialSessionDialog>` controlled by section state.
-- **`apps/web/src/features/friends/index.ts`:**
-  - Exported `useSocialSessionStarter` and `StartSocialSessionDialog`.
+### 4.4. Friend Activity Dashboard Integration
+- `friend-activity-card.tsx`: Adds "Invite" button with sparkles icon on online friend cards.
+- `friend-activity-section.tsx`: Adds "Start a Session" CTA in Section A header and mounts `<StartSocialSessionDialog>`.
+- `index.ts`: Exports `useSocialSessionStarter` and `StartSocialSessionDialog`.
 
 ---
 
-## 4. Architectural & Security Adherence
+## 5. Security & Authorization Adherence
 
-| Security & Design Principle | Implementation State |
+| Principle | Implementation Verification |
 | :--- | :--- |
-| **Batch Size Cap (20 friends)** | Enforced client-side in hook `toggleFriend` / `selectAllOnline` and server-side in `BatchLoungeInviteSchema`. |
-| **Recipient-Bound Isolation** | Batch invitation generates individual tokens and entries in `RoomInvitationModel`. |
-| **Rate Limiter Respect** | Server-side `HostBatchInviteRateLimiter` limits to 1 batch / 5s, 60 recipients / 10m. Partial failures display gracefully with retry option. |
-| **Room Survival Guarantee** | If room creation succeeds but batch invitation fails, room is preserved and user can enter directly. |
-| **Masking & Privacy** | Private room metadata remains masked to non-members. |
-| **Terminology Prohibition** | Zero occurrences of `"Watch Live"` across all `apps/` and `packages/`. |
-| **Historical Technical Debt** | Preserved `HIST-01` through `HIST-07` without unauthorized modifications. |
+| **Recipient-Bound Isolation** | Each batch invite creates a dedicated record in `RoomInvitationModel` with SHA-256 token hash and `recipientId`. |
+| **Host-Only Authorization** | Server validates `room.ownerId === hostUserId` and `hostMembership.status === 'active'`. |
+| **Room State Guards** | Closed and locked rooms strictly reject batch invitations. |
+| **Batch Limit & Deduplication** | Max 20 recipients enforced client-side and server-side; IDs deduplicated before processing. |
+| **Rate Limit Compliance** | Sliding window rate limiter (1 batch/5s, max 60 invites/10m) respected; retry protected against spam. |
+| **Zero Obsolete Terminology** | Verified 0 occurrences of `"Watch Live"` across all `apps/` and `packages/`. |
+| **Session Lifecycle Integrity** | `KaraokeSessionModel` begins on room creation; attendees recorded on join; recaps restricted to completed sessions (`HIST-01`). |
 
 ---
 
-## 5. Static Verification Evidence
+## 6. Static Verification Results
 
-### 5.1. TypeScript Compilation (`pnpm typecheck`)
+### 6.1. TypeScript Compilation (`pnpm typecheck`)
 ```bash
 $ pnpm --recursive run typecheck
 Scope: 3 of 4 workspace projects
-packages/contracts typecheck: tsc --noEmit (Done in 1.0s)
-apps/api typecheck: tsc --noEmit (Done in 3.1s)
-apps/web typecheck: tsc --noEmit (Done in 2.6s)
+packages/contracts typecheck: tsc --noEmit (Done in 1.2s)
+apps/api typecheck: tsc --noEmit (Done in 2.7s)
+apps/web typecheck: tsc --noEmit (Done in 1.9s)
 Done with exit code 0.
 ```
 
-### 5.2. ESLint Verification (`pnpm lint`)
+### 6.2. ESLint Verification (`pnpm lint`)
 ```bash
 $ pnpm --recursive run lint
 Scope: 3 of 4 workspace projects
-packages/contracts lint: eslint src/ (Done in 0.5s)
-apps/api lint: eslint src/ (Done in 1.4s)
-apps/web lint: next lint (Done in 2.0s - ✔ No ESLint warnings or errors)
+packages/contracts lint: eslint src/ (Done in 0.9s)
+apps/api lint: eslint src/ (Done in 1.3s)
+apps/web lint: next lint (Done in 2.5s - ✔ No ESLint warnings or errors)
 Done with exit code 0.
 ```
 
-### 5.3. Next.js Runtime Compilation Check
-```bash
-$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/friends
-200
-```
-
-### 5.4. Obsolete Terminology Verification
+### 6.3. Terminology Prohibition Verification
 ```bash
 $ grep -rn -i "Watch Live" apps/ packages/
 (0 matches - exit code 1)
@@ -121,23 +152,23 @@ $ grep -rn -i "Watch Live" apps/ packages/
 
 ---
 
-## 6. Summary of Changed Files
+## 7. Known Limitations & Deferred Technical Debt
 
-```text
-modified:   apps/web/src/features/friends/api/friends-api.ts
-modified:   apps/web/src/features/friends/components/friend-activity-card.tsx
-modified:   apps/web/src/features/friends/components/friend-activity-section.tsx
-modified:   apps/web/src/features/friends/index.ts
-modified:   apps/web/tsconfig.tsbuildinfo
-modified:   docs/SPRINT_5_7_FINAL_PLANNING_REPORT.md
-new file:   apps/web/src/features/friends/components/start-social-session-dialog.tsx
-new file:   apps/web/src/features/friends/hooks/use-social-session-starter.ts
-new file:   docs/SPRINT_5_7_PHASE_3_IMPLEMENTATION_REPORT.md
-```
+1. **HIST-01 (Abandoned Room Cleanup):** Background TTL cleanup worker for abandoned rooms remains unautomated. Session recaps remain strictly restricted to explicitly completed sessions.
+2. **HIST-03 (Single-Node In-Memory Presence):** Presence and batch rate limiting operate in process memory without Redis.
+3. **No Capacity Reservation:** Invitations do not reserve room slots. If a room fills up before an invitee joins, the backend rejects the join with a standard room-full notice.
 
 ---
 
-## 7. Final Verification Verdict
+## 8. Runtime Verification Status
+
+- Per the strict code-only development policy, automated test runners were prohibited from execution, and production builds were not triggered.
+- Full static compilation (`pnpm typecheck`) and linting (`pnpm lint`) passed with zero errors across `@ktv/contracts`, `@ktv/api`, and `@ktv/web`.
+- Runtime verification status: Verified through static inspection and contract conformance without claiming unexecuted runtime tests.
+
+---
+
+## 9. Final Verification Verdict
 
 ```text
 PHASE 3 COMPLETE — STATIC VERIFICATION PASSED
