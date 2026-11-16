@@ -19,6 +19,8 @@ services:
     container_name: ktv-mongodb-replica
     restart: unless-stopped
     command: ["--replSet", "rs0", "--bind_ip_all"]
+    environment:
+      MONGO_REPLICA_HOST: ${MONGO_REPLICA_HOST:-127.0.0.1}
     ports:
       - "${MONGODB_PORT:-27017}:27017"
     volumes:
@@ -31,7 +33,7 @@ services:
         - "27017"
         - "--quiet"
         - "--eval"
-        - "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: '127.0.0.1:27017' }] }).ok }"
+        - "const h = process.env.MONGO_REPLICA_HOST || '127.0.0.1'; try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: h + ':27017' }] }).ok }"
       interval: 5s
       timeout: 5s
       retries: 10
