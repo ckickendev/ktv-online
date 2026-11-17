@@ -1304,7 +1304,7 @@ export default function RoomDetailPage() {
       />
 
       {/* Host Room Customization Dialog */}
-      {isHost && (
+      {isHost && isCustomizationOpen && (
         <RoomCustomizationDialog
           room={room}
           stateVersion={roomStateVersion}

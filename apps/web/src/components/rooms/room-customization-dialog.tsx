@@ -47,16 +47,17 @@ export function RoomCustomizationDialog({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Sync state whenever room changes or dialog opens
+  // Sync state whenever dialog opens (avoid resetting user input on background room updates)
   useEffect(() => {
-    if (room && isOpen) {
+    if (isOpen && room) {
       setSelectedPreset((room.atmospherePreset as RoomAtmospherePreset) || DEFAULT_ATMOSPHERE_PRESET);
       setName(room.name || '');
       setDescription(room.description || '');
       setErrorMessage(null);
       setSaveSuccess(false);
     }
-  }, [room, isOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const handleCancel = useCallback(() => {
     onResetPreview();
@@ -115,9 +116,18 @@ export function RoomCustomizationDialog({
 
   const presetsList: AtmospherePresetConfig[] = Object.values(ATMOSPHERE_PRESETS);
 
+  if (!isOpen) {
+    return null;
+  }
+
   return (
     <div
       data-testid="room-customization-dialog-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isSaving) {
+          handleCancel();
+        }
+      }}
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
     >
       <div
