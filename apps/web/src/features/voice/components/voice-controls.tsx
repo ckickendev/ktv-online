@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Loader2,
   Settings2,
+  Volume2,
 } from 'lucide-react';
 import { VoiceConnectionState } from '@ktv/contracts';
 import {
@@ -26,6 +27,7 @@ export interface VoiceControlsProps {
   isConnecting: boolean;
   isMuted: boolean;
   isSpeaking: boolean;
+  isAudioBlocked?: boolean;
   errorMessage: string | null;
   audioDevices?: VoiceDevice[];
   activeDeviceId?: string | null;
@@ -34,6 +36,7 @@ export interface VoiceControlsProps {
   onJoinVoice: () => Promise<void>;
   onLeaveVoice: () => Promise<void>;
   onToggleMute: () => Promise<void>;
+  onUnlockAudio?: () => Promise<void>;
   onSwitchDevice?: (deviceId: string) => Promise<void>;
 
   // Sprint 2.6.3 additions:
@@ -61,6 +64,7 @@ export function VoiceControls({
   isConnecting,
   isMuted,
   isSpeaking,
+  isAudioBlocked = false,
   errorMessage,
   audioDevices = [],
   activeDeviceId = null,
@@ -69,6 +73,7 @@ export function VoiceControls({
   onJoinVoice,
   onLeaveVoice,
   onToggleMute,
+  onUnlockAudio,
   onSwitchDevice,
   audioInputDevices,
   activeAudioInputId,
@@ -162,11 +167,28 @@ export function VoiceControls({
                   : 'Mute microphone'
               }
             >
-              <MicOff className="w-3.5 h-3.5" />
+              {isServerMuted || isMuted ? (
+                <MicOff className="w-3.5 h-3.5" />
+              ) : (
+                <Mic className={`w-3.5 h-3.5 ${isSpeaking ? 'animate-pulse' : ''}`} />
+              )}
               <span className="hidden sm:inline">
                 {isServerMuted ? 'Muted by Mod' : isMuted ? 'Muted' : isSpeaking ? 'Speaking...' : 'Mic Active'}
               </span>
             </button>
+
+            {isAudioBlocked && onUnlockAudio && (
+              <button
+                type="button"
+                data-testid="voice-unlock-audio-button"
+                onClick={onUnlockAudio}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow-sm transition-colors animate-pulse"
+                title="Browser blocked remote voice playback. Click to enable audio."
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Enable Audio</span>
+              </button>
+            )}
 
             {/* Voice Live status badge */}
             <span
@@ -291,9 +313,26 @@ export function VoiceControls({
                     : 'Mute microphone'
                 }
               >
-                <MicOff className="w-4 h-4" />
+                {isServerMuted || isMuted ? (
+                  <MicOff className="w-4 h-4" />
+                ) : (
+                  <Mic className={`w-4 h-4 ${isSpeaking ? 'animate-pulse' : ''}`} />
+                )}
                 <span>{isServerMuted ? 'Muted by Mod' : isMuted ? 'Muted' : isSpeaking ? 'Speaking...' : 'Mic Active'}</span>
               </button>
+
+              {isAudioBlocked && onUnlockAudio && (
+                <button
+                  type="button"
+                  data-testid="voice-unlock-audio-button"
+                  onClick={onUnlockAudio}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow-md transition-colors animate-pulse"
+                  title="Browser blocked remote voice playback. Click to enable audio."
+                >
+                  <Volume2 className="w-4 h-4" />
+                  <span>Enable Audio</span>
+                </button>
+              )}
 
               {/* Leave Voice Button */}
               <button

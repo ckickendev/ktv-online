@@ -303,14 +303,42 @@ export function useKaraoke(roomId: string, options: UseKaraokeOptions = {}) {
   );
 
   const sendPlaybackCommand = useCallback(
-    (command: PlaybackCommandType, positionMs?: number) => {
-      return commandMutation.mutateAsync({
-        command,
-        positionMs,
-        expectedPlaybackVersion: playback?.playbackVersion,
-      });
+    async (command: PlaybackCommandType, positionMs?: number) => {
+      const currentVer = playbackVersionRef.current || playback?.playbackVersion;
+      try {
+        return await commandMutation.mutateAsync({
+          command,
+          positionMs,
+          expectedPlaybackVersion: currentVer,
+        });
+      } catch (err: unknown) {
+        const isConflict =
+          (err as { status?: number })?.status === 409 ||
+          String((err as { message?: string })?.message).includes('concurrently');
+
+        if (isConflict) {
+          try {
+            // Fetch fresh authoritative state from server and retry once
+            const freshPlayback = await karaokeApi.getPlayback(roomId);
+            if (freshPlayback) {
+              queryClient.setQueryData(queryKeys.karaoke.playback(roomId), freshPlayback);
+              playbackVersionRef.current = freshPlayback.playbackVersion;
+              return await commandMutation.mutateAsync({
+                command,
+                positionMs,
+                expectedPlaybackVersion: freshPlayback.playbackVersion,
+              });
+            }
+          } catch (retryErr) {
+            console.warn('Playback retry after conflict also failed:', retryErr);
+          }
+        }
+        // Do not crash the application on transient playback conflicts
+        console.warn('Playback command failed:', err);
+        return null;
+      }
     },
-    [commandMutation, playback?.playbackVersion]
+    [commandMutation, playback?.playbackVersion, roomId, queryClient]
   );
 
   const play = useCallback(() => sendPlaybackCommand('play'), [sendPlaybackCommand]);

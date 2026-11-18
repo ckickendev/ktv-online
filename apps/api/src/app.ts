@@ -12,6 +12,9 @@ import { errorHandler } from './middlewares/error.middleware.js';
 export function createApp(): Express {
   const app = express();
 
+  // Trust reverse proxy in staging/production (Render, Vercel, load balancers)
+  app.set('trust proxy', 1);
+
   // Request Correlation ID (must be first)
   app.use(correlationIdMiddleware);
 
@@ -37,6 +40,7 @@ export function createApp(): Express {
   app.use(
     express.json({
       limit: '1mb',
+      type: ['application/json', 'application/webhook+json'],
       verify: (req, _res, buf) => {
         (req as unknown as { rawBody?: Buffer }).rawBody = buf;
       },

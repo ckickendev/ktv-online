@@ -10,6 +10,7 @@ declare global {
         avatar?: string | null;
         bio?: string | null;
         role: UserRole;
+        familyId?: string;
       };
       cookies?: Record<string, string>;
     }

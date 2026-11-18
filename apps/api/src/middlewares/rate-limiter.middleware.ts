@@ -20,3 +20,19 @@ export const invitationPreviewRateLimiter = rateLimit({
     sendError(res, 'Too many invitation preview requests, please try again later', 429);
   },
 });
+
+export function createVoiceTokenRateLimiter(max = 30, windowMs = 60 * 1000) {
+  return rateLimit({
+    windowMs,
+    max,
+    keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : req.ip || 'anonymous'),
+    validate: false,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (_req, res) => {
+      sendError(res, 'Too many voice token requests, please try again shortly', 429);
+    },
+  });
+}
+
+export const voiceTokenRateLimiter = createVoiceTokenRateLimiter();

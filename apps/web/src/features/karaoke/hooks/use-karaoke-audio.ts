@@ -268,6 +268,11 @@ export function useKaraokeAudio({
       });
 
       audio.addEventListener('error', () => {
+        // Ignore spurious error events when no song is active or audio source is intentionally cleared
+        if (!currentSongIdRef.current || !audio.getAttribute('src') || audio.getAttribute('src') === '') {
+          return;
+        }
+
         const err = audio.error;
         const msg = err ? `AUDIO_ELEMENT_ERROR_${err.code}` : 'AUDIO_PLAYBACK_ERROR';
         setAudioError(msg);
@@ -301,7 +306,7 @@ export function useKaraokeAudio({
       if (audioRef.current) {
         audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         audioRef.current.pause();
-        audioRef.current.src = '';
+        audioRef.current.removeAttribute('src');
         audioRef.current.load();
         audioRef.current = null;
       }
@@ -370,7 +375,7 @@ export function useKaraokeAudio({
           setExecutionState('failed');
           if (audioRef.current) {
             audioRef.current.pause();
-            audioRef.current.src = '';
+            audioRef.current.removeAttribute('src');
             audioRef.current.load();
           }
           return;
@@ -403,7 +408,7 @@ export function useKaraokeAudio({
           setExecutionState('failed');
           if (audioRef.current) {
             audioRef.current.pause();
-            audioRef.current.src = '';
+            audioRef.current.removeAttribute('src');
             audioRef.current.load();
           }
           return;
@@ -428,7 +433,7 @@ export function useKaraokeAudio({
           setExecutionState('failed');
           if (audioRef.current) {
             audioRef.current.pause();
-            audioRef.current.src = '';
+            audioRef.current.removeAttribute('src');
             audioRef.current.load();
           }
         }
@@ -450,7 +455,7 @@ export function useKaraokeAudio({
       if (audioRef.current) {
         audioRef.current.playbackRate = PLAYBACK_SYNC_CONFIG.RATE_NORMAL;
         audioRef.current.pause();
-        audioRef.current.src = '';
+        audioRef.current.removeAttribute('src');
         audioRef.current.load();
       }
       setIsPlaying(false);

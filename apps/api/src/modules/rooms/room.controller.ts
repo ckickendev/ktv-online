@@ -6,7 +6,6 @@ import { RoomMembershipModel } from './membership.model.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { logger } from '../../utils/logger.js';
 import { broadcastRoomClosed } from '../../realtime/index.js';
-import { voiceService } from '../voice/voice.service.js';
 import { CreateRoomDto, RoomQueryDto, UpdateRoomSchema } from '@ktv/contracts';
 
 export class RoomController {
@@ -485,13 +484,6 @@ export class RoomController {
 
       // Broadcast room closure event to all connected realtime sockets
       await broadcastRoomClosed(id, 'Room has been closed by host');
-
-      // Terminate associated LiveKit voice room
-      try {
-        await voiceService.closeLiveKitRoom(id);
-      } catch {
-        // Non-blocking
-      }
 
       sendSuccess(res, closedRoom.toJSON(), 'Room closed successfully');
     } catch (error) {

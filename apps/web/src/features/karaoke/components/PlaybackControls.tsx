@@ -60,23 +60,27 @@ export function PlaybackControls({
   const isIdle = status === 'idle' || status === 'ended';
 
   const handleRewind = () => {
-    if (!canControlPlayback) return;
+    if (!canControlPlayback || isIdle || isMutating) return;
     const newPos = Math.max(0, currentPositionMs - 10000);
     onSeek(newPos);
   };
 
   const handleForward = () => {
-    if (!canControlPlayback) return;
+    if (!canControlPlayback || isIdle || isMutating) return;
     const newPos = Math.min(durationMs, currentPositionMs + 10000);
     onSeek(newPos);
   };
 
-  const handleTogglePlay = () => {
-    if (!canControlPlayback) return;
-    if (isPlaying) {
-      onPause();
-    } else {
-      onPlay();
+  const handleTogglePlay = async () => {
+    if (!canControlPlayback || isIdle || isMutating) return;
+    try {
+      if (isPlaying) {
+        await onPause();
+      } else {
+        await onPlay();
+      }
+    } catch (err) {
+      console.warn('Playback toggle error:', err);
     }
   };
 

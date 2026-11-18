@@ -41,6 +41,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       avatar: user.avatar ?? null,
       bio: user.bio ?? null,
       role: user.role as UserRole,
+      familyId: payload.familyId,
     };
 
     next();
@@ -94,6 +95,7 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
         avatar: user.avatar ?? null,
         bio: user.bio ?? null,
         role: user.role as UserRole,
+        familyId: payload.familyId,
       };
     }
   } catch {

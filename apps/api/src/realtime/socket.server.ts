@@ -8,6 +8,7 @@ import { registerChatEvents } from './chat.events.js';
 import { registerStageReactionEvents } from './stage-reaction.events.js';
 import { registerGiftEvents } from './gift.events.js';
 import { registerFriendEvents, getUserChannel, broadcastUserPresenceToFriends } from './friend.events.js';
+import { registerVoiceEvents } from './voice.events.js';
 import { globalPresenceManager } from './global-presence.manager.js';
 import {
   registerKaraokeEvents,
@@ -92,6 +93,9 @@ export function createSocketServer(
 
     // Register friend presence and social interaction event handlers
     registerFriendEvents(io, socket);
+
+    // Register room voice presence and speaking telemetry handlers
+    registerVoiceEvents(io, socket);
   });
 
   ioInstance = io;

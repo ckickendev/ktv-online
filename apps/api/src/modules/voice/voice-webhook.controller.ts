@@ -1,13 +1,56 @@
 import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
-import { WebhookReceiver } from 'livekit-server-sdk';
+import { Types } from 'mongoose';
+import { WebhookReceiver, TrackSource } from 'livekit-server-sdk';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { voiceSessionRegistry } from './voice-session.registry.js';
+import { voicePresenceStore } from './voice-presence.store.js';
 import { RoomModel } from '../rooms/room.model.js';
+import { RoomMembershipModel } from '../rooms/membership.model.js';
 import { voiceService } from './voice.service.js';
 import { VoiceWebhookEventModel } from './voice-webhook-event.model.js';
 import { assertMonotonicEventOrder } from './voice-participant-sequence.model.js';
+import { VoiceParticipantMetadata } from './voice.types.js';
+import { getSocketServer } from '../../realtime/socket.server.js';
+import {
+  broadcastVoiceParticipantUpdate,
+  broadcastVoiceRoomCleared,
+} from '../../realtime/voice.events.js';
+
+function extractParticipantInfo(participant?: {
+  identity?: string;
+  name?: string;
+  metadata?: string;
+}): {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl?: string;
+} | null {
+  const identity = participant?.identity;
+  if (!identity) return null;
+
+  let metadataObj: Partial<VoiceParticipantMetadata> = {};
+  if (participant?.metadata) {
+    try {
+      metadataObj = JSON.parse(participant.metadata) as Partial<VoiceParticipantMetadata>;
+    } catch {
+      // ignore invalid JSON metadata
+    }
+  }
+
+  const userId = metadataObj.userId || identity.split('_')[0] || identity;
+  const username = metadataObj.username || participant?.name || 'Member';
+  const displayName = metadataObj.displayName || participant?.name || username;
+
+  return {
+    userId,
+    username,
+    displayName,
+    avatarUrl: metadataObj.avatarUrl,
+  };
+}
 
 export class VoiceWebhookController {
   private receiver: WebhookReceiver | null = null;
@@ -173,23 +216,65 @@ export class VoiceWebhookController {
 
       // Extract raw roomId from ktv_room_<roomId>
       const parsedRoomId = roomName.startsWith('ktv_room_') ? roomName.replace('ktv_room_', '') : undefined;
+      const participantInfo = extractParticipantInfo(event.participant);
 
       // 4. Handle lifecycle events ephemerally (NEVER mutate Room.currentParticipantsCount or RoomMembership)
       switch (event.event) {
         case 'participant_joined': {
-          // If KTVOnline room is already closed, evict delayed participant
+          let isModerationMuted = false;
+
+          // If KTVOnline room is already closed or user is not an active member, evict delayed participant
           if (parsedRoomId && participantIdentity) {
-            const dbRoom = await RoomModel.findById(parsedRoomId).select('status').exec();
-            if (dbRoom && dbRoom.status === 'closed') {
-              logger.warn(
-                { correlationId, roomId: parsedRoomId, participantIdentity },
-                'Participant joined closed room in LiveKit; evicting participant'
-              );
-              const rawUserId = participantIdentity.split('_')[0];
-              if (rawUserId) {
-                await voiceService.evictLiveKitParticipant(parsedRoomId, rawUserId);
+            if (Types.ObjectId.isValid(parsedRoomId)) {
+              const dbRoom = await RoomModel.findById(parsedRoomId).select('status').lean().exec();
+              if (dbRoom && dbRoom.status === 'closed') {
+                logger.warn(
+                  { correlationId, roomId: parsedRoomId, participantIdentity },
+                  'Participant joined closed room in LiveKit; evicting participant'
+                );
+                if (participantInfo?.userId) {
+                  await voiceService.evictLiveKitParticipant(parsedRoomId, participantInfo.userId);
+                }
+                break;
               }
-              break;
+
+              if (participantInfo?.userId && Types.ObjectId.isValid(participantInfo.userId)) {
+                const membership = await RoomMembershipModel.findOne({
+                  roomId: new Types.ObjectId(parsedRoomId),
+                  userId: new Types.ObjectId(participantInfo.userId),
+                  status: 'active',
+                  kickedAt: null,
+                })
+                  .select('isMuted')
+                  .lean()
+                  .exec();
+
+                if (!membership && dbRoom) {
+                  logger.warn(
+                    { correlationId, roomId: parsedRoomId, userId: participantInfo.userId },
+                    'Non-member joined LiveKit room; evicting participant'
+                  );
+                  await voiceService.evictLiveKitParticipant(parsedRoomId, participantInfo.userId);
+                  break;
+                }
+                isModerationMuted = Boolean(membership?.isMuted);
+              }
+            }
+
+            if (participantInfo) {
+              const update = voicePresenceStore.markParticipantJoined({
+                roomId: parsedRoomId,
+                userId: participantInfo.userId,
+                username: participantInfo.username,
+                displayName: participantInfo.displayName,
+                avatarUrl: participantInfo.avatarUrl,
+                identity: participantIdentity,
+                isModerationMuted,
+              });
+              const io = getSocketServer();
+              if (io) {
+                broadcastVoiceParticipantUpdate(io, parsedRoomId, update, correlationId);
+              }
             }
           }
 
@@ -200,13 +285,76 @@ export class VoiceWebhookController {
           break;
         }
 
-        case 'participant_left': {
+        case 'participant_left':
+        case 'participant_connection_aborted': {
           if (participantIdentity) {
             voiceSessionRegistry.unregister(participantIdentity);
           }
+          if (parsedRoomId && participantInfo) {
+            const update = voicePresenceStore.markParticipantLeft(
+              parsedRoomId,
+              participantInfo.userId,
+              participantIdentity
+            );
+            if (update) {
+              const io = getSocketServer();
+              if (io) {
+                broadcastVoiceParticipantUpdate(io, parsedRoomId, update, correlationId);
+              }
+            }
+          }
           logger.info(
-            { roomName, participantIdentity },
+            { roomName, participantIdentity, eventType: event.event },
             'LiveKit voice participant left room'
+          );
+          break;
+        }
+
+        case 'track_published': {
+          const isAudioTrack =
+            event.track?.source === TrackSource.MICROPHONE || event.track?.type === 0;
+          if (parsedRoomId && participantIdentity && participantInfo && event.track?.sid && isAudioTrack) {
+            const update = voicePresenceStore.markTrackPublished({
+              roomId: parsedRoomId,
+              userId: participantInfo.userId,
+              username: participantInfo.username,
+              displayName: participantInfo.displayName,
+              avatarUrl: participantInfo.avatarUrl,
+              identity: participantIdentity,
+              trackSid: event.track.sid,
+              isMuted: Boolean(event.track.muted),
+            });
+            const io = getSocketServer();
+            if (io) {
+              broadcastVoiceParticipantUpdate(io, parsedRoomId, update, correlationId);
+            }
+          }
+          logger.info(
+            { roomName, participantIdentity, trackSid: event.track?.sid },
+            'LiveKit voice track published'
+          );
+          break;
+        }
+
+        case 'track_unpublished': {
+          const isAudioTrack =
+            event.track?.source === TrackSource.MICROPHONE || event.track?.type === 0;
+          if (parsedRoomId && participantInfo && isAudioTrack) {
+            const update = voicePresenceStore.markTrackUnpublished(
+              parsedRoomId,
+              participantInfo.userId,
+              event.track?.sid
+            );
+            if (update) {
+              const io = getSocketServer();
+              if (io) {
+                broadcastVoiceParticipantUpdate(io, parsedRoomId, update, correlationId);
+              }
+            }
+          }
+          logger.info(
+            { roomName, participantIdentity, trackSid: event.track?.sid },
+            'LiveKit voice track unpublished'
           );
           break;
         }
@@ -214,6 +362,11 @@ export class VoiceWebhookController {
         case 'room_finished': {
           if (parsedRoomId) {
             voiceSessionRegistry.clearRoom(parsedRoomId);
+            const cleared = voicePresenceStore.clearRoom(parsedRoomId);
+            const io = getSocketServer();
+            if (io && cleared.length > 0) {
+              broadcastVoiceRoomCleared(io, parsedRoomId, cleared);
+            }
           }
           logger.info(
             { roomName },

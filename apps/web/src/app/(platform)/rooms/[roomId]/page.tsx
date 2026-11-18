@@ -27,6 +27,7 @@ import {
   Info,
   Loader2,
   HelpCircle,
+  Tv,
 } from 'lucide-react';
 import { RoomStatusBadge } from '@/components/shared/room-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -70,6 +71,7 @@ import {
   SongSearchDialog,
   GiftSelectorDialog,
 } from '@/features/karaoke';
+import { VirtualRoomExperience } from '@/features/virtual-room';
 import { cn } from '@/lib/utils';
 
 export default function RoomDetailPage() {
@@ -119,6 +121,10 @@ export default function RoomDetailPage() {
   // Desktop sidebar active tab (default to queue for instant entertainment focus)
   const [activeTab, setActiveTab] = useState<'queue' | 'chat' | 'people' | 'activities'>('queue');
 
+  // S1: 2.5D Social Lounge View Mode (defaults to 'virtual' or URL ?view=...)
+  const initialView = searchParams?.get('view') === 'stage' ? 'stage' : 'virtual';
+  const [roomViewMode, setRoomViewMode] = useState<'virtual' | 'stage'>(initialView);
+
   // Mobile dedicated slide-over drawer / sheet state
   const [mobileDrawer, setMobileDrawer] = useState<'queue' | 'chat' | 'people' | 'activities' | null>(null);
 
@@ -145,6 +151,7 @@ export default function RoomDetailPage() {
         !stateIsKicked &&
         !isKicked
     ),
+    currentUserId: currentUser?.id,
   });
 
   const [kickTarget, setKickTarget] = useState<{ userId: string; username: string } | null>(null);
@@ -509,6 +516,7 @@ export default function RoomDetailPage() {
               isConnecting={voice.isConnecting}
               isMuted={voice.isMuted}
               isSpeaking={voice.isSpeaking}
+              isAudioBlocked={voice.isAudioBlocked}
               errorMessage={voice.errorMessage}
               audioDevices={voice.audioDevices}
               activeDeviceId={voice.activeDeviceId}
@@ -517,6 +525,7 @@ export default function RoomDetailPage() {
               onJoinVoice={voice.joinVoice}
               onLeaveVoice={voice.leaveVoice}
               onToggleMute={voice.toggleMute}
+              onUnlockAudio={voice.unlockAudio}
               onSwitchDevice={voice.switchDevice}
               audioInputDevices={voice.audioInputDevices}
               activeAudioInputId={voice.activeAudioInputId}
@@ -820,6 +829,67 @@ export default function RoomDetailPage() {
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
               <span>{leaveErrorMessage}</span>
             </div>
+          )}
+
+          {/* S1: 2.5D Social Virtual Room Presentation & Mode Switcher */}
+          <div
+            data-testid="room-view-mode-switcher"
+            className="flex items-center justify-between gap-2 p-1.5 rounded-2xl bg-[#090c17]/90 border border-white/10 backdrop-blur-md mb-1 shrink-0 shadow-lg"
+          >
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                data-testid="view-mode-virtual-btn"
+                onClick={() => setRoomViewMode('virtual')}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all',
+                  roomViewMode === 'virtual'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md shadow-violet-950/50'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                )}
+                title="Switch to 2.5D Social Lounge"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+                <span>2.5D Lounge View</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="view-mode-stage-btn"
+                onClick={() => setRoomViewMode('stage')}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all',
+                  roomViewMode === 'stage'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md shadow-violet-950/50'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                )}
+                title="Switch to Full Screen Stage Player"
+              >
+                <Tv className="w-3.5 h-3.5" />
+                <span>Stage Player View</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 pr-1">
+              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-mono text-emerald-400 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                S1 Scene Engine
+              </span>
+            </div>
+          </div>
+
+          {/* Virtual Room Experience Presentation (Active in 'virtual' mode) */}
+          {roomViewMode === 'virtual' && (
+            <VirtualRoomExperience
+              roomId={roomId}
+              roomName={room.name}
+              currentSongTitle={karaoke.playback?.currentItem?.song?.title}
+              currentSingerName={karaoke.currentSingerName}
+              currentSingerId={currentSingerId}
+              isSingerSpeaking={isSingerSpeaking}
+              voiceParticipantsMap={voice.voiceAdapterMap}
+              atmospherePreset={room.atmospherePreset}
+            />
           )}
 
           {/* Realtime Server-Authoritative Karaoke Stage & Player */}

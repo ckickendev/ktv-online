@@ -3,14 +3,16 @@ import { voiceController } from './voice.controller.js';
 import { voiceWebhookController } from './voice-webhook.controller.js';
 import { requireAuth } from '../../middlewares/auth.middleware.js';
 import { validateBody } from '../../middlewares/validate.middleware.js';
+import { voiceTokenRateLimiter } from '../../middlewares/rate-limiter.middleware.js';
 import { VoiceTokenRequestSchema } from '@ktv/contracts';
 
 export const voiceRoutes = Router();
 
-// Authenticated voice token generation / renewal
+// Authenticated voice token generation / renewal (rate limited)
 voiceRoutes.post(
   '/rooms/:roomId/voice/token',
   requireAuth,
+  voiceTokenRateLimiter,
   validateBody(VoiceTokenRequestSchema),
   (req, res, next) => {
     voiceController.getVoiceToken(req, res, next);

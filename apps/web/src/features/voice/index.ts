@@ -1,5 +1,6 @@
 export * from './types/voice.types';
 export * from './api/voice-api';
+export * from './stores/voice-state.store';
 export * from './hooks/use-voice-client';
 export * from './hooks/use-microphone-tester';
 export * from './components/voice-controls';

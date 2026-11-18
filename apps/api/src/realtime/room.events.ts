@@ -14,6 +14,7 @@ import { RoomModel } from '../modules/rooms/room.model.js';
 import { RoomMembershipModel } from '../modules/rooms/membership.model.js';
 import { roomService } from '../modules/rooms/room.service.js';
 import { presenceManager } from './presence.manager.js';
+import { voicePresenceStore } from '../modules/voice/voice-presence.store.js';
 import { broadcastUserPresenceToFriends } from './friend.events.js';
 import { logger } from '../utils/logger.js';
 import { AuthenticatedSocketData } from './socket.auth.js';
@@ -189,6 +190,14 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
         if (snapshotResult.success) {
           socket.emit(SOCKET_EVENTS.SERVER.ROOM_STATE_SNAPSHOT, snapshotResult.snapshot);
         }
+
+        // Send current room voice presence snapshot to the joining socket
+        const voiceParticipants = voicePresenceStore.getRoomSnapshot(roomId);
+        socket.emit(SOCKET_EVENTS.SERVER.VOICE_STATE_SNAPSHOT, {
+          roomId,
+          participants: voiceParticipants,
+          correlationId,
+        });
 
         ack?.({
           success: true,

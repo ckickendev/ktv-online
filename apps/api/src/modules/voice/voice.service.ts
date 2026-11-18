@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Types } from 'mongoose';
 import { RoomServiceClient, TrackSource } from 'livekit-server-sdk';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
@@ -9,7 +10,13 @@ import { SessionModel } from '../auth/session.model.js';
 import { VoiceParticipantMetadata } from './voice.types.js';
 import { voiceTokenService } from './voice-token.service.js';
 import { voiceSessionRegistry } from './voice-session.registry.js';
+import { voicePresenceStore } from './voice-presence.store.js';
 import { VoiceEvictionTaskModel } from './voice-eviction-task.model.js';
+import { getSocketServer } from '../../realtime/socket.server.js';
+import {
+  broadcastVoiceParticipantUpdate,
+  broadcastVoiceRoomCleared,
+} from '../../realtime/voice.events.js';
 
 export interface GenerateVoiceTokenParams {
   roomId: string;
@@ -94,6 +101,10 @@ export class VoiceService {
     // Check if LiveKit configuration is available
     if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
       throw new Error('VOICE_SERVICE_NOT_CONFIGURED');
+    }
+
+    if (!Types.ObjectId.isValid(roomId)) {
+      throw new Error('INVALID_ROOM_ID');
     }
 
     // 1. Verify user exists and is active (not suspended/deactivated)
@@ -219,10 +230,18 @@ export class VoiceService {
     const client = this.getClient();
     const roomName = this.getLiveKitRoomName(roomId);
 
-    // Clean up local registry entries
+    // Clean up local registry entries and Socket.IO voice presence
     const userSessions = voiceSessionRegistry.getByUserAndRoom(roomId, userId);
     for (const s of userSessions) {
       voiceSessionRegistry.unregister(s.identity);
+    }
+
+    const presenceResult = voicePresenceStore.markParticipantLeft(roomId, userId);
+    if (presenceResult) {
+      const io = getSocketServer();
+      if (io) {
+        broadcastVoiceParticipantUpdate(io, roomId, presenceResult);
+      }
     }
 
     if (!client) return;
@@ -264,6 +283,14 @@ export class VoiceService {
    * Authoritatively updates LiveKit voice publishing permissions and mutes/unmutes active tracks for a moderated user.
    */
   public async muteLiveKitParticipant(roomId: string, userId: string, isMuted: boolean): Promise<void> {
+    const presenceResult = voicePresenceStore.setModerationMute(roomId, userId, isMuted);
+    if (presenceResult) {
+      const io = getSocketServer();
+      if (io) {
+        broadcastVoiceParticipantUpdate(io, roomId, presenceResult);
+      }
+    }
+
     const client = this.getClient();
     const roomName = this.getLiveKitRoomName(roomId);
     if (!client) return;
@@ -330,6 +357,13 @@ export class VoiceService {
     const familySessions = voiceSessionRegistry.getByFamily(familyId);
     for (const s of familySessions) {
       voiceSessionRegistry.unregister(s.identity);
+      const presenceResult = voicePresenceStore.markParticipantLeft(s.roomId, s.userId, s.identity);
+      if (presenceResult) {
+        const io = getSocketServer();
+        if (io) {
+          broadcastVoiceParticipantUpdate(io, s.roomId, presenceResult);
+        }
+      }
     }
 
     if (!client) return;
@@ -365,6 +399,15 @@ export class VoiceService {
       voiceSessionRegistry.unregister(s.identity);
     }
 
+    const removedPresence = voicePresenceStore.removeUserFromAllRooms(userId);
+    const io = getSocketServer();
+    for (const item of removedPresence) {
+      roomIds.add(item.roomId);
+      if (io) {
+        broadcastVoiceParticipantUpdate(io, item.roomId, item.result);
+      }
+    }
+
     const client = this.getClient();
     if (!client) return;
 
@@ -377,8 +420,15 @@ export class VoiceService {
    * Deletes and terminates a LiveKit voice room when a KTVOnline room is closed.
    */
   public async closeLiveKitRoom(roomId: string): Promise<void> {
-    // Clear local registry for this room
+    // Clear local registry and Socket.IO voice presence for this room
     voiceSessionRegistry.clearRoom(roomId);
+    const clearedResults = voicePresenceStore.clearRoom(roomId);
+    if (clearedResults.length > 0) {
+      const io = getSocketServer();
+      if (io) {
+        broadcastVoiceRoomCleared(io, roomId, clearedResults);
+      }
+    }
 
     const client = this.getClient();
     if (!client) return;

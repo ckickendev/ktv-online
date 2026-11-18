@@ -175,10 +175,10 @@ export class AudioSourceService {
         const chunkSize = (end - start) + 1;
         const chunk = buffer.subarray(start, end + 1);
 
-        res.writeHead(206, {
+        res.status(206).set({
           'Content-Range': `bytes ${start}-${end}/${totalSize}`,
           'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize,
+          'Content-Length': chunkSize.toString(),
           'Content-Type': mimeType,
           'Cache-Control': 'public, max-age=3600, must-revalidate',
         });
@@ -194,8 +194,8 @@ export class AudioSourceService {
     }
 
     // Full response (HTTP 200)
-    res.writeHead(200, {
-      'Content-Length': totalSize,
+    res.status(200).set({
+      'Content-Length': totalSize.toString(),
       'Content-Type': mimeType,
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'public, max-age=3600, must-revalidate',

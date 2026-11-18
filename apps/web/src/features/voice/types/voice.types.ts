@@ -1,8 +1,10 @@
 import { VoiceConnectionState } from '@ktv/contracts';
+import type { VirtualRoomVoiceAdapterMap } from '../stores/voice-state.store';
 
 export interface UseVoiceClientOptions {
   roomId: string;
   enabled?: boolean;
+  currentUserId?: string | null;
 }
 
 export interface VoiceParticipantInfo {
@@ -36,8 +38,10 @@ export interface UseVoiceClientReturn {
   isConnecting: boolean;
   isMuted: boolean;
   isSpeaking: boolean;
+  isAudioBlocked: boolean;
   errorMessage: string | null;
   participants: VoiceParticipantInfo[];
+  voiceAdapterMap: VirtualRoomVoiceAdapterMap;
 
   // Microphone (Audio Input) Devices
   audioInputDevices: VoiceDevice[];
@@ -54,6 +58,7 @@ export interface UseVoiceClientReturn {
   joinVoice: () => Promise<void>;
   leaveVoice: () => Promise<void>;
   toggleMute: () => Promise<void>;
+  unlockAudio: () => Promise<void>;
   switchAudioInputDevice: (deviceId: string) => Promise<void>;
   switchAudioOutputDevice: (deviceId: string) => Promise<void>;
   updateCapturePreferences: (prefs: Partial<AudioCapturePreferences>) => Promise<void>;

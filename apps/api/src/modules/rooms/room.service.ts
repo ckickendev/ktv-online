@@ -340,6 +340,13 @@ export class RoomService {
       } catch (err) {
         logger.error({ err, roomId: id }, 'Error closing karaoke session history');
       }
+
+      // 6. Terminate associated LiveKit voice room and clear voice presence
+      try {
+        await voiceService.closeLiveKitRoom(id);
+      } catch (err) {
+        logger.error({ err, roomId: id }, 'Error closing LiveKit voice room');
+      }
     }
 
     return room;

@@ -12,4 +12,5 @@ export * from './preferences.js';
 export * from './invitation.js';
 export * from './history.js';
 export * from './friendship.js';
+export * from './spatial.js';
 
