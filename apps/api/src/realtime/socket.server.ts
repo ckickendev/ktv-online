@@ -9,6 +9,8 @@ import { registerStageReactionEvents } from './stage-reaction.events.js';
 import { registerGiftEvents } from './gift.events.js';
 import { registerFriendEvents, getUserChannel, broadcastUserPresenceToFriends } from './friend.events.js';
 import { registerVoiceEvents } from './voice.events.js';
+import { registerMicEvents } from '../modules/mic/mic.events.js';
+import { micOwnershipService } from '../modules/mic/mic-ownership.service.js';
 import { globalPresenceManager } from './global-presence.manager.js';
 import {
   registerKaraokeEvents,
@@ -96,6 +98,9 @@ export function createSocketServer(
 
     // Register room voice presence and speaking telemetry handlers
     registerVoiceEvents(io, socket);
+
+    // Register authoritative virtual microphone ownership handlers
+    registerMicEvents(io, socket);
   });
 
   ioInstance = io;
@@ -126,6 +131,13 @@ export async function broadcastRoomClosed(roomId: string, reason = 'Room has bee
     await karaokeService.handleRoomClosed(roomId);
   } catch (err) {
     logger.error({ err, roomId }, 'Error cleaning up karaoke for closed room');
+  }
+
+  // Idempotently clean up mic ownership state for closed room
+  try {
+    await micOwnershipService.handleRoomClosed(roomId);
+  } catch (err) {
+    logger.error({ err, roomId }, 'Error cleaning up mic ownership for closed room');
   }
 
   // Clear presence state for this room

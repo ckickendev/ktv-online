@@ -158,6 +158,12 @@ export const SOCKET_EVENTS = {
     SPATIAL_INTERACTION_REQUEST: 'spatial:interaction:request',
     VOICE_STATE_REQUEST: 'voice:state:request',
     VOICE_SPEAKING_UPDATE: 'voice:speaking:update',
+    MIC_REQUEST: 'mic:request',
+    MIC_CANCEL: 'mic:cancel',
+    MIC_APPROVE: 'mic:approve',
+    MIC_REJECT: 'mic:reject',
+    MIC_RELEASE: 'mic:release',
+    MIC_STATE_REQUEST: 'mic:state:request',
   },
   SERVER: {
     PRESENCE_SNAPSHOT: 'room:presence:snapshot',
@@ -197,6 +203,10 @@ export const SOCKET_EVENTS = {
     VOICE_PARTICIPANT_JOINED: 'voice:participant:joined',
     VOICE_PARTICIPANT_LEFT: 'voice:participant:left',
     VOICE_PARTICIPANT_UPDATED: 'voice:participant:updated',
+    MIC_STATE: 'mic:state',
+    MIC_REQUEST_CREATED: 'mic:request:created',
+    MIC_REQUEST_CANCELLED: 'mic:request:cancelled',
+    MIC_OWNERSHIP_CHANGED: 'mic:ownership:changed',
     ERROR: 'error',
   },
 } as const;

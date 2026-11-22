@@ -16,18 +16,22 @@ import {
   createSocketServer,
   closeSocketServer,
   disconnectUserSockets,
+  getRoomDisconnectGracePeriodMs,
   presenceManager,
+  setRoomDisconnectGracePeriodMs,
 } from '../realtime/index.js';
 import { SOCKET_EVENTS } from '@ktv/contracts';
 
 describe('Sprint 2.0: Realtime Foundation (Socket.IO) Integration Tests', () => {
   let server: http.Server;
   let serverUrl: string;
+  let originalGraceMs = 10000;
   const activeSockets: ClientSocket[] = [];
 
   const testPassword = 'Password123!Realtime';
 
   beforeAll(async () => {
+    originalGraceMs = getRoomDisconnectGracePeriodMs();
     await connectDatabase();
     await cleanup();
 
@@ -45,6 +49,7 @@ describe('Sprint 2.0: Realtime Foundation (Socket.IO) Integration Tests', () => 
   });
 
   afterAll(async () => {
+    setRoomDisconnectGracePeriodMs(originalGraceMs);
     for (const socket of activeSockets) {
       if (socket.connected) {
         socket.disconnect();
@@ -61,6 +66,7 @@ describe('Sprint 2.0: Realtime Foundation (Socket.IO) Integration Tests', () => 
   });
 
   afterEach(() => {
+    setRoomDisconnectGracePeriodMs(originalGraceMs);
     while (activeSockets.length > 0) {
       const s = activeSockets.pop();
       if (s?.connected) {
@@ -411,33 +417,38 @@ describe('Sprint 2.0: Realtime Foundation (Socket.IO) Integration Tests', () => 
     });
 
     it('14. Disconnecting the last socket updates ephemeral presence and emits member:left', async () => {
-      const peer = await createTestUser('s20_peer_observer', 'peer@sprint20-test.ktv');
-      const peerClient = createClient(peer.token);
-      await connectSocket(peerClient);
-      await new Promise((resolve) => {
-        peerClient.emit(SOCKET_EVENTS.CLIENT.ROOM_JOIN, { roomId: room.id }, resolve);
-      });
+      setRoomDisconnectGracePeriodMs(150);
+      try {
+        const peer = await createTestUser('s20_peer_observer', 'peer@sprint20-test.ktv');
+        const peerClient = createClient(peer.token);
+        await connectSocket(peerClient);
+        await new Promise((resolve) => {
+          peerClient.emit(SOCKET_EVENTS.CLIENT.ROOM_JOIN, { roomId: room.id }, resolve);
+        });
 
-      const hostSocket = createClient(host.token);
-      await connectSocket(hostSocket);
-      await new Promise((resolve) => {
-        hostSocket.emit(SOCKET_EVENTS.CLIENT.ROOM_JOIN, { roomId: room.id }, resolve);
-      });
+        const hostSocket = createClient(host.token);
+        await connectSocket(hostSocket);
+        await new Promise((resolve) => {
+          hostSocket.emit(SOCKET_EVENTS.CLIENT.ROOM_JOIN, { roomId: room.id }, resolve);
+        });
 
-      const memberLeftPromise = new Promise<any>((resolve) => {
-        peerClient.once(SOCKET_EVENTS.SERVER.MEMBER_LEFT, resolve);
-      });
+        const memberLeftPromise = new Promise<any>((resolve) => {
+          peerClient.once(SOCKET_EVENTS.SERVER.MEMBER_LEFT, resolve);
+        });
 
-      // Disconnect host's only socket
-      hostSocket.disconnect();
+        // Disconnect host's only socket
+        hostSocket.disconnect();
 
-      const leftEvent = await memberLeftPromise;
-      expect(leftEvent.roomId).toBe(room.id);
-      expect(leftEvent.userId).toBe(host.id);
+        const leftEvent = await memberLeftPromise;
+        expect(leftEvent.roomId).toBe(room.id);
+        expect(leftEvent.userId).toBe(host.id);
 
-      // Verify presence manager no longer shows host
-      const presence = presenceManager.getRoomPresence(room.id);
-      expect(presence.some((u) => u.userId === host.id)).toBe(false);
+        // Verify presence manager no longer shows host
+        const presence = presenceManager.getRoomPresence(room.id);
+        expect(presence.some((u) => u.userId === host.id)).toBe(false);
+      } finally {
+        setRoomDisconnectGracePeriodMs(originalGraceMs);
+      }
     });
 
     it('15. Reconnection restores room presence correctly', async () => {

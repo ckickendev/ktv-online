@@ -20,6 +20,11 @@ import { presenceManager } from '../../realtime/presence.manager.js';
 import { RoomReconciliationService } from './room-reconciliation.service.js';
 import { voiceService } from '../voice/voice.service.js';
 import { karaokeService } from '../karaoke/karaoke.service.js';
+import { micOwnershipService } from '../mic/mic-ownership.service.js';
+import {
+  broadcastMicLifecycleUpdate,
+  broadcastMicRoomClosed,
+} from '../mic/mic.events.js';
 import { getSocketServer } from '../../realtime/socket.server.js';
 import { getRoomChannel } from '../../realtime/room.events.js';
 import {
@@ -346,6 +351,14 @@ export class RoomService {
         await voiceService.closeLiveKitRoom(id);
       } catch (err) {
         logger.error({ err, roomId: id }, 'Error closing LiveKit voice room');
+      }
+
+      // 7. Clear virtual microphone ownership & pending requests on room closure
+      try {
+        const micClosed = await micOwnershipService.handleRoomClosed(id);
+        await broadcastMicRoomClosed(getSocketServer(), id, micClosed);
+      } catch (err) {
+        logger.error({ err, roomId: id }, 'Error cleaning up mic ownership for closed room');
       }
     }
 
@@ -762,6 +775,14 @@ export class RoomService {
       // Non-blocking
     }
 
+    // Release mic ownership / remove pending mic request for leaving member
+    try {
+      const micCleanup = await micOwnershipService.handleMemberDeparted(roomId, userId, 'left');
+      await broadcastMicLifecycleUpdate(getSocketServer(), roomId, micCleanup);
+    } catch (err) {
+      logger.error({ err, roomId, userId }, 'Error cleaning up mic ownership on member leave');
+    }
+
     return { success: true };
   }
 
@@ -1021,6 +1042,18 @@ export class RoomService {
       }
     } catch (err) {
       logger.error({ err, roomId, targetUserId }, 'Error cleaning up karaoke on member kick');
+    }
+
+    // Release mic ownership / remove pending mic request for kicked member
+    try {
+      const micCleanup = await micOwnershipService.handleMemberDeparted(
+        roomId,
+        targetUserId,
+        'kicked'
+      );
+      await broadcastMicLifecycleUpdate(getSocketServer(), roomId, micCleanup);
+    } catch (err) {
+      logger.error({ err, roomId, targetUserId }, 'Error cleaning up mic ownership on member kick');
     }
 
     return { success: true };
@@ -1287,6 +1320,17 @@ export class RoomService {
 
     // Enforce LiveKit server track mute and permission updates
     await voiceService.muteLiveKitParticipant(roomId, targetUserId, isMuted);
+
+    // If muted by moderation, release any active mic ownership or pending mic request.
+    // Unmuting does not automatically alter mic ownership.
+    if (isMuted) {
+      try {
+        const micCleanup = await micOwnershipService.handleMemberMuted(roomId, targetUserId);
+        await broadcastMicLifecycleUpdate(getSocketServer(), roomId, micCleanup);
+      } catch (err) {
+        logger.error({ err, roomId, targetUserId }, 'Error cleaning up mic ownership on member mute');
+      }
+    }
 
     const updatedRoom = await RoomModel.findByIdAndUpdate(
       roomObjectId,

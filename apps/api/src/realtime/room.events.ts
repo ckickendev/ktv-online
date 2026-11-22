@@ -15,9 +15,22 @@ import { RoomMembershipModel } from '../modules/rooms/membership.model.js';
 import { roomService } from '../modules/rooms/room.service.js';
 import { presenceManager } from './presence.manager.js';
 import { voicePresenceStore } from '../modules/voice/voice-presence.store.js';
+import { micOwnershipService } from '../modules/mic/mic-ownership.service.js';
+import { broadcastMicLifecycleUpdate } from '../modules/mic/mic.events.js';
 import { broadcastUserPresenceToFriends } from './friend.events.js';
 import { logger } from '../utils/logger.js';
 import { AuthenticatedSocketData } from './socket.auth.js';
+
+const DEFAULT_DISCONNECT_GRACE_MS = 10000;
+let disconnectGracePeriodMs = DEFAULT_DISCONNECT_GRACE_MS;
+
+export function setRoomDisconnectGracePeriodMs(ms: number): void {
+  disconnectGracePeriodMs = Math.max(0, ms);
+}
+
+export function getRoomDisconnectGracePeriodMs(): number {
+  return disconnectGracePeriodMs;
+}
 
 export function getRoomChannel(roomId: string): string {
   return `room:${roomId}`;
@@ -199,6 +212,17 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
           correlationId,
         });
 
+        // Send authoritative virtual microphone ownership snapshot to the joining socket
+        try {
+          const micSnapshot = await micOwnershipService.getSnapshot(roomId, user.id);
+          socket.emit(SOCKET_EVENTS.SERVER.MIC_STATE, {
+            ...micSnapshot,
+            ...(correlationId ? { correlationId } : {}),
+          });
+        } catch (err) {
+          logger.warn({ err, roomId, userId: user.id }, 'Failed to emit initial mic:state on room:join');
+        }
+
         ack?.({
           success: true,
           data: { roomId, totalOnline },
@@ -349,7 +373,7 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
 
     const { isPendingGrace, immediateResult } = presenceManager.handleDisconnect(
       socket.id,
-      10000, // 10s disconnect grace period
+      disconnectGracePeriodMs, // 10s default disconnect grace period
       (expiredResult) => {
         const channel = getRoomChannel(expiredResult.roomId);
         io.to(channel).emit(SOCKET_EVENTS.SERVER.MEMBER_LEFT, {
@@ -368,6 +392,21 @@ export function registerRoomEvents(io: Server, socket: Socket<any, any, any, Aut
         broadcastUserPresenceToFriends(io, expiredResult.userId).catch((err) => {
           logger.error({ err, userId: expiredResult.userId }, 'Error broadcasting friend presence after room grace expired');
         });
+
+        // Only sweep mic ownership if the user is still genuinely disconnected from the room
+        if (!presenceManager.isUserOnlineInRoom(expiredResult.roomId, expiredResult.userId)) {
+          micOwnershipService
+            .handleMemberDeparted(expiredResult.roomId, expiredResult.userId, 'disconnected')
+            .then((micCleanup) =>
+              broadcastMicLifecycleUpdate(io, expiredResult.roomId, micCleanup)
+            )
+            .catch((err) => {
+              logger.error(
+                { err, roomId: expiredResult.roomId, userId: expiredResult.userId },
+                'Error cleaning up mic ownership after disconnect grace expiration'
+              );
+            });
+        }
       }
     );
 

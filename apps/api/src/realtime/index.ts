@@ -7,3 +7,4 @@ export * from './stage-reaction.events.js';
 export * from './stage-reaction.limiter.js';
 export * from './gift.events.js';
 export * from './gift.limiter.js';
+export * from '../modules/mic/mic.events.js';
