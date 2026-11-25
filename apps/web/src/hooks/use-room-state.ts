@@ -35,6 +35,7 @@ export interface UseRoomStateReturn {
   version: number;
   syncStatus: RoomSyncStatus;
   connectionStatus: SocketConnectionStatus;
+  isRoomChannelJoined: boolean;
   isLoading: boolean;
   isError: boolean;
   errorMessage: string | null;
@@ -69,6 +70,7 @@ export function useRoomState(
   const [connectionStatus, setConnectionStatus] = useState<SocketConnectionStatus>(() =>
     socketManager.getStatus()
   );
+  const [isRoomChannelJoined, setIsRoomChannelJoined] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isError, setIsError] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -91,17 +93,30 @@ export function useRoomState(
   const bufferedEventsRef = useRef<RoomStateEventDto[]>([]);
   const isFetchingSnapshotRef = useRef<boolean>(false);
   const queuedRecoveryRef = useRef<boolean>(false);
+  const isRoomChannelJoinedRef = useRef<boolean>(false);
+  const isJoinInFlightRef = useRef<boolean>(false);
+  const joinGenerationRef = useRef<number>(0);
+
+  const markChannelLeft = useCallback(() => {
+    joinGenerationRef.current += 1;
+    isJoinInFlightRef.current = false;
+    isRoomChannelJoinedRef.current = false;
+    setIsRoomChannelJoined(false);
+  }, []);
 
   // Track socket connection status
   useEffect(() => {
     const unsubscribe = socketManager.subscribeStatus((newStatus) => {
       setConnectionStatus(newStatus);
+      if (newStatus !== 'connected') {
+        markChannelLeft();
+      }
       if (newStatus === 'reconnecting') {
         setSyncStatus('reconnecting');
       }
     });
     return unsubscribe;
-  }, []);
+  }, [markChannelLeft]);
 
   // Apply a single validated domain mutation event
   const applyDomainMutation = useCallback((event: RoomStateEventDto) => {
@@ -174,6 +189,7 @@ export function useRoomState(
         if (kickedUserId) {
           setMembers((prev) => prev.filter((m) => m.userId !== kickedUserId));
           if (currentUserIdRef.current && kickedUserId === currentUserIdRef.current) {
+            markChannelLeft();
             setIsKicked(true);
             setKickedReason(reason || 'You were removed from this room by the host.');
             setViewer({
@@ -281,13 +297,14 @@ export function useRoomState(
 
       case 'room.closed': {
         const reason = event.payload.reason as string | undefined;
+        markChannelLeft();
         setRoomClosedNotice(reason || 'Room has been closed by host');
         setRoom((prev) => (prev ? { ...prev, status: 'closed', currentParticipantsCount: 0 } : null));
         setMembers([]);
         break;
       }
     }
-  }, []);
+  }, [markChannelLeft]);
 
   // Hydrate local synchronized state from authoritative server snapshot
   // Drains buffered events and ignores late snapshots that would roll state backward
@@ -307,10 +324,12 @@ export function useRoomState(
       setViewer(snapshot.viewer);
 
       if (snapshot.viewer.isKicked) {
+        markChannelLeft();
         setIsKicked(true);
         setKickedReason('You have been removed from this room by the host.');
       }
       if (snapshot.room.status === 'closed') {
+        markChannelLeft();
         setRoomClosedNotice('This room has been closed by the host.');
       }
 
@@ -346,7 +365,7 @@ export function useRoomState(
       setIsError(false);
       setErrorMessage(null);
     },
-    [applyDomainMutation]
+    [applyDomainMutation, markChannelLeft]
   );
 
   // Fetch fresh authoritative room state snapshot via REST with in-flight coalescing
@@ -468,22 +487,54 @@ export function useRoomState(
 
   // Socket.IO event synchronization layer with event buffering
   useEffect(() => {
-    if (!enabled || !roomId) return;
+    if (!enabled || !roomId) {
+      markChannelLeft();
+      return;
+    }
 
     const socket = socketManager.connect();
-    if (!socket) return;
+    if (!socket) {
+      markChannelLeft();
+      return;
+    }
 
     const targetRoomId = roomId;
 
+    const emitRoomChannelJoin = () => {
+      const generation = ++joinGenerationRef.current;
+      isJoinInFlightRef.current = true;
+      isRoomChannelJoinedRef.current = false;
+      setIsRoomChannelJoined(false);
+
+      socket.emit(
+        SOCKET_EVENTS.CLIENT.ROOM_JOIN,
+        { roomId: targetRoomId },
+        (res?: SocketAckResponse<{ roomId: string; totalOnline: number }>) => {
+          if (joinGenerationRef.current !== generation) return;
+          isJoinInFlightRef.current = false;
+          if (
+            roomIdRef.current === targetRoomId &&
+            socket.connected &&
+            res?.success
+          ) {
+            isRoomChannelJoinedRef.current = true;
+            setIsRoomChannelJoined(true);
+          }
+        }
+      );
+    };
+
     const onConnectOrReconnect = () => {
       if (socket.connected) {
-        socket.emit(SOCKET_EVENTS.CLIENT.ROOM_JOIN, { roomId: targetRoomId });
+        emitRoomChannelJoin();
         refreshState();
       }
     };
 
     if (socket.connected) {
-      socket.emit(SOCKET_EVENTS.CLIENT.ROOM_JOIN, { roomId: targetRoomId });
+      emitRoomChannelJoin();
+    } else {
+      markChannelLeft();
     }
 
     socket.on('connect', onConnectOrReconnect);
@@ -556,6 +607,7 @@ export function useRoomState(
 
     const handleRoomClosedNotice = (payload: RoomClosedPayload) => {
       if (payload.roomId === targetRoomId) {
+        markChannelLeft();
         setRoomClosedNotice(payload.reason || 'Room has been closed by host');
         setRoom((prev) => (prev ? { ...prev, status: 'closed', currentParticipantsCount: 0 } : null));
       }
@@ -569,6 +621,7 @@ export function useRoomState(
     socket.on(SOCKET_EVENTS.SERVER.ROOM_CLOSED, handleRoomClosedNotice);
 
     return () => {
+      markChannelLeft();
       // Leave room presence channel on unmount or when roomId changes
       if (socket.connected) {
         socket.emit(SOCKET_EVENTS.CLIENT.ROOM_LEAVE, { roomId: targetRoomId });
@@ -583,7 +636,43 @@ export function useRoomState(
       socket.off(SOCKET_EVENTS.SERVER.ROOM_CLOSED, handleRoomClosedNotice);
       bufferedEventsRef.current = [];
     };
-  }, [enabled, roomId, applySnapshot, applyDomainMutation, refreshState]);
+  }, [enabled, roomId, applySnapshot, applyDomainMutation, refreshState, markChannelLeft]);
+
+  // If viewer just became an active member (e.g. joined a private room after initial visit)
+  // while the socket is connected without an active channel join, subscribe to the room channel.
+  useEffect(() => {
+    if (
+      !enabled ||
+      !roomId ||
+      !viewer.isMember ||
+      isRoomChannelJoined ||
+      isJoinInFlightRef.current
+    ) {
+      return;
+    }
+    const socket = socketManager.getSocket();
+    if (!socket?.connected) return;
+
+    const targetRoomId = roomId;
+    const generation = ++joinGenerationRef.current;
+    isJoinInFlightRef.current = true;
+    socket.emit(
+      SOCKET_EVENTS.CLIENT.ROOM_JOIN,
+      { roomId: targetRoomId },
+      (res?: SocketAckResponse<{ roomId: string; totalOnline: number }>) => {
+        if (joinGenerationRef.current !== generation) return;
+        isJoinInFlightRef.current = false;
+        if (
+          roomIdRef.current === targetRoomId &&
+          socket.connected &&
+          res?.success
+        ) {
+          isRoomChannelJoinedRef.current = true;
+          setIsRoomChannelJoined(true);
+        }
+      }
+    );
+  }, [enabled, roomId, viewer.isMember, isRoomChannelJoined, connectionStatus]);
 
   const totalOnline = useMemo(() => onlineUserIds.size, [onlineUserIds]);
 
@@ -597,6 +686,7 @@ export function useRoomState(
     version,
     syncStatus,
     connectionStatus,
+    isRoomChannelJoined,
     isLoading,
     isError,
     errorMessage,

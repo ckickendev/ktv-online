@@ -9,6 +9,30 @@ export interface VirtualRoomVoiceState {
 
 export type VirtualRoomVoiceMap = Map<string, VirtualRoomVoiceState>;
 
+export type StagePresentationStatus =
+  | 'empty'
+  | 'requested'
+  | 'occupied';
+
+export interface StageSingerPresentation {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatar: string | null;
+}
+
+export interface StagePresentation {
+  status: StagePresentationStatus;
+  singer: StageSingerPresentation | null;
+  pendingCount: number;
+}
+
+export const EMPTY_STAGE_PRESENTATION: StagePresentation = Object.freeze<StagePresentation>({
+  status: 'empty',
+  singer: null,
+  pendingCount: 0,
+});
+
 export interface WorldPosition {
   col: number;
   row: number;

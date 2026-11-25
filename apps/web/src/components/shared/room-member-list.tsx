@@ -4,7 +4,7 @@ import { UserAvatar } from './user-avatar';
 import { UserProfileModal } from '../profile/user-profile-modal';
 import { useRoomMembers } from '@/hooks/queries/use-room';
 import { cn } from '@/lib/utils';
-import { RoomMembershipDto } from '@ktv/contracts';
+import { MicPendingRequestDto, RoomMembershipDto } from '@ktv/contracts';
 import { VoiceParticipantInfo } from '@/features/voice/types/voice.types';
 
 interface RoomMemberListProps {
@@ -23,6 +23,8 @@ interface RoomMemberListProps {
   voiceParticipants?: VoiceParticipantInfo[];
   currentSingerName?: string | null;
   currentSingerUserId?: string | null;
+  officialSingerUserId?: string | null;
+  pendingMicRequests?: MicPendingRequestDto[];
 }
 
 export function RoomMemberList({
@@ -41,6 +43,8 @@ export function RoomMemberList({
   voiceParticipants,
   currentSingerName,
   currentSingerUserId,
+  officialSingerUserId,
+  pendingMicRequests,
 }: RoomMemberListProps) {
   const queryResult = useRoomMembers(roomId, { enabled: !propMembers });
   const members = propMembers ?? queryResult.data;
@@ -197,6 +201,14 @@ export function RoomMemberList({
                 (currentSingerName && (username === currentSingerName || displayName === currentSingerName))
               );
 
+              const isOfficialStageSinger = Boolean(
+                officialSingerUserId && m.userId === officialSingerUserId
+              );
+              const pendingMicIdx = pendingMicRequests
+                ? pendingMicRequests.findIndex((req) => req.userId === m.userId)
+                : -1;
+              const pendingMicPosition = pendingMicIdx >= 0 ? pendingMicIdx + 1 : null;
+
               // Permissions
               const canMute = Boolean(
                 !isCurrentUser &&
@@ -290,8 +302,28 @@ export function RoomMemberList({
                             Muted
                           </span>
                         )}
+                        {isOfficialStageSinger && (
+                          <span
+                            data-testid={`official-stage-mic-badge-${m.userId}`}
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-200 border border-amber-400/40 shrink-0"
+                            title="Official Stage Mic Holder"
+                          >
+                            <Mic className="w-2.5 h-2.5 text-amber-300" />
+                            Stage Mic
+                          </span>
+                        )}
+                        {pendingMicPosition !== null && (
+                          <span
+                            data-testid={`mic-requested-badge-${m.userId}`}
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-violet-500/20 text-violet-200 border border-violet-400/35 shrink-0"
+                            title={`Pending Stage Mic request (#${pendingMicPosition})`}
+                          >
+                            Mic Requested (#{pendingMicPosition})
+                          </span>
+                        )}
                         {isSinger && (
                           <span
+                            data-testid={`karaoke-singer-badge-${m.userId}`}
                             className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30 shrink-0"
                             title="Currently singing on stage"
                           >

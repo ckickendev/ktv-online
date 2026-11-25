@@ -10,11 +10,16 @@ import {
 import { cn } from '@/lib/utils';
 import { SceneViewport } from './scene/SceneViewport';
 import { RoomScene } from './scene/RoomScene';
-import { SceneEntity, VirtualRoomVoiceMap } from '../engine/scene-types';
+import {
+  SceneEntity,
+  StagePresentation,
+  VirtualRoomVoiceMap,
+} from '../engine/scene-types';
 
 interface VirtualRoomExperienceProps {
   roomId?: string;
   roomName?: string;
+  stagePresentation?: StagePresentation;
   currentSongTitle?: string | null;
   currentSingerName?: string | null;
   currentSingerId?: string | null;
@@ -28,6 +33,7 @@ interface VirtualRoomExperienceProps {
 export function VirtualRoomExperience({
   roomId: _roomId,
   roomName: _roomName,
+  stagePresentation: _stagePresentation,
   currentSongTitle,
   currentSingerName,
   currentSingerId,

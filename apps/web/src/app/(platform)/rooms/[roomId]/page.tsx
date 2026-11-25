@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -72,6 +72,8 @@ import {
   GiftSelectorDialog,
 } from '@/features/karaoke';
 import { VirtualRoomExperience } from '@/features/virtual-room';
+import { MicOwnershipBar, useMicOwnership } from '@/features/mic';
+import { toStagePresentation } from '@/features/rooms/adapters';
 import { cn } from '@/lib/utils';
 
 export default function RoomDetailPage() {
@@ -91,6 +93,7 @@ export default function RoomDetailPage() {
     version: roomStateVersion,
     syncStatus,
     connectionStatus,
+    isRoomChannelJoined,
     isLoading: isRoomLoading,
     isError: isRoomError,
     errorMessage: roomErrorMessage,
@@ -182,6 +185,44 @@ export default function RoomDetailPage() {
     isMember,
     roomStatus: room?.status,
   });
+
+  // S3: Authoritative Virtual Microphone Ownership & Singer Experience
+  const mic = useMicOwnership({
+    roomId,
+    enabled: Boolean(
+      roomId &&
+        room?.status !== 'closed' &&
+        !stateIsKicked &&
+        !isKicked
+    ),
+    currentUserId: currentUser?.id,
+    isRoomChannelJoined,
+    connectionStatus,
+    isMember,
+    isHost,
+    isMuted: Boolean(viewer?.isMuted),
+  });
+
+  // S3.5.2: Room-level scene presentation projection (always explicit; never undefined in production)
+  const stagePresentation = useMemo(
+    () =>
+      toStagePresentation({
+        state: mic.state,
+        currentSinger: mic.currentSinger,
+        currentSingerId: mic.currentSingerId,
+        pendingRequests: mic.pendingRequests,
+        ownershipVersion: mic.ownershipVersion,
+        isInitialized: mic.isInitialized,
+      }),
+    [
+      mic.state,
+      mic.currentSinger,
+      mic.currentSingerId,
+      mic.pendingRequests,
+      mic.ownershipVersion,
+      mic.isInitialized,
+    ]
+  );
 
   // Real-time Stage Audience Reactions (Sprint 3.3)
   const stageReactions = useStageReactions(roomId, {
@@ -831,6 +872,39 @@ export default function RoomDetailPage() {
             </div>
           )}
 
+          {/* S3: Official Virtual Stage Microphone Ownership Bar (Visible in both 2.5D & Stage modes) */}
+          <MicOwnershipBar
+            state={mic.state}
+            currentSinger={mic.currentSinger}
+            currentUserId={currentUser?.id}
+            pendingRequests={mic.pendingRequests}
+            isInitialized={mic.isInitialized}
+            isLoading={mic.isLoading}
+            isSocketRoomReady={mic.isSocketRoomReady}
+            isMember={isMember}
+            isHost={isHost}
+            isMuted={Boolean(viewer?.isMuted)}
+            isCurrentSinger={mic.isCurrentSinger}
+            myQueuePosition={mic.myQueuePosition}
+            isQueueFull={mic.isQueueFull}
+            isVoiceConnected={voice.isConnected}
+            isVoiceMuted={voice.isMuted}
+            actionStatus={mic.actionStatus}
+            actingTargetUserId={mic.actingTargetUserId}
+            canReleaseMic={mic.canReleaseMic}
+            canForceRelease={mic.canForceRelease}
+            errorMessage={mic.errorMessage}
+            lastNotice={mic.lastNotice}
+            onRequestMic={mic.requestMic}
+            onCancelRequest={mic.cancelRequest}
+            onApproveRequest={mic.approveRequest}
+            onRejectRequest={mic.rejectRequest}
+            onReleaseMic={mic.releaseMic}
+            onForceReleaseMic={mic.forceReleaseMic}
+            onClearError={mic.clearError}
+            onClearNotice={mic.clearNotice}
+          />
+
           {/* S1: 2.5D Social Virtual Room Presentation & Mode Switcher */}
           <div
             data-testid="room-view-mode-switcher"
@@ -883,6 +957,7 @@ export default function RoomDetailPage() {
             <VirtualRoomExperience
               roomId={roomId}
               roomName={room.name}
+              stagePresentation={stagePresentation}
               currentSongTitle={karaoke.playback?.currentItem?.song?.title}
               currentSingerName={karaoke.currentSingerName}
               currentSingerId={currentSingerId}
@@ -1061,6 +1136,8 @@ export default function RoomDetailPage() {
                   voiceParticipants={voice.participants}
                   currentSingerName={karaoke.currentSingerName}
                   currentSingerUserId={karaoke.currentItem?.requestedBy.id}
+                  officialSingerUserId={mic.currentSingerId}
+                  pendingMicRequests={mic.pendingRequests}
                   className="h-full border-0 bg-transparent p-0"
                 />
               </div>
@@ -1303,6 +1380,8 @@ export default function RoomDetailPage() {
                   voiceParticipants={voice.participants}
                   currentSingerName={karaoke.currentSingerName}
                   currentSingerUserId={karaoke.currentItem?.requestedBy.id}
+                  officialSingerUserId={mic.currentSingerId}
+                  pendingMicRequests={mic.pendingRequests}
                   className="border-0 bg-transparent p-0"
                 />
               </div>
